@@ -95,6 +95,15 @@ const files = walk(dist)
   });
 writeFileSync(join(dist, 'files.json'), JSON.stringify(files, null, 2) + '\n');
 
+// La publicación no acepta caracteres de control crudos en archivos de texto (pdf.js y xlsx traen algunos dentro de
+// cadenas y expresiones regulares): se pasan a su secuencia de escape \xHH, que significa lo mismo
+for (const f of files.filter((x) => /\.(m?js|css)$/.test(x.path))) {
+  const abs = join(root, f.from);
+  const text = readFileSync(abs, 'utf8');
+  const clean = text.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, (ch) => `\\x${ch.charCodeAt(0).toString(16).padStart(2, '0')}`);
+  if (clean !== text) writeFileSync(abs, clean);
+}
+
 // pdf.js arranca su worker con una ruta relativa al módulo que lo pide (new URL(…, import.meta.url))
 const worker = files.find((f) => /pdf\.worker[^/]*\.mjs$/.test(f.path));
 const js = files.filter((f) => f.path.endsWith('.js')).map((f) => readFileSync(join(root, f.from), 'utf8')).join('\n');
