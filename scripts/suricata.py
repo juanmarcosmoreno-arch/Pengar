@@ -112,3 +112,27 @@ for r, row in enumerate(TILES):
             tile = tile.transpose(Image.FLIP_LEFT_RIGHT)
         tile.resize((192, 192), Image.LANCZOS).save(os.path.join(OUT, 'cat', f'{name}.webp'), 'WEBP', quality=86, method=6)
 print('categorías', sum(len(r) for r in TILES))
+
+# Segundo juego (docs/marca/suricata-categorias-2.png): otras versiones («-2») y dos categorías nuevas
+TILES2 = [
+    ['mant-casa-2', 'comida-2', 'super-2', 'mant-auto-2', 'educacion-2', 'regalos-2', 'limpieza-2'],
+    ['ahorro-2', 'servicios-2', 'salud-2', 'deporte-2', 'viajes-2', 'entretenimiento-2', 'restaurantes-2'],
+    ['tecnologia-2', 'hogar-2', 'ropa-2', 'libros-2', 'mascotas-2', 'vivienda-2', 'seguros-2'],
+    ['jardin-2', 'salidas-2', 'familia-2', 'inversiones-2', 'compras-online', 'impuestos', 'otros-2'],
+]
+FLIP2 = {'comida-2', 'regalos-2', 'limpieza-2', 'deporte-2', 'restaurantes-2', 'ropa-2', 'libros-2', 'mascotas-2', 'jardin-2', 'vivienda-2', 'mant-casa-2'}
+cats2 = Image.open(IMG + 'suricata-categorias-2.png').convert('RGB')
+R2 = 102
+for r, row in enumerate(TILES2):
+    cy = [136, 388, 625, 858][r]
+    for c, name in enumerate(row):
+        cx = 127 + c * 215
+        tile = cats2.crop((cx - R2, cy - R2, cx + R2, cy + R2)).convert('RGBA')
+        mask = Image.new('L', (R2 * 8, R2 * 8), 0)
+        ImageDraw.Draw(mask).ellipse((8, 8, R2 * 8 - 8, R2 * 8 - 8), fill=255)
+        mask = mask.resize((R2 * 2, R2 * 2), Image.LANCZOS).filter(ImageFilter.GaussianBlur(1))
+        tile.putalpha(mask)
+        if name in FLIP2:
+            tile = tile.transpose(Image.FLIP_LEFT_RIGHT)
+        tile.resize((192, 192), Image.LANCZOS).save(os.path.join(OUT, 'cat', f'{name}.webp'), 'WEBP', quality=86, method=6)
+print('categorías (segundo juego)', sum(len(r) for r in TILES2))
