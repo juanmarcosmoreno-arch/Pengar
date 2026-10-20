@@ -1,6 +1,6 @@
 /** Todo se guarda en el teléfono (IndexedDB): los datos en una clave y cada archivo de factura en la suya. */
 import { createStore, del, get, set } from 'idb-keyval';
-import { emptyData } from '../domain/template';
+import { emptyData, LEGACY_ICON_TO_ART } from '../domain/template';
 import type { Data } from '../domain/types';
 
 const store = createStore('pengar', 'kv');
@@ -10,7 +10,9 @@ export async function loadData(): Promise<Data | null> {
   if (!d) return null;
   // Completa campos nuevos si los datos son de una versión anterior
   const base = emptyData();
-  return { ...base, ...d, settings: { ...base.settings, ...d.settings, ai: { ...base.settings.ai, ...d.settings?.ai }, currency: { ...base.settings.currency, ...d.settings?.currency } } };
+  // Las categorías con íconos de línea pasan a las ilustraciones del suricata
+  const categories = (d.categories ?? []).map((c) => (LEGACY_ICON_TO_ART[c.icon] ? { ...c, icon: LEGACY_ICON_TO_ART[c.icon] } : c));
+  return { ...base, ...d, categories, settings: { ...base.settings, ...d.settings, ai: { ...base.settings.ai, ...d.settings?.ai }, currency: { ...base.settings.currency, ...d.settings?.currency } } };
 }
 
 export const saveData = (d: Data) => set('data', d, store);

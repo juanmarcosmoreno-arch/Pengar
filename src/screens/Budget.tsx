@@ -23,7 +23,7 @@ export function Budget({ onBack }: { onBack: () => void }) {
       <div className="space-y-4 px-4 pb-10">
         <div className="flex items-center gap-3 px-1">
           <p className="flex-1 text-muted">Cuánto pensás gastar por mes en cada categoría. Se compara con lo real en Estadísticas → Mes.</p>
-          <Suricata pose="organizando" size={90} />
+          <Suricata pose="organizando" size={90} flip />
         </div>
         <div className="grid grid-cols-2 gap-3">
           <div className="card px-4 py-3"><div className="text-[15px] text-muted">Gastos sin ahorro</div><div className="text-2xl">{money(noSavings)}</div></div>

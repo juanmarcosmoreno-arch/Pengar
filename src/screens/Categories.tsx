@@ -75,7 +75,7 @@ export function Categories({ onBack }: { onBack: () => void }) {
           Las <b>categorías</b> agrupan (Alimentación, Transporte…) y tienen presupuesto. Los <b>rubros</b> son lo que elegís al anotar (Feria, UTE, Netflix…).
           Tocá el ícono para cambiar nombre, color o ícono.
         </p>
-        <Suricata pose="compras" size={100} />
+        <Suricata pose="compras" size={100} flip />
         </div>
         {section('gasto', 'Gastos')}
         {section('ingreso', 'Ingresos')}

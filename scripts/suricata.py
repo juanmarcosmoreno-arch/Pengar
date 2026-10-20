@@ -4,7 +4,7 @@ src/assets/suricata. El interior de la silueta se rellena con papel crema para q
 Uso: python3 scripts/suricata.py   (necesita Pillow y numpy)
 """
 import sys
-from PIL import Image, ImageFilter, ImageChops
+from PIL import Image, ImageDraw, ImageFilter, ImageChops
 import numpy as np
 
 import os
@@ -71,7 +71,7 @@ boxes = {
     'saludando': (255, 60, 470, 400), 'contento': (470, 50, 680, 400), 'ahorrando': (690, 120, 900, 400),
     'pensando': (895, 40, 1085, 400), 'calculadora': (1090, 90, 1270, 400), 'lista': (1285, 90, 1515, 400),
     'organizando': (20, 470, 245, 690), 'analizando': (245, 500, 475, 690), 'metas': (465, 455, 715, 695),
-    'compras': (725, 480, 900, 695), 'transportes': (930, 480, 1110, 695), 'casa': (1130, 470, 1300, 695),
+    'compras': (725, 480, 888, 695), 'transportes': (930, 480, 1110, 695), 'casa': (1130, 470, 1300, 695),
     'celebrando': (1320, 430, 1520, 695),
 }
 for name, box in boxes.items():
@@ -85,3 +85,30 @@ for i, name in enumerate(faces):
 
 main = unpaper(Image.open(IMG + 'suricata-principal.webp').crop((230, 110, 980, 1160)))
 save(main, 'principal', 640)
+
+# --- Ilustraciones de categorías: cada una es un círculo de color con el suricata ------------------------
+TILES = [
+    ['mant-casa', 'comida', 'super', 'mant-auto', 'educacion', 'regalos', 'limpieza'],
+    ['salud', 'deporte', 'viajes', 'entretenimiento', 'restaurantes', 'telefonia', 'ropa'],
+    ['ahorro', 'servicios', 'libros', 'mascotas', 'vivienda', 'seguros', 'jardin'],
+    ['tecnologia', 'hogar', 'salidas', 'familia', 'inversiones', 'otros', 'imprevistos'],
+]
+cats = Image.open(IMG + 'suricata-categorias.webp').convert('RGB')
+R = 100
+# Espejadas, para que no miren todas para el mismo lado (las que tienen letras o el $ quedan como están)
+FLIP = {'comida', 'mant-auto', 'regalos', 'deporte', 'restaurantes', 'ropa', 'libros', 'mascotas', 'jardin', 'salidas', 'otros', 'vivienda', 'seguros'}
+os.makedirs(os.path.join(OUT, 'cat'), exist_ok=True)
+for r, row in enumerate(TILES):
+    cy = [143, 398, 632, 868][r]
+    for c, name in enumerate(row):
+        cx = 117 + c * 217
+        tile = cats.crop((cx - R, cy - R, cx + R, cy + R)).convert('RGBA')
+        # Recorte redondo con el borde suave (queda como una medalla sobre el papel)
+        mask = Image.new('L', (R * 8, R * 8), 0)
+        ImageDraw.Draw(mask).ellipse((8, 8, R * 8 - 8, R * 8 - 8), fill=255)
+        mask = mask.resize((R * 2, R * 2), Image.LANCZOS).filter(ImageFilter.GaussianBlur(1))
+        tile.putalpha(mask)
+        if name in FLIP:
+            tile = tile.transpose(Image.FLIP_LEFT_RIGHT)
+        tile.resize((192, 192), Image.LANCZOS).save(os.path.join(OUT, 'cat', f'{name}.webp'), 'WEBP', quality=86, method=6)
+print('categorías', sum(len(r) for r in TILES))

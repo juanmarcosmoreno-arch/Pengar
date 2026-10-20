@@ -61,7 +61,7 @@ export function Goals({ onBack }: { onBack: () => void }) {
 
 function GoalSheet({ value, onClose }: { value: Goal | 'new'; onClose: () => void }) {
   const { upsertGoal, deleteGoal } = useStore();
-  const [g, setG] = useState<Goal>(value === 'new' ? { id: newId('g'), name: '', icon: 'palm', target: 0, saved: 0 } : value);
+  const [g, setG] = useState<Goal>(value === 'new' ? { id: newId('g'), name: '', icon: 'm:viajes', target: 0, saved: 0 } : value);
   const [target, setTarget] = useState(g.target ? String(g.target) : '');
   const [saved, setSaved] = useState(g.saved ? String(g.saved) : '');
   const t = parseAmount(target) ?? 0;

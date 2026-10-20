@@ -10,10 +10,11 @@ export type Pose =
   | 'cara-normal' | 'cara-feliz' | 'cara-sorprendido' | 'cara-pensando' | 'cara-preocupado' | 'cara-decidido'
   | 'cara-triste' | 'cara-entusiasmado' | 'cara-curioso';
 
-export function Suricata({ pose, size = 120, className = '', alt = '' }: { pose: Pose; size?: number; className?: string; alt?: string }) {
+/** `flip`: que mire para el otro lado (hacia la izquierda) */
+export function Suricata({ pose, size = 120, className = '', alt = '', flip = false }: { pose: Pose; size?: number; className?: string; alt?: string; flip?: boolean }) {
   const src = files[`../assets/suricata/${pose}.webp`];
   if (!src) return null;
-  return <img src={src} alt={alt} draggable={false} className={`pointer-events-none select-none object-contain ${className}`} style={{ height: size, width: 'auto' }} />;
+  return <img src={src} alt={alt} draggable={false} className={`pointer-events-none select-none object-contain ${className}`} style={{ height: size, width: 'auto', transform: flip ? 'scaleX(-1)' : undefined }} />;
 }
 
 /** Estado vacío: el suricata con un texto debajo */

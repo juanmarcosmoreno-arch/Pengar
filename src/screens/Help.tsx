@@ -16,7 +16,7 @@ export function Help({ onBack }: { onBack: () => void }) {
     <div>
       <PageHeader title="Cómo se usa" onBack={onBack} />
       <div className="space-y-3 px-4 pb-10">
-        <div className="flex justify-center"><Suricata pose="cara-curioso" size={120} /></div>
+        <div className="flex justify-center"><Suricata pose="cara-curioso" size={120} flip /></div>
         {TOPICS.map(([t, body]) => (
           <section key={t} className="card p-4">
             <h2 className="text-xl">{t}</h2>

@@ -46,7 +46,7 @@ export function Home({ onAdd, onScan, onEdit, onGo }: {
           <div className="text-xl text-muted">Hola,</div>
           <h1 className="text-4xl leading-tight">{data.settings.name || 'de nuevo'}</h1>
         </div>
-        <Suricata pose="saludando" size={92} />
+        <Suricata pose="saludando" size={92} flip />
       </header>
 
       <section className="card relative overflow-hidden p-5">
@@ -61,7 +61,7 @@ export function Home({ onAdd, onScan, onEdit, onGo }: {
             {formatPct(Math.abs(change))} {change > 0 ? 'más' : 'menos'} de gastos que el mes anterior
           </div>
         )}
-        <Suricata pose={mood} size={104} className="absolute -bottom-1 right-2" />
+        <Suricata pose={mood} size={104} flip className="absolute -bottom-1 right-2" />
       </section>
 
       <section className="grid grid-cols-4 gap-2 px-1">

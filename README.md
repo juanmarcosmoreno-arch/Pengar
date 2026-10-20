@@ -78,7 +78,9 @@ iPhone y dale ▶︎. Después de cambiar código web: `npm run ios:sync`.
 | `ios/App/App/PengarOCRPlugin.swift` | Plugin nativo: texto de una foto con Vision |
 
 El **suricata** (docs/marca) aparece en la bienvenida, el ícono, el inicio (su cara cambia según cómo viene el
-mes), los estados vacíos, la lectura de facturas, las metas y el presupuesto. `python3 scripts/suricata.py` recorta
+mes), los estados vacíos, la lectura de facturas, las metas y el presupuesto, y cada categoría tiene su ilustración
+(el suricata en el súper, arreglando el auto, con la mascota…; se elige al editar la categoría). Algunos miran para
+el otro lado, para que no vayan todos iguales. `python3 scripts/suricata.py` recorta
 las poses de la hoja y les saca el fondo de papel (quedan en `src/assets/suricata`); `<Suricata pose="…" />` las
 muestra. La app es solo en modo claro.
 

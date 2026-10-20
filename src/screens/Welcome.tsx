@@ -51,7 +51,7 @@ export function Welcome() {
       <button className="btn-ghost -ml-4" onClick={() => setStep('hola')}>‹ Volver</button>
       <div className="mt-2 flex items-end justify-between">
         <h1 className="text-4xl">¡Hola!</h1>
-        <Suricata pose="saludando" size={110} />
+        <Suricata pose="saludando" size={110} flip />
       </div>
       <label className="mt-6 block">
         <span className="label">¿Cómo te llamás?</span>
