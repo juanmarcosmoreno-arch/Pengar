@@ -15,13 +15,16 @@
   --on-primary: 255 255 255;
   --ok: 31 138 91;
   --danger: 194 69 63;
+  /* Alto de la pantalla de la app: la del teléfono, o la del marco en pantallas anchas */
+  --app-h: 100vh;
   color-scheme: light;
 }
 
 
 html,
 body,
-#root {
+#root,
+.app-scroll {
   height: 100%;
 }
 
@@ -98,9 +101,84 @@ select {
   from { opacity: 0; }
   to { opacity: 1; }
 }
+@keyframes pop-in {
+  from { opacity: 0; transform: scale(0.92); }
+  to { opacity: 1; transform: scale(1); }
+}
 .animate-sheet { animation: sheet-in 0.28s cubic-bezier(0.2, 0.8, 0.2, 1); }
 .animate-fade { animation: fade-in 0.2s ease-out; }
+.animate-pop { animation: pop-in 0.25s cubic-bezier(0.2, 0.8, 0.2, 1); }
+
+/* Movimientos del suricata (prop `motion` de Suricata). Van en el envoltorio de la imagen, apoyados abajo al centro. */
+@keyframes suricata-breathe {
+  0%, 100% { transform: translateY(0) scaleY(1); }
+  50% { transform: translateY(-1.5px) scaleY(1.015); }
+}
+@keyframes suricata-wave {
+  0%, 100% { transform: rotate(0); }
+  25% { transform: rotate(-4deg); }
+  50% { transform: rotate(3deg); }
+  75% { transform: rotate(-2deg); }
+}
+@keyframes suricata-hop {
+  0%, 100% { transform: translateY(0); }
+  /* sube frenando y baja acelerando */
+  50% { transform: translateY(-10px); animation-timing-function: ease-in; }
+}
+@keyframes suricata-sway {
+  from { transform: rotate(-2deg); }
+  to { transform: rotate(2deg); }
+}
+.suricata-breathe { animation: suricata-breathe 4.5s ease-in-out infinite; transform-origin: 50% 100%; }
+.suricata-wave { animation: suricata-wave 1.4s ease-in-out 0.3s 2; transform-origin: 50% 100%; }
+.suricata-hop { animation: suricata-hop 0.6s ease-out 2; transform-origin: 50% 100%; }
+.suricata-sway { animation: suricata-sway 1.8s ease-in-out infinite alternate; transform-origin: 50% 100%; }
+
+/*
+ * Pantallas anchas (la web en una compu): la app se ve dentro de un marco de teléfono. El transform de #root hace
+ * que los position: fixed de la app (barra de pestañas, hojas, avisos) queden dentro del marco, y el scroll pasa
+ * a .app-scroll. En el iPhone (solo vertical) nunca llega a 760px.
+ */
+@media (min-width: 760px) {
+  html,
+  body {
+    height: 100%;
+    overflow: hidden;
+  }
+  body {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 56px;
+    background: #F5F3EE;
+  }
+  #root {
+    width: 390px;
+    height: min(844px, calc(100% - 48px));
+    --app-h: min(844px, calc(100vh - 48px));
+    flex: none;
+    position: relative;
+    transform: translateZ(0);
+    overflow: hidden;
+    border-radius: 46px;
+    box-shadow: 0 0 0 10px #1f2a26, 0 28px 60px 6px rgb(34 46 42 / 0.28);
+    background: rgb(var(--bg));
+  }
+  .app-scroll {
+    height: 100%;
+    overflow-y: auto;
+  }
+  /* Sin barras de scroll de compu adentro del teléfono (se scrollea igual con la rueda o el trackpad) */
+  #root,
+  #root * {
+    scrollbar-width: none;
+  }
+  #root ::-webkit-scrollbar {
+    display: none;
+  }
+}
 
 @media (prefers-reduced-motion: reduce) {
-  .animate-sheet, .animate-fade { animation: none; }
+  .animate-sheet, .animate-fade, .animate-pop,
+  .suricata-breathe, .suricata-wave, .suricata-hop, .suricata-sway { animation: none; }
 }

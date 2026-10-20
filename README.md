@@ -16,10 +16,15 @@ y ver cómo se mueve la plata en el tiempo. Todo queda en el teléfono.
 - **Anotar rápido**: monto → rubro → listo. Los rubros que más usás aparecen primero; fecha y nota son opcionales.
 - **Facturas y tickets**: sacás una foto (o subís un PDF) y Pengar lee comercio, fecha, total y cada renglón, y le
   pone un rubro a cada uno. Podés separar la factura por rubro (comida y limpieza del súper, por ejemplo) o guardarla
-  como un solo gasto. Lo que corregís lo aprende. El archivo queda guardado y se ve desde el gasto.
+  como un solo gasto. Lo que corregís lo aprende. El archivo queda guardado y se ve dentro de la app
+  (desde el gasto o en Más → Facturas guardadas), con «Compartir o guardar» para mandarlo a Archivos o por mail.
   - En el iPhone se lee con Vision de Apple (en el teléfono, gratis, sin conexión). Los PDF con texto se leen
     directo; los escaneados se pasan por el lector de fotos.
   - Opcional: con una clave de la API de Claude (Ajustes) la lectura es mejor, sobre todo en tickets arrugados.
+- **Gastos fijos**: el alquiler, la luz, Netflix o el sueldo se marcan como fijos (al anotarlos, con «Se repite
+  todos los meses», o en Más → Gastos fijos, con sugeridos según tu historial). Cuando llega su día, Inicio muestra
+  «Para anotar este mes» con el monto estimado: se anotan de a uno (ajustando el monto), todos juntos o se saltean.
+  Si ese mes ya anotaste el rubro (a mano, con una factura o desde la planilla), no lo pide.
 - **Estadísticas** (las mismas gráficas del tablero en R):
   - *Mes*: ingresos, gastos, presupuesto y diferencia; real contra presupuesto por categoría (gastado, lo que
     queda, exceso, sin presupuesto); categorías con presupuesto como % del ingreso (el diezmo); detalle por rubro.
@@ -41,6 +46,9 @@ lo que anotes desde ahora va día por día. La hoja «Joan» no se importa.
 
 `datos/ejemplo.xlsx` (montos inventados, `node scripts/make-example.mjs`) tiene el mismo formato: lo usan las
 pruebas y las capturas. Si copiás tu planilla en `datos/presupuesto.xlsx`, `npm test` también la verifica.
+La misma planilla queda en `public/ejemplo.xlsx`: en la bienvenida, **Mirar con datos de ejemplo** la carga (corrida
+para que llegue hasta el mes pasado) junto con unos gastos de este mes y una meta, a nombre de «Ana». Inicio y Más
+avisan que son datos inventados y «Empezar con los míos» vuelve a la bienvenida.
 
 Otra persona puede empezar **de cero** con categorías sugeridas, o importar su propia planilla con el mismo formato
 (un mes por columna) o con un movimiento por fila (Fecha, Rubro, Categoría, Monto).
@@ -51,12 +59,33 @@ Requisitos: Node 22+. Para el iPhone, una Mac con Xcode 16+.
 
 ```bash
 npm install
-npm run dev          # http://localhost:5173 (en la web las fotos se leen con Tesseract)
+npm run dev          # http://localhost:5173 (en la web las fotos se leen con Tesseract; en una pantalla ancha, dentro de un marco de teléfono)
 npm test             # pruebas de la lógica (importar planillas, cuentas, lectura de facturas)
 npm run build
 npm run shots        # capturas en docs/capturas (importa datos/ejemplo.xlsx)
 npm run icons        # íconos a partir del suricata principal
 ```
+
+### Vista previa web
+
+```bash
+npm run build:preview   # dist-preview/pengar.html + files.json
+```
+
+Una build para mirar la app en el navegador sin instalar nada, pensada para publicarse como página (artefacto):
+abre directo en Inicio con los datos de ejemplo. `scripts/build-artifact.mjs` arma `dist-preview/pengar.html` (sin
+`<html>`/`<head>`/`<body>`, porque quien la publica la envuelve en su propio esqueleto) y `dist-preview/files.json`, la
+lista de archivos que van al lado con su tipo (JS, CSS, fuentes, imágenes, `ejemplo.xlsx`, el worker de pdf.js), todos
+con rutas relativas. En una pantalla ancha la app se ve dentro de un marco de teléfono y, desde 960 px, con una
+columna al lado que cuenta qué probar.
+
+Qué no funciona en la vista previa (sí en el iPhone):
+- **Fotos de tickets**: «Sacar una foto» y «Elegir de las fotos» quedan deshabilitados. Los **PDF con texto** se leen
+  igual, con pdf.js en el navegador; los PDF escaneados no.
+- **Lectura con Claude**: Ajustes explica que no está disponible (la página no se puede conectar con Anthropic).
+- **Descargas**: exportar a CSV, el respaldo y «Compartir o guardar» una factura avisan que en la vista previa no se
+  pueden descargar archivos.
+- Los datos quedan solo en ese navegador (IndexedDB; si no se puede usar, en memoria mientras la página esté abierta).
 
 ### Instalar en el iPhone
 
@@ -92,5 +121,4 @@ son una paleta validada para daltonismo; pasadas las 8 más grandes, se juntan e
 
 - No probé la compilación en Xcode (no hay Mac en este entorno): el plugin Swift sigue el mismo patrón que el de Kvar.
 - Sincronizar entre dispositivos (iCloud o Supabase); hoy los datos viven en un solo teléfono, con respaldo manual.
-- Gastos recurrentes (alquiler, servicios) que se anoten solos cada mes.
 - Ticket oficial de la DGI por el QR (como en Kvar).

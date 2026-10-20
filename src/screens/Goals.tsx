@@ -1,5 +1,5 @@
 import { Plus } from 'lucide-react';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { CategoryBubble, Icon } from '../components/Icon';
 import { PageHeader, Sheet } from '../components/Sheet';
 import { EmptyState, Suricata } from '../components/Suricata';
@@ -15,6 +15,7 @@ export function Goals({ onBack }: { onBack: () => void }) {
   const { money } = useMoney();
   const [edit, setEdit] = useState<Goal | 'new' | null>(null);
   const [add, setAdd] = useState<Goal | null>(null);
+  const [reached, setReached] = useState<Goal | null>(null);
   return (
     <div>
       <PageHeader
@@ -54,7 +55,8 @@ export function Goals({ onBack }: { onBack: () => void }) {
         })}
       </div>
       {edit && <GoalSheet value={edit} onClose={() => setEdit(null)} />}
-      {add && <AddToGoal goal={add} onClose={() => setAdd(null)} />}
+      {add && <AddToGoal goal={add} onClose={() => setAdd(null)} onReached={setReached} />}
+      {reached && <GoalReached goal={reached} onClose={() => setReached(null)} />}
     </div>
   );
 }
@@ -94,18 +96,44 @@ function GoalSheet({ value, onClose }: { value: Goal | 'new'; onClose: () => voi
   );
 }
 
-function AddToGoal({ goal, onClose }: { goal: Goal; onClose: () => void }) {
+function AddToGoal({ goal, onClose, onReached }: { goal: Goal; onClose: () => void; onReached: (g: Goal) => void }) {
   const { upsertGoal } = useStore();
   const [text, setText] = useState('');
   const n = parseAmount(text) ?? 0;
+  const add = () => {
+    const g = { ...goal, saved: Math.max(0, goal.saved + n) };
+    upsertGoal(g);
+    onClose();
+    // Festejo solo si esta suma la completa (no si ya estaba cumplida)
+    if (goal.saved < goal.target && g.saved >= goal.target) onReached(g);
+  };
   return (
     <Sheet
       title={`Sumar a «${goal.name}»`}
       onClose={onClose}
-      footer={<button className="btn-primary w-full" disabled={!n} onClick={() => { upsertGoal({ ...goal, saved: Math.max(0, goal.saved + n) }); onClose(); }}>Sumar</button>}
+      footer={<button className="btn-primary w-full" disabled={!n} onClick={add}>Sumar</button>}
     >
       <input className="field text-center text-3xl" inputMode="decimal" autoFocus value={text} onChange={(e) => setText(e.target.value)} placeholder="0" />
       <p className="mt-2 text-[15px] text-muted">Para restar, poné un número negativo. Las metas son aparte de los gastos: si querés que el ahorro aparezca en las gráficas, anotalo también como gasto en tu categoría de ahorro.</p>
     </Sheet>
+  );
+}
+
+/** Festejo al completar una meta: tarjeta centrada con el suricata saltando */
+function GoalReached({ goal, onClose }: { goal: Goal; onClose: () => void }) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onClose();
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+  return (
+    <div className="fixed inset-0 z-40 flex items-center justify-center px-8" role="dialog" aria-modal="true" aria-label="Meta cumplida">
+      <button className="absolute inset-0 bg-black/30 animate-fade" aria-label="Cerrar" onClick={onClose} />
+      <div className="card relative flex w-full max-w-xs flex-col items-center px-6 pt-7 pb-5 text-center shadow-2xl animate-pop">
+        <Suricata pose="celebrando" size={150} motion="hop" />
+        <p className="mt-3 break-words text-2xl leading-tight">¡Llegaste a tu meta «{goal.name}»!</p>
+        <button className="btn-primary mt-5 w-full text-xl" onClick={onClose}>¡Bien!</button>
+      </div>
+    </div>
   );
 }

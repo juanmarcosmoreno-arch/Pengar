@@ -3,10 +3,13 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import { learnFrom } from '../domain/classify';
 import { distributeTotal } from '../domain/invoice';
 import { mergeImport, type ImportResult } from '../domain/importSheet';
+import { dueMovements } from '../domain/recurring';
 import { buildIndex, type Index } from '../domain/stats';
-import { emptyData, newId, templateData } from '../domain/template';
-import type { Category, Data, Goal, Invoice, InvoiceItem, Movement, Rubro, Settings } from '../domain/types';
+import { emptyData, newId, normalizeData, templateData } from '../domain/template';
+import type { Category, Data, Goal, Invoice, InvoiceItem, Movement, Recurring, Rubro, Settings } from '../domain/types';
 import { deleteFile, loadData, saveData, saveFile } from '../lib/db';
+import { loadExample } from '../lib/example';
+import { isPreview } from '../lib/platform';
 
 export interface InvoiceToSave {
   file: Blob;
@@ -39,8 +42,16 @@ interface Store {
   deleteRubro: (id: string, mergeInto?: string) => void;
   upsertGoal: (g: Goal) => void;
   deleteGoal: (id: string) => void;
+  upsertRecurring: (r: Recurring) => void;
+  deleteRecurring: (id: string) => void;
+  /** El fijo ya está anotado (o salteado) hasta `month` */
+  markRecurring: (id: string, month: string) => void;
+  /** Anota todos los fijos vencidos del mes con su monto estimado. Devuelve cuántos y cómo deshacerlo */
+  recordAllDue: (month: string, todayISO: string) => { count: number; undo: () => void };
   updateSettings: (patch: Partial<Settings>) => void;
   startWithTemplate: (name: string) => void;
+  /** Cambia todo por los datos de ejemplo (inventados), con settings.example */
+  startWithExample: () => Promise<void>;
   applyImport: (res: ImportResult, mode: 'replace' | 'merge', name?: string) => void;
   replaceAll: (d: Data) => void;
 }
@@ -53,9 +64,13 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const timer = useRef<ReturnType<typeof setTimeout>>();
 
   useEffect(() => {
-    loadData()
-      .then((d) => d && setData(d))
-      .finally(() => setReady(true));
+    void (async () => {
+      const saved = await loadData().catch(() => null);
+      if (saved) setData(saved);
+      // La vista previa web abre directo en Inicio, con los datos de ejemplo
+      else if (isPreview) await loadExample().then(setData, (e) => console.error(e));
+      setReady(true);
+    })();
   }, []);
 
   const update = useCallback((fn: (d: Data) => Data) => {
@@ -131,11 +146,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       ...d,
       categories: d.categories.some((x) => x.id === c.id) ? d.categories.map((x) => (x.id === c.id ? c : x)) : [...d.categories, c],
     })),
-    deleteCategory: (id, moveTo) => update((d) => ({
-      ...d,
-      categories: d.categories.filter((c) => c.id !== id),
-      rubros: moveTo ? d.rubros.map((r) => (r.categoryId === id ? { ...r, categoryId: moveTo } : r)) : d.rubros.filter((r) => r.categoryId !== id),
-    })),
+    deleteCategory: (id, moveTo) => update((d) => {
+      const rubros = moveTo ? d.rubros.map((r) => (r.categoryId === id ? { ...r, categoryId: moveTo } : r)) : d.rubros.filter((r) => r.categoryId !== id);
+      const left = new Set(rubros.map((r) => r.id));
+      return { ...d, categories: d.categories.filter((c) => c.id !== id), rubros, recurring: d.recurring.filter((r) => left.has(r.rubroId)) };
+    }),
     upsertRubro: (r) => update((d) => ({
       ...d,
       rubros: d.rubros.some((x) => x.id === r.id) ? d.rubros.map((x) => (x.id === r.id ? r : x)) : [...d.rubros, r],
@@ -144,6 +159,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       ...d,
       rubros: d.rubros.filter((r) => r.id !== id),
       movements: mergeInto ? d.movements.map((m) => (m.rubroId === id ? { ...m, rubroId: mergeInto } : m)) : d.movements.filter((m) => m.rubroId !== id),
+      // El fijo pasa al rubro de destino, salvo que ese ya tenga uno
+      recurring: d.recurring.flatMap((r) => {
+        if (r.rubroId !== id) return [r];
+        return mergeInto && !d.recurring.some((x) => x.rubroId === mergeInto) ? [{ ...r, rubroId: mergeInto }] : [];
+      }),
       settings: {
         ...d.settings,
         learned: Object.fromEntries(Object.entries(d.settings.learned).flatMap(([k, v]) => (v === id ? (mergeInto ? [[k, mergeInto]] : []) : [[k, v]]))),
@@ -151,11 +171,46 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     })),
     upsertGoal: (g) => update((d) => ({ ...d, goals: d.goals.some((x) => x.id === g.id) ? d.goals.map((x) => (x.id === g.id ? g : x)) : [...d.goals, g] })),
     deleteGoal: (id) => update((d) => ({ ...d, goals: d.goals.filter((g) => g.id !== id) })),
+    upsertRecurring: (r) => update((d) => ({
+      ...d,
+      recurring: d.recurring.some((x) => x.id === r.id) ? d.recurring.map((x) => (x.id === r.id ? r : x)) : [...d.recurring, r],
+    })),
+    deleteRecurring: (id) => update((d) => ({ ...d, recurring: d.recurring.filter((r) => r.id !== id) })),
+    markRecurring: (id, month) => update((d) => ({
+      ...d,
+      recurring: d.recurring.map((r) => (r.id === id && (!r.doneThrough || r.doneThrough < month) ? { ...r, doneThrough: month } : r)),
+    })),
+    recordAllDue: (month, todayISO) => {
+      // Se arman afuera del update para que los ids sean los mismos al deshacer
+      const due = dueMovements(data, month, todayISO);
+      const created = due.map((x) => x.movement);
+      const ids = new Set(created.map((m) => m.id));
+      const marked = new Set(due.map((x) => x.recurringId));
+      const before = new Map(data.recurring.filter((r) => marked.has(r.id)).map((r) => [r.id, r.doneThrough]));
+      if (created.length) {
+        update((d) => ({
+          ...d,
+          movements: [...d.movements, ...created],
+          recurring: d.recurring.map((r) => (before.has(r.id) ? { ...r, doneThrough: month } : r)),
+        }));
+      }
+      const undo = () => update((d) => ({
+        ...d,
+        movements: d.movements.filter((m) => !ids.has(m.id)),
+        recurring: d.recurring.map((r) => (before.has(r.id) ? { ...r, doneThrough: before.get(r.id) } : r)),
+      }));
+      return { count: created.length, undo };
+    },
     updateSettings: (patch) => update((d) => ({ ...d, settings: { ...d.settings, ...patch } })),
-    startWithTemplate: (name) => update((d) => ({ ...d, ...templateData(), settings: { ...d.settings, name, onboarded: true } })),
+    startWithTemplate: (name) => update((d) => ({ ...d, ...templateData(), recurring: [], settings: { ...d.settings, name, onboarded: true, example: undefined } })),
+    startWithExample: async () => {
+      const ex = await loadExample();
+      update((d) => ({ ...ex, settings: { ...ex.settings, ai: d.settings.ai } }));
+    },
     applyImport: (res, mode, name) => update((d) => {
       const settings = { ...d.settings, onboarded: true, ...(name != null ? { name } : {}) };
-      if (mode === 'replace') return { ...d, categories: res.categories, rubros: res.rubros, movements: res.movements, settings };
+      // Reemplazar todo por una planilla propia ya no es el ejemplo
+      if (mode === 'replace') return { ...d, categories: res.categories, rubros: res.rubros, movements: res.movements, recurring: [], settings: { ...settings, example: undefined } };
       const merged = mergeImport(d, res);
       return {
         ...d,
@@ -165,7 +220,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         settings,
       };
     }),
-    replaceAll: (next) => update(() => next),
+    replaceAll: (next) => update(() => normalizeData(next)),
   }), [data, ix, ready, update]);
 
   return <Ctx.Provider value={store}>{children}</Ctx.Provider>;

@@ -1,0 +1,32 @@
+import { useState } from 'react';
+import { emptyData } from '../domain/template';
+import { useStore } from '../store/store';
+import { ConfirmSheet } from './ConfirmSheet';
+import { Suricata } from './Suricata';
+
+/** Aviso de que son los datos de ejemplo, con la salida para empezar con los propios (vuelve a la bienvenida) */
+export function ExampleBanner({ className = '' }: { className?: string }) {
+  const { data, replaceAll } = useStore();
+  const [asking, setAsking] = useState(false);
+  if (!data.settings.example) return null;
+  return (
+    <>
+      <section className={`card flex items-center gap-3 border-primary/40 bg-soft/20 px-4 py-3 ${className}`}>
+        <Suricata pose="cara-curioso" size={52} className="shrink-0" />
+        <div className="min-w-0 flex-1">
+          <p className="text-[16px] leading-snug">Estás viendo datos de ejemplo (inventados).</p>
+          <button className="chip mt-1.5 border-primary/60 text-primary" onClick={() => setAsking(true)}>Empezar con los míos</button>
+        </div>
+      </section>
+      {asking && (
+        <ConfirmSheet
+          title="¿Empezar con tus datos?"
+          message="Se borran los datos de ejemplo y volvés a la bienvenida para cargar tu planilla o empezar de cero."
+          confirmLabel="Empezar"
+          onConfirm={() => replaceAll(emptyData())}
+          onClose={() => setAsking(false)}
+        />
+      )}
+    </>
+  );
+}

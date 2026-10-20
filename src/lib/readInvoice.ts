@@ -5,6 +5,7 @@ import { parseInvoiceText } from '../domain/invoice';
 import type { Data, InvoiceItem } from '../domain/types';
 import { readImageText, toJpeg } from './ocr';
 import { readPdfText } from './pdf';
+import { isPreview } from './platform';
 
 export interface InvoiceDraft {
   file: Blob;
@@ -37,7 +38,8 @@ export async function readInvoice(file: File, data: Data, onProgress: (msg: stri
   let notice: string | undefined;
 
   const { apiKey, model } = data.settings.ai;
-  if (apiKey) {
+  // En la vista previa web no se puede llamar a Anthropic
+  if (apiKey && !isPreview) {
     try {
       onProgress('Leyendo la factura con Claude…');
       const { readInvoiceWithClaude } = await import('./ai');

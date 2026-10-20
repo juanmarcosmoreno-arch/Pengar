@@ -7,22 +7,39 @@ import { useStore } from '../store/store';
 
 /** Primera vez: bienvenida, nombre y cómo empezar (planilla propia o categorías sugeridas) */
 export function Welcome() {
-  const { startWithTemplate, replaceAll } = useStore();
+  const { startWithTemplate, startWithExample, replaceAll } = useStore();
   const [step, setStep] = useState<'hola' | 'empezar'>('hola');
   const [name, setName] = useState('');
   const [error, setError] = useState('');
+  const [loadingExample, setLoadingExample] = useState(false);
   const backupInput = useRef<HTMLInputElement>(null);
 
   if (step === 'hola') {
     return (
-      <div className="flex min-h-full flex-col items-center px-8 pt-[calc(env(safe-area-inset-top)+7vh)] pb-[calc(env(safe-area-inset-bottom)+24px)]">
-        <Suricata pose="principal" size={240} />
+      <div className="flex min-h-full flex-col items-center px-8 pt-[calc(env(safe-area-inset-top)+var(--app-h)*0.07)] pb-[calc(env(safe-area-inset-bottom)+24px)]">
+        <Suricata pose="principal" size={240} motion="breathe" />
         <h1 className="mt-1 text-6xl">Pengar</h1>
         <p className="mt-1 text-xl text-muted">Tu dinero, más simple.</p>
         <Landscape className="mt-auto w-full max-w-sm opacity-90" />
         <div className="mt-6 flex w-full max-w-sm flex-col gap-3">
           <button className="btn-primary text-xl" onClick={() => setStep('empezar')}>Comenzar</button>
           <button className="btn-outline" onClick={() => backupInput.current?.click()}>Restaurar un respaldo</button>
+          <button
+            className="btn-ghost"
+            disabled={loadingExample}
+            onClick={async () => {
+              setError('');
+              setLoadingExample(true);
+              try {
+                await startWithExample();
+              } catch {
+                setError('No se pudieron cargar los datos de ejemplo.');
+                setLoadingExample(false);
+              }
+            }}
+          >
+            {loadingExample ? 'Cargando el ejemplo…' : 'Mirar con datos de ejemplo'}
+          </button>
           {error && <p className="text-center text-danger">{error}</p>}
         </div>
         <input
@@ -51,7 +68,7 @@ export function Welcome() {
       <button className="btn-ghost -ml-4" onClick={() => setStep('hola')}>‹ Volver</button>
       <div className="mt-2 flex items-end justify-between">
         <h1 className="text-4xl">¡Hola!</h1>
-        <Suricata pose="saludando" size={110} flip />
+        <Suricata pose="saludando" size={110} flip motion="wave" />
       </div>
       <label className="mt-6 block">
         <span className="label">¿Cómo te llamás?</span>

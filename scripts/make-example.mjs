@@ -1,6 +1,7 @@
 // Genera datos/ejemplo.xlsx: una planilla con el mismo formato que la planilla real de presupuesto
 // (un mes por columna, letra de categoría, tabla con PROYECTADO), con montos inventados.
-// Sirve para las pruebas, las capturas y para que alguien vea el formato.
+// Sirve para las pruebas, las capturas y para que alguien vea el formato. La misma planilla va a
+// public/ejemplo.xlsx: es la que carga «Mirar con datos de ejemplo» y la vista previa web.
 import * as XLSX from 'xlsx';
 import { writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -79,5 +80,6 @@ rows[0].length = tcol + 3;
 const ws = XLSX.utils.aoa_to_sheet(rows, { cellDates: true });
 const wb = XLSX.utils.book_new();
 XLSX.utils.book_append_sheet(wb, ws, 'presupuesto');
-writeFileSync(resolve(root, 'datos/ejemplo.xlsx'), XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' }));
-console.log('✓ datos/ejemplo.xlsx', { meses: months.length, rubros: rubros.length + 1 });
+const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+for (const file of ['datos/ejemplo.xlsx', 'public/ejemplo.xlsx']) writeFileSync(resolve(root, file), buf);
+console.log('✓ datos/ejemplo.xlsx y public/ejemplo.xlsx', { meses: months.length, rubros: rubros.length + 1 });

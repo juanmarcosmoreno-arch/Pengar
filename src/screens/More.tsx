@@ -1,10 +1,12 @@
-import { ChevronRight, CircleHelp, FileText, Layers, Settings, Target, Wallet } from 'lucide-react';
+import { ChevronRight, CircleHelp, FileText, Layers, Repeat, Settings, Target, Wallet } from 'lucide-react';
+import { ExampleBanner } from '../components/ExampleBanner';
 import { PageHeader } from '../components/Sheet';
 
-export type MorePage = 'presupuesto' | 'categorias' | 'metas' | 'facturas' | 'ajustes' | 'ayuda';
+export type MorePage = 'presupuesto' | 'fijos' | 'categorias' | 'metas' | 'facturas' | 'ajustes' | 'ayuda';
 
 const ITEMS: { id: MorePage; label: string; sub: string; Icon: typeof Wallet }[] = [
   { id: 'presupuesto', label: 'Presupuesto', sub: 'Cuánto querés gastar por mes en cada categoría', Icon: Wallet },
+  { id: 'fijos', label: 'Gastos fijos', sub: 'Lo que pagás todos los meses: te avisa para anotarlo', Icon: Repeat },
   { id: 'categorias', label: 'Categorías y rubros', sub: 'Armalos a tu gusto: nombres, íconos, colores', Icon: Layers },
   { id: 'metas', label: 'Metas', sub: 'Ahorrar para algo', Icon: Target },
   { id: 'facturas', label: 'Facturas guardadas', sub: 'Las fotos y PDF que escaneaste', Icon: FileText },
@@ -16,6 +18,7 @@ export function More({ onOpen }: { onOpen: (p: MorePage) => void }) {
   return (
     <div>
       <PageHeader title="Más" />
+      <ExampleBanner className="mx-4 mb-3" />
       <div className="card mx-4 divide-y divide-line px-4">
         {ITEMS.map(({ id, label, sub, Icon }) => (
           <button key={id} className="flex w-full items-center gap-3 py-3.5 text-left" onClick={() => onOpen(id)}>

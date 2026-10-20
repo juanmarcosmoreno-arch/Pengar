@@ -1,23 +1,36 @@
 import { ArrowDown, ArrowUp, Camera, Minus, Plus, Target } from 'lucide-react';
+import { useEffect, useState } from 'react';
 import { BudgetRows } from '../components/charts/BudgetRows';
 import { Columns } from '../components/charts/Columns';
+import { ExampleBanner } from '../components/ExampleBanner';
+import { CategoryBubble } from '../components/Icon';
 import { Suricata, type Pose } from '../components/Suricata';
 import { MovementRow } from '../components/MovementRow';
-import { addMonths, currentMonth, monthLabel } from '../domain/dates';
+import { useToast } from '../components/Toast';
+import { addMonths, currentMonth, monthLabel, today } from '../domain/dates';
 import { formatPct } from '../domain/money';
+import { pendingRecurring, type PendingRecurring } from '../domain/recurring';
 import { expenseChange, kpis, monthly, monthSummary } from '../domain/stats';
-import type { Kind, Movement } from '../domain/types';
+import { OTHER_COLOR } from '../domain/template';
+import type { Kind, Movement, Recurring } from '../domain/types';
 import { useMoney } from '../lib/useMoney';
 import { useStore } from '../store/store';
 
-export function Home({ onAdd, onScan, onEdit, onGo }: {
+// El suricata saluda solo la primera vez que se abre Inicio en la sesión
+let greeted = false;
+
+export function Home({ onAdd, onScan, onEdit, onRecord, onGo }: {
   onAdd: (kind: Kind) => void;
   onScan: () => void;
   onEdit: (m: Movement) => void;
+  /** Anotar un gasto fijo (abre el formulario con su monto estimado) */
+  onRecord: (r: Recurring) => void;
   onGo: (where: 'movimientos' | 'mes' | 'presupuesto') => void;
 }) {
   const { data, ix } = useStore();
   const { money } = useMoney();
+  const [wave] = useState(() => !greeted);
+  useEffect(() => { greeted = true; }, []);
   const month = currentMonth();
   const f = { from: month, to: month, includeSavings: false };
   const k = kpis(data, ix, f);
@@ -46,8 +59,10 @@ export function Home({ onAdd, onScan, onEdit, onGo }: {
           <div className="text-xl text-muted">Hola,</div>
           <h1 className="text-4xl leading-tight">{data.settings.name || 'de nuevo'}</h1>
         </div>
-        <Suricata pose="saludando" size={92} flip />
+        <Suricata pose="saludando" size={92} flip motion={wave ? 'wave' : undefined} />
       </header>
+
+      <ExampleBanner />
 
       <section className="card relative overflow-hidden p-5">
         <div className="text-lg text-muted">Te queda en {monthLabel(month, { year: false }).toLowerCase()}</div>
@@ -77,6 +92,8 @@ export function Home({ onAdd, onScan, onEdit, onGo }: {
           </button>
         ))}
       </section>
+
+      <DueRecurring onRecord={onRecord} />
 
       <section className="card p-5">
         <div className="flex items-baseline justify-between">
@@ -121,5 +138,72 @@ export function Home({ onAdd, onScan, onEdit, onGo }: {
       </section>
       <div className="h-4" />
     </div>
+  );
+}
+
+/** «Netflix el 20, Club el 25 y UTE el 28» (los primeros cuatro) */
+function laterText(list: PendingRecurring[], name: (r: PendingRecurring) => string): string {
+  const parts = list.slice(0, 4).map((r) => `${name(r)} el ${r.day}`);
+  if (list.length > 4) parts.push(`${list.length - 4} más`);
+  return parts.length > 1 ? `${parts.slice(0, -1).join(', ')} y ${parts.at(-1)}` : parts[0];
+}
+
+/** Los gastos fijos del mes que ya llegaron a su día y todavía no se anotaron */
+function DueRecurring({ onRecord }: { onRecord: (r: Recurring) => void }) {
+  const { data, ix, update, markRecurring, recordAllDue } = useStore();
+  const { money } = useMoney();
+  const toast = useToast();
+  const now = today();
+  const month = currentMonth();
+  const pending = pendingRecurring(data, month, now);
+  const due = pending.filter((r) => r.due);
+  if (!due.length) return null;
+  const later = pending.filter((r) => !r.due);
+  const name = (r: Recurring) => ix.rubro.get(r.rubroId)?.name ?? 'Sin rubro';
+  const original = (r: PendingRecurring) => data.recurring.find((x) => x.id === r.id) ?? r;
+
+  const skip = (r: PendingRecurring) => {
+    const before = original(r).doneThrough;
+    markRecurring(r.id, month);
+    toast(`Salteaste «${name(r)}» este mes`, {
+      label: 'Deshacer',
+      run: () => update((d) => ({ ...d, recurring: d.recurring.map((x) => (x.id === r.id ? { ...x, doneThrough: before } : x)) })),
+    });
+  };
+  const recordAll = () => {
+    const { count, undo } = recordAllDue(month, now);
+    if (count) toast(`${count} ${count === 1 ? 'movimiento anotado' : 'movimientos anotados'}`, { label: 'Deshacer', run: undo });
+  };
+
+  return (
+    <section className="card px-5 pt-4 pb-2">
+      <div className="flex items-baseline justify-between">
+        <h2 className="section-title">Para anotar este mes</h2>
+        {due.length > 1 && <button className="text-primary" onClick={recordAll}>Anotar todos</button>}
+      </div>
+      <div className="text-[15px] text-muted">Tus gastos fijos, con el monto estimado</div>
+      <div className="divide-y divide-line">
+        {due.map((r) => {
+          const cat = ix.category.get(ix.rubro.get(r.rubroId)?.categoryId ?? '');
+          return (
+            <div key={r.id} className="flex items-center gap-3 py-2">
+              <CategoryBubble icon={cat?.icon ?? 'tag'} color={cat?.color ?? OTHER_COLOR} size={36} />
+              <div className="min-w-0 flex-1">
+                <div className="truncate text-lg leading-tight">{name(r)}</div>
+                <div className="truncate text-[15px]">
+                  <span className="text-muted">el {r.day} · </span>
+                  <span className={`tabular ${r.kind === 'ingreso' ? 'text-ok' : ''}`}>{r.kind === 'ingreso' ? '+ ' : ''}{money(r.amount)}</span>
+                </div>
+              </div>
+              <button className="min-h-tap px-1 text-[16px] text-muted" onClick={() => skip(r)} aria-label={`Saltar ${name(r)}`}>Saltar</button>
+              <button className="chip text-primary" onClick={() => onRecord(original(r))} aria-label={`Anotar ${name(r)}`}>Anotar</button>
+            </div>
+          );
+        })}
+      </div>
+      {later.length > 0 && (
+        <p className="border-t border-line py-2 text-[15px] text-muted">Más adelante: {laterText(later, name)}</p>
+      )}
+    </section>
   );
 }

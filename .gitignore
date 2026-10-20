@@ -1,5 +1,6 @@
 node_modules
 dist
+dist-preview
 .DS_Store
 *.local
 ios/App/App/public
@@ -10,3 +11,4 @@ ios/App/build
 ios/DerivedData
 xcuserdata
 datos/presupuesto.xlsx
+*.tsbuildinfo

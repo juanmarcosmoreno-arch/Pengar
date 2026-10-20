@@ -80,6 +80,21 @@ export interface Goal {
   saved: number;
 }
 
+/** Gasto o ingreso que se repite todos los meses (alquiler, UTE, el sueldo). El monto es una estimación. */
+export interface Recurring {
+  id: string;
+  rubroId: string;
+  kind: Kind;
+  amount: number;
+  /** Día del mes 1..28 */
+  day: number;
+  note?: string;
+  paused?: boolean;
+  /** Último mes YYYY-MM ya anotado o salteado */
+  doneThrough?: string;
+  createdAt: number;
+}
+
 export interface Settings {
   name: string;
   currency: {
@@ -96,6 +111,8 @@ export interface Settings {
   /** Rubro que se aprendió para un comercio o una palabra de factura (texto normalizado → rubroId) */
   learned: Record<string, string>;
   onboarded: boolean;
+  /** Son los datos de ejemplo (inventados): Inicio y Más muestran un aviso para empezar con los propios */
+  example?: boolean;
 }
 
 export interface Data {
@@ -105,5 +122,6 @@ export interface Data {
   movements: Movement[];
   invoices: Invoice[];
   goals: Goal[];
+  recurring: Recurring[];
   settings: Settings;
 }

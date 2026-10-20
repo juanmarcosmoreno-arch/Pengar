@@ -10,6 +10,7 @@ import { today } from '../domain/dates';
 import { distributeTotal } from '../domain/invoice';
 import { parseAmount, round2 } from '../domain/money';
 import type { InvoiceItem } from '../domain/types';
+import { isPreview } from '../lib/platform';
 import { readInvoice, type InvoiceDraft } from '../lib/readInvoice';
 import { useMoney } from '../lib/useMoney';
 import { useStore } from '../store/store';
@@ -18,6 +19,9 @@ interface Row extends InvoiceItem {
   key: number;
   amountText: string;
 }
+
+// En la vista previa web no hay lector de fotos (en el iPhone es Vision; en la web, Tesseract se descarga de otro sitio)
+const PHOTOS_IN_APP = 'En la vista web, solo PDF; las fotos se leen en el iPhone';
 
 let rowKey = 0;
 const toRow = (i: InvoiceItem): Row => ({ ...i, key: ++rowKey, amountText: String(i.amount).replace('.', ',') });
@@ -40,7 +44,9 @@ export function ScanInvoice({ onClose }: { onClose: () => void }) {
       setDraft(await readInvoice(file, data, setProgress));
     } catch (e) {
       console.error(e);
-      setError('No pude leer el archivo. Probá con otra foto (bien derecha y con luz) o cargá el gasto a mano.');
+      setError(isPreview
+        ? 'No pude leer el PDF. En la vista web se leen los PDF con texto (los escaneados, en el iPhone). Probá con otro o cargá el gasto a mano.'
+        : 'No pude leer el archivo. Probá con otra foto (bien derecha y con luz) o cargá el gasto a mano.');
     } finally {
       setProgress('');
     }
@@ -65,7 +71,7 @@ export function ScanInvoice({ onClose }: { onClose: () => void }) {
       {input(pdf, 'application/pdf,.pdf')}
       {progress ? (
         <div className="flex flex-col items-center gap-4 px-8 py-24 text-center">
-          <Suricata pose="calculadora" size={170} className="animate-pulse" />
+          <Suricata pose="calculadora" size={170} motion="sway" />
           <p className="text-xl">{progress}</p>
           <div className="h-6 w-6 animate-spin rounded-full border-[3px] border-soft border-t-primary" />
         </div>
@@ -77,20 +83,20 @@ export function ScanInvoice({ onClose }: { onClose: () => void }) {
           <p className="px-1 text-lg text-muted">
             Sacale una foto a un ticket o subí el PDF de una factura. Pengar lee el comercio, la fecha, el total y cada renglón, y le pone el rubro.
           </p>
-          <button className="card flex w-full items-center gap-4 p-5 text-left" onClick={() => camera.current?.click()}>
+          <button className="card flex w-full items-center gap-4 p-5 text-left disabled:opacity-50" disabled={isPreview} onClick={() => camera.current?.click()}>
             <Camera size={30} className="text-primary" />
-            <div><div className="text-xl">Sacar una foto</div><div className="text-muted">Con el ticket estirado y buena luz</div></div>
+            <div><div className="text-xl">Sacar una foto</div><div className="text-muted">{isPreview ? PHOTOS_IN_APP : 'Con el ticket estirado y buena luz'}</div></div>
           </button>
-          <button className="card flex w-full items-center gap-4 p-5 text-left" onClick={() => gallery.current?.click()}>
+          <button className="card flex w-full items-center gap-4 p-5 text-left disabled:opacity-50" disabled={isPreview} onClick={() => gallery.current?.click()}>
             <ImageIcon size={30} className="text-primary" />
-            <div><div className="text-xl">Elegir de las fotos</div><div className="text-muted">Una captura o una foto que ya tenés</div></div>
+            <div><div className="text-xl">Elegir de las fotos</div><div className="text-muted">{isPreview ? PHOTOS_IN_APP : 'Una captura o una foto que ya tenés'}</div></div>
           </button>
           <button className="card flex w-full items-center gap-4 p-5 text-left" onClick={() => pdf.current?.click()}>
             <FileText size={30} className="text-primary" />
             <div><div className="text-xl">Subir un PDF</div><div className="text-muted">Facturas de UTE, Antel, compras online…</div></div>
           </button>
           {error && <p className="px-1 text-danger">{error}</p>}
-          {!data.settings.ai.apiKey && (
+          {!data.settings.ai.apiKey && !isPreview && (
             <p className="flex gap-2 px-1 pt-2 text-[15px] text-muted">
               <Sparkles size={18} className="mt-0.5 shrink-0" />
               Se lee en el teléfono. Si querés una lectura más fina, podés conectar Claude en Más → Ajustes.
@@ -179,7 +185,7 @@ function Review({ draft, onDone, onRetry }: { draft: InvoiceDraft; onDone: () =>
         )}
         <div className="min-w-0 flex-1 text-[15px] text-muted">
           <div className="truncate">{draft.fileName}</div>
-          <div>{draft.source === 'ia' ? 'Leída con Claude' : 'Leída en el teléfono'} · revisá que esté bien</div>
+          <div>{draft.source === 'ia' ? 'Leída con Claude' : isPreview ? 'Leída en el navegador' : 'Leída en el teléfono'} · revisá que esté bien</div>
           <button className="text-primary" onClick={onRetry}>Probar con otra</button>
         </div>
       </div>

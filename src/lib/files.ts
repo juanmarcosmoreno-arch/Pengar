@@ -2,7 +2,7 @@
 import { Directory, Filesystem } from '@capacitor/filesystem';
 import { Share } from '@capacitor/share';
 import type { Cell } from '../domain/importSheet';
-import { isNative } from './platform';
+import { isNative, isPreview } from './platform';
 
 export interface Sheet {
   name: string;
@@ -28,13 +28,19 @@ async function blobToBase64(blob: Blob): Promise<string> {
   return btoa(s);
 }
 
-/** Descarga (web) o abre «Compartir» (iPhone) para guardar en Archivos, mandar por mail, etc. */
-export async function saveOrShare(blob: Blob, fileName: string): Promise<void> {
+export const NO_DOWNLOADS = 'En la vista previa no se pueden descargar archivos. En el iPhone se abre «Compartir».';
+
+/**
+ * Descarga (web) o abre «Compartir» (iPhone) para guardar en Archivos, mandar por mail, etc.
+ * Devuelve false en la vista previa web, donde no se puede descargar: quien llama avisa con NO_DOWNLOADS.
+ */
+export async function saveOrShare(blob: Blob, fileName: string): Promise<boolean> {
   if (isNative) {
     const { uri } = await Filesystem.writeFile({ path: fileName, data: await blobToBase64(blob), directory: Directory.Cache });
     await Share.share({ title: fileName, url: uri });
-    return;
+    return true;
   }
+  if (isPreview) return false;
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
@@ -43,10 +49,5 @@ export async function saveOrShare(blob: Blob, fileName: string): Promise<void> {
   a.click();
   a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 2000);
-}
-
-/** Abre una factura guardada para verla */
-export async function openFile(blob: Blob, fileName: string): Promise<void> {
-  if (isNative) return saveOrShare(blob, fileName);
-  window.open(URL.createObjectURL(blob), '_blank');
+  return true;
 }

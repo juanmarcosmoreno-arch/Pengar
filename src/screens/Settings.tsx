@@ -1,13 +1,16 @@
 import { Download, Sparkles, Upload } from 'lucide-react';
 import { useRef, useState } from 'react';
+import { ConfirmSheet } from '../components/ConfirmSheet';
 import { ImportFlow, ImportFormatHelp } from '../components/ImportFlow';
 import { PageHeader } from '../components/Sheet';
 import { useToast } from '../components/Toast';
 import { today } from '../domain/dates';
 import { movementsCsv } from '../domain/export';
 import { emptyData } from '../domain/template';
+import type { Data } from '../domain/types';
 import { makeBackup, readBackup } from '../lib/backup';
-import { saveOrShare } from '../lib/files';
+import { NO_DOWNLOADS, saveOrShare } from '../lib/files';
+import { isPreview } from '../lib/platform';
 import { useStore } from '../store/store';
 
 const MODELS = [
@@ -32,6 +35,12 @@ export function Settings({ onBack }: { onBack: () => void }) {
   const [importing, setImporting] = useState(false);
   const [showKey, setShowKey] = useState(false);
   const restore = useRef<HTMLInputElement>(null);
+  // Respaldo leído que espera confirmación, y «Borrar todo»
+  const [backup, setBackup] = useState<Data | null>(null);
+  const [wiping, setWiping] = useState(false);
+  const share = async (blob: Blob | Promise<Blob>, fileName: string) => {
+    if (!(await saveOrShare(await blob, fileName))) toast(NO_DOWNLOADS);
+  };
 
   return (
     <div>
@@ -62,27 +71,35 @@ export function Settings({ onBack }: { onBack: () => void }) {
             <Sparkles size={18} className="mt-0.5 shrink-0 text-primary" />
             Sin esto, las facturas se leen en el teléfono (gratis y sin conexión). Con una clave de la API de Claude, la foto o el PDF se mandan a Anthropic y se lee mejor, sobre todo tickets arrugados y facturas largas. Cada lectura tiene un costo chico en tu cuenta de Anthropic.
           </p>
-          <div>
-            <label className="label">Clave de la API (console.anthropic.com)</label>
-            <div className="flex gap-2">
-              <input
-                className="field flex-1"
-                type={showKey ? 'text' : 'password'}
-                autoComplete="off"
-                placeholder="sk-ant-…"
-                value={s.ai.apiKey}
-                onChange={(e) => updateSettings({ ai: { ...s.ai, apiKey: e.target.value.trim() } })}
-              />
-              <button className="btn-outline px-4" onClick={() => setShowKey(!showKey)}>{showKey ? 'Ocultar' : 'Ver'}</button>
-            </div>
-            <p className="mt-1 text-[14px] text-muted">Queda guardada solo en este teléfono y no va en los respaldos.</p>
-          </div>
-          <div>
-            <label className="label">Modelo</label>
-            <select className="field" value={s.ai.model} onChange={(e) => updateSettings({ ai: { ...s.ai, model: e.target.value } })}>
-              {MODELS.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
-            </select>
-          </div>
+          {isPreview ? (
+            <p className="rounded-2xl bg-sunken px-4 py-3 text-[16px]">
+              En la vista previa web, la lectura con Claude no está disponible. Los PDF se leen igual, en el navegador; en la app de iPhone podés poner tu clave.
+            </p>
+          ) : (
+            <>
+              <div>
+                <label className="label">Clave de la API (console.anthropic.com)</label>
+                <div className="flex gap-2">
+                  <input
+                    className="field flex-1"
+                    type={showKey ? 'text' : 'password'}
+                    autoComplete="off"
+                    placeholder="sk-ant-…"
+                    value={s.ai.apiKey}
+                    onChange={(e) => updateSettings({ ai: { ...s.ai, apiKey: e.target.value.trim() } })}
+                  />
+                  <button className="btn-outline px-4" onClick={() => setShowKey(!showKey)}>{showKey ? 'Ocultar' : 'Ver'}</button>
+                </div>
+                <p className="mt-1 text-[14px] text-muted">Queda guardada solo en este teléfono y no va en los respaldos.</p>
+              </div>
+              <div>
+                <label className="label">Modelo</label>
+                <select className="field" value={s.ai.model} onChange={(e) => updateSettings({ ai: { ...s.ai, model: e.target.value } })}>
+                  {MODELS.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
+                </select>
+              </div>
+            </>
+          )}
           {Object.keys(s.learned).length > 0 && (
             <button className="btn-ghost -ml-4" onClick={() => { updateSettings({ learned: {} }); toast('Listo: se olvidó lo aprendido'); }}>
               Olvidar lo aprendido de las facturas ({Object.keys(s.learned).length})
@@ -102,13 +119,13 @@ export function Settings({ onBack }: { onBack: () => void }) {
         <Section title="Exportar y respaldo">
           <button
             className="btn-outline w-full"
-            onClick={() => saveOrShare(new Blob(['﻿' + movementsCsv(data)], { type: 'text/csv' }), `pengar-movimientos-${today()}.csv`)}
+            onClick={() => share(new Blob(['﻿' + movementsCsv(data)], { type: 'text/csv' }), `pengar-movimientos-${today()}.csv`)}
           >
             <Download size={18} /> Movimientos en CSV (Excel)
           </button>
           <button
             className="btn-outline w-full"
-            onClick={async () => saveOrShare(await makeBackup(data), `pengar-respaldo-${today()}.json`)}
+            onClick={() => share(makeBackup(data), `pengar-respaldo-${today()}.json`)}
           >
             <Download size={18} /> Respaldo completo (con facturas)
           </button>
@@ -124,11 +141,7 @@ export function Settings({ onBack }: { onBack: () => void }) {
               e.target.value = '';
               if (!f) return;
               try {
-                const d = await readBackup(f);
-                if (confirm('Esto reemplaza todos los datos de este teléfono por los del respaldo. ¿Seguimos?')) {
-                  replaceAll({ ...d, settings: { ...d.settings, ai: s.ai, onboarded: true } });
-                  toast('Respaldo restaurado');
-                }
+                setBackup(await readBackup(f));
               } catch (err) {
                 toast(err instanceof Error ? err.message : 'No se pudo leer el respaldo');
               }
@@ -137,17 +150,32 @@ export function Settings({ onBack }: { onBack: () => void }) {
         </Section>
 
         <Section title="Empezar de nuevo">
-          <button
-            className="btn-ghost -ml-4 text-danger"
-            onClick={() => {
-              if (confirm('¿Borrar todos los movimientos, rubros, categorías y metas de este teléfono? No se puede deshacer.')) replaceAll(emptyData());
-            }}
-          >
-            Borrar todo
-          </button>
+          <button className="btn-ghost -ml-4 text-danger" onClick={() => setWiping(true)}>Borrar todo</button>
         </Section>
         <p className="text-center text-[14px] text-muted">Pengar · versión {__APP_VERSION__}</p>
       </div>
+      {backup && (
+        <ConfirmSheet
+          title="¿Restaurar el respaldo?"
+          message={`Se reemplazan todos los datos de este teléfono por los del respaldo (${backup.movements.length} movimientos, ${backup.invoices.length} facturas).`}
+          confirmLabel="Restaurar"
+          onConfirm={() => {
+            replaceAll({ ...backup, settings: { ...backup.settings, ai: s.ai, onboarded: true } });
+            toast('Respaldo restaurado');
+          }}
+          onClose={() => setBackup(null)}
+        />
+      )}
+      {wiping && (
+        <ConfirmSheet
+          title="¿Borrar todo?"
+          message="Se borran los movimientos, rubros, categorías, metas y facturas de este teléfono. No se puede deshacer."
+          confirmLabel="Borrar todo"
+          danger
+          onConfirm={() => replaceAll(emptyData())}
+          onClose={() => setWiping(false)}
+        />
+      )}
     </div>
   );
 }

@@ -1,4 +1,5 @@
 /** Respaldo completo (datos + archivos de facturas) en un solo .json, para guardar en Archivos/iCloud o pasar a otro teléfono. */
+import { normalizeData } from '../domain/template';
 import type { Data } from '../domain/types';
 import { loadFile, saveFile } from './db';
 
@@ -35,5 +36,5 @@ export async function readBackup(file: File): Promise<Data> {
     const bytes = Uint8Array.from(atob(f.base64), (ch) => ch.charCodeAt(0));
     await saveFile(id, new Blob([bytes], { type: f.mime }));
   }
-  return parsed.data;
+  return normalizeData(parsed.data);
 }

@@ -68,7 +68,7 @@ const TEMPLATE: TemplateCategory[] = [
   { code: 'M', name: 'Mantenimiento', icon: 'm:mant-casa', rubros: [
     ['Arreglos de la casa', ['ferreteria', 'sodimac', 'pintureria', 'barraca', 'plomero', 'electricista']],
   ] },
-  { code: 'B', name: 'Bienes de uso', icon: 'm:tecnologia', rubros: [
+  { code: 'B', name: 'Bienes de uso', icon: 'm:compras-online', rubros: [
     ['Compras online', ['mercado libre', 'mercadolibre', 'amazon', 'temu', 'shein']],
     ['Electrodomésticos y muebles', ['electrodomestico', 'mueble', 'motociclo', 'divino']],
   ] },
@@ -131,7 +131,34 @@ export function templateData(): Pick<Data, 'categories' | 'rubros'> {
 }
 
 export function emptyData(): Data {
-  return { version: 1, categories: [], rubros: [], movements: [], invoices: [], goals: [], settings: defaultSettings() };
+  return { version: 1, categories: [], rubros: [], movements: [], invoices: [], goals: [], recurring: [], settings: defaultSettings() };
+}
+
+/** Completa lo que falte en datos de una versión anterior (lo guardado en el teléfono o un respaldo viejo) */
+export function normalizeData(d: Partial<Data>): Data {
+  const base = emptyData();
+  // Las categorías con íconos de línea pasan a las ilustraciones del suricata
+  const categories = (d.categories ?? []).map((c) => (LEGACY_ICON_TO_ART[c.icon] ? { ...c, icon: LEGACY_ICON_TO_ART[c.icon] } : c));
+  const s = d.settings;
+  return {
+    ...base,
+    ...d,
+    version: 1,
+    categories,
+    rubros: d.rubros ?? [],
+    movements: d.movements ?? [],
+    invoices: d.invoices ?? [],
+    goals: d.goals ?? [],
+    recurring: d.recurring ?? [],
+    settings: {
+      ...base.settings,
+      ...s,
+      ai: { ...base.settings.ai, ...s?.ai },
+      currency: { ...base.settings.currency, ...s?.currency },
+      learned: s?.learned ?? {},
+      example: s?.example === true || undefined,
+    },
+  };
 }
 
 /**
@@ -144,6 +171,14 @@ export const ART: [string, string][] = [
   ['educacion', 'Educación'], ['libros', 'Libros y cultura'], ['ropa', 'Ropa'], ['regalos', 'Regalos'], ['entretenimiento', 'Entretenimiento'],
   ['telefonia', 'Telefonía e internet'], ['tecnologia', 'Tecnología'], ['mascotas', 'Mascotas'], ['familia', 'Hijos / familia'],
   ['seguros', 'Seguros'], ['ahorro', 'Ahorro'], ['inversiones', 'Inversiones'], ['otros', 'Otros'], ['imprevistos', 'Imprevistos'],
+  ['compras-online', 'Compras online'], ['impuestos', 'Impuestos y trámites'],
+];
+
+/** Segundo juego de ilustraciones: otra versión de las mismas categorías («m:salud-2»…) */
+export const ART_VARIANTS = [
+  'super', 'comida', 'restaurantes', 'salidas', 'servicios', 'vivienda', 'mant-casa', 'hogar', 'limpieza', 'jardin', 'mant-auto',
+  'viajes', 'salud', 'deporte', 'educacion', 'libros', 'ropa', 'regalos', 'entretenimiento', 'tecnologia', 'mascotas', 'familia',
+  'seguros', 'ahorro', 'inversiones', 'otros',
 ];
 
 /** Íconos de línea de versiones anteriores → ilustración equivalente (los que no tienen equivalente quedan igual) */
@@ -158,7 +193,8 @@ export const LEGACY_ICON_TO_ART: Record<string, string> = {
 
 /** Íconos que se pueden elegir para una categoría o una meta: primero las ilustraciones, después los de línea */
 export const ICON_CHOICES = [
-  ...ART.map(([n]) => `m:${n}`),
+  // Cada ilustración seguida de su otra versión, si tiene
+  ...ART.flatMap(([n]) => (ART_VARIANTS.includes(n) ? [`m:${n}`, `m:${n}-2`] : [`m:${n}`])),
   'cart', 'home', 'car', 'fuel', 'bus', 'heart', 'pill', 'graduation', 'book', 'sparkles', 'wrench', 'sofa', 'shirt',
   'tv', 'music', 'wifi', 'phone', 'zap', 'droplet', 'flame', 'utensils', 'coffee', 'plane', 'palm', 'gift', 'hand-heart',
   'paw', 'baby', 'dumbbell', 'piggy', 'coins', 'briefcase', 'landmark', 'receipt', 'tag', 'target',

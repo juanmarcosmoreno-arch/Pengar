@@ -1,9 +1,11 @@
 import { useEffect, useState } from 'react';
-import { MovementSheet } from './components/MovementSheet';
+import { MovementSheet, type MovementPreset } from './components/MovementSheet';
 import { TabBar, type Tab } from './components/TabBar';
 import { ToastProvider } from './components/Toast';
-import { currentMonth } from './domain/dates';
+import { currentMonth, monthOf, today } from './domain/dates';
+import { recurringDate } from './domain/recurring';
 import type { Kind, Movement } from './domain/types';
+import { scrollToTop } from './lib/scroll';
 import { Budget } from './screens/Budget';
 import { Categories } from './screens/Categories';
 import { Goals } from './screens/Goals';
@@ -12,16 +14,17 @@ import { Home } from './screens/Home';
 import { Invoices } from './screens/Invoices';
 import { More, type MorePage } from './screens/More';
 import { Movements } from './screens/Movements';
+import { RecurringScreen } from './screens/Recurring';
 import { ScanInvoice } from './screens/ScanInvoice';
 import { Settings } from './screens/Settings';
 import { Stats, type StatsView } from './screens/Stats';
 import { Welcome } from './screens/Welcome';
 import { useStore } from './store/store';
 
-type Editing = { movement?: Movement; kind?: Kind } | null;
+type Editing = { movement?: Movement; kind?: Kind; preset?: MovementPreset; onSaved?: () => void } | null;
 
 export default function App() {
-  const { data, ready } = useStore();
+  const { data, ready, markRecurring } = useStore();
   const [tab, setTab] = useState<Tab>('inicio');
   const [page, setPage] = useState<MorePage | null>(null);
   const [editing, setEditing] = useState<Editing>(null);
@@ -30,7 +33,15 @@ export default function App() {
   const [statsMonth, setStatsMonth] = useState(currentMonth());
   const [movMonth, setMovMonth] = useState(currentMonth());
 
-  useEffect(() => window.scrollTo(0, 0), [tab, page]);
+  useEffect(scrollToTop, [tab, page]);
+  // Al terminar la bienvenida (también después de dejar los datos de ejemplo) se arranca en Inicio
+  const onboarded = data.settings.onboarded;
+  useEffect(() => {
+    if (!onboarded) {
+      setTab('inicio');
+      setPage(null);
+    }
+  }, [onboarded]);
 
   if (!ready) return null;
   if (!data.settings.onboarded) return <ToastProvider><Welcome /></ToastProvider>;
@@ -45,6 +56,7 @@ export default function App() {
   if (tab === 'mas' && page) {
     content = {
       presupuesto: <Budget onBack={back} />,
+      fijos: <RecurringScreen onBack={back} />,
       categorias: <Categories onBack={back} />,
       metas: <Goals onBack={back} />,
       facturas: <Invoices onBack={back} />,
@@ -57,6 +69,15 @@ export default function App() {
         onAdd={(kind) => setEditing({ kind })}
         onScan={() => setScanning(true)}
         onEdit={(movement) => setEditing({ movement })}
+        onRecord={(r) => {
+          // Un gasto fijo: se abre con su monto estimado y, al guardarlo, queda anotado este mes
+          const now = today();
+          const month = monthOf(now);
+          setEditing({
+            preset: { kind: r.kind, rubroId: r.rubroId, amount: r.amount, note: r.note, date: recurringDate(r, month, now) },
+            onSaved: () => markRecurring(r.id, month),
+          });
+        }}
         onGo={(where) => {
           if (where === 'movimientos') go('movimientos');
           else if (where === 'mes') { setStatsView('mes'); setStatsMonth(currentMonth()); go('estadisticas'); }
@@ -76,7 +97,7 @@ export default function App() {
     <ToastProvider>
       <main className="mx-auto max-w-xl pb-[calc(env(safe-area-inset-bottom)+76px)]">{content}</main>
       <TabBar tab={tab} onChange={go} />
-      {editing && <MovementSheet movement={editing.movement} kind={editing.kind} onClose={() => setEditing(null)} />}
+      {editing && <MovementSheet movement={editing.movement} kind={editing.kind} preset={editing.preset} onSaved={editing.onSaved} onClose={() => setEditing(null)} />}
       {scanning && <ScanInvoice onClose={() => setScanning(false)} />}
     </ToastProvider>
   );
