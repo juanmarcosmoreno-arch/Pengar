@@ -1,0 +1,120 @@
+@import '@fontsource/patrick-hand/400.css';
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --bg: 245 243 238;        /* crema #F5F3EE */
+  --surface: 255 253 248;
+  --sunken: 237 234 226;
+  --ink: 34 46 42;
+  --muted: 102 115 111;
+  --line: 221 216 205;
+  --primary: 23 107 96;     /* verde principal #176B60 */
+  --soft: 127 196 172;      /* verde suave #7FC4AC */
+  --on-primary: 255 255 255;
+  --ok: 31 138 91;
+  --danger: 194 69 63;
+  color-scheme: light;
+}
+
+.dark {
+  --bg: 20 26 24;
+  --surface: 28 36 33;
+  --sunken: 35 44 41;
+  --ink: 236 239 233;
+  --muted: 154 168 163;
+  --line: 48 60 56;
+  --primary: 93 179 154;
+  --soft: 45 90 78;
+  --on-primary: 12 22 19;
+  --ok: 92 196 142;
+  --danger: 236 120 112;
+  color-scheme: dark;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  @apply bg-bg text-ink font-hand antialiased;
+  font-size: 18px;
+  line-height: 1.3;
+  -webkit-tap-highlight-color: transparent;
+  -webkit-user-select: none;
+  user-select: none;
+  overscroll-behavior: none;
+}
+
+input,
+textarea,
+select {
+  -webkit-user-select: text;
+  user-select: text;
+  font: inherit;
+}
+
+@layer components {
+  /* Tarjeta con borde «a mano»: esquinas apenas desparejas, como en el boceto */
+  .card {
+    @apply bg-surface border border-line;
+    border-radius: 20px 18px 21px 17px / 18px 21px 17px 20px;
+  }
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 min-h-tap px-5 text-lg transition active:scale-[0.98] disabled:opacity-50;
+    border-radius: 999px;
+  }
+  .btn-primary {
+    @apply btn bg-primary text-on-primary;
+  }
+  .btn-outline {
+    @apply btn border-[1.5px] border-ink/70 text-ink bg-transparent;
+  }
+  .btn-ghost {
+    @apply btn text-primary;
+  }
+  .field {
+    @apply w-full min-h-tap rounded-2xl border border-line bg-surface px-4 text-lg outline-none focus:border-primary;
+  }
+  .label {
+    @apply block text-sm text-muted mb-1;
+  }
+  .chip {
+    @apply inline-flex items-center gap-1.5 min-h-[38px] px-3.5 rounded-full border border-line bg-surface text-base whitespace-nowrap transition;
+  }
+  .chip-on {
+    @apply chip border-primary bg-primary text-on-primary;
+  }
+  .section-title {
+    @apply text-xl text-ink;
+  }
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  scrollbar-width: none;
+}
+
+.tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+@keyframes sheet-in {
+  from { transform: translateY(100%); }
+  to { transform: translateY(0); }
+}
+@keyframes fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+.animate-sheet { animation: sheet-in 0.28s cubic-bezier(0.2, 0.8, 0.2, 1); }
+.animate-fade { animation: fade-in 0.2s ease-out; }
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-sheet, .animate-fade { animation: none; }
+}
