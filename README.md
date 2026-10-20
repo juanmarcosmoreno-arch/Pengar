@@ -46,7 +46,7 @@ lo que anotes desde ahora va día por día. La hoja «Joan» no se importa.
 
 `datos/ejemplo.xlsx` (montos inventados, `node scripts/make-example.mjs`) tiene el mismo formato: lo usan las
 pruebas y las capturas. Si copiás tu planilla en `datos/presupuesto.xlsx`, `npm test` también la verifica.
-La misma planilla queda en `public/ejemplo.xlsx`: en la bienvenida, **Mirar con datos de ejemplo** la carga (corrida
+La misma planilla queda en `public/ejemplo.json` (en JSON, más liviano): en la bienvenida, **Mirar con datos de ejemplo** la carga (corrida
 para que llegue hasta el mes pasado) junto con unos gastos de este mes y una meta, a nombre de «Ana». Inicio y Más
 avisan que son datos inventados y «Empezar con los míos» vuelve a la bienvenida.
 
@@ -75,7 +75,7 @@ npm run build:preview   # dist-preview/pengar.html + files.json
 Una build para mirar la app en el navegador sin instalar nada, pensada para publicarse como página (artefacto):
 abre directo en Inicio con los datos de ejemplo. `scripts/build-artifact.mjs` arma `dist-preview/pengar.html` (sin
 `<html>`/`<head>`/`<body>`, porque quien la publica la envuelve en su propio esqueleto) y `dist-preview/files.json`, la
-lista de archivos que van al lado con su tipo (JS, CSS, fuentes, imágenes, `ejemplo.xlsx`, el worker de pdf.js), todos
+lista de archivos que van al lado con su tipo (JS, CSS, fuentes, imágenes, `ejemplo.json`, el worker de pdf.js), todos
 con rutas relativas. En una pantalla ancha la app se ve dentro de un marco de teléfono y, desde 960 px, con una
 columna al lado que cuenta qué probar.
 

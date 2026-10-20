@@ -1,15 +1,9 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import * as XLSX from 'xlsx';
 import { alignMonths, exampleData, exampleDaily } from '../example';
 import { importMonthlySheet, type Cell } from '../importSheet';
 import { buildIndex, kpis } from '../stats';
 import { templateData } from '../template';
-
-function sheetRows(file: string): Cell[][] {
-  const wb = XLSX.read(readFileSync(file), { cellDates: true });
-  return XLSX.utils.sheet_to_json<Cell[]>(wb.Sheets['presupuesto'], { header: 1, raw: true, defval: null });
-}
 
 describe('datos de ejemplo', () => {
   const { rubros } = templateData();
@@ -39,7 +33,7 @@ describe('datos de ejemplo', () => {
   });
 
   it('corre los meses de la planilla hasta el mes pasado y suma lo de este mes', () => {
-    const res = importMonthlySheet(sheetRows('public/ejemplo.xlsx'));
+    const res = importMonthlySheet(JSON.parse(readFileSync('public/ejemplo.json', 'utf8')) as Cell[][]);
     expect(alignMonths(res.movements, '2027-03').map((m) => m.date).sort().at(-1)).toBe('2027-03-01');
     const data = exampleData(res, '2027-04-10');
     const months = data.movements.filter((m) => m.monthly).map((m) => m.date.slice(0, 7));

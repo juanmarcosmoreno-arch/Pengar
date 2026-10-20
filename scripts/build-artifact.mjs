@@ -109,7 +109,7 @@ const worker = files.find((f) => /pdf\.worker[^/]*\.mjs$/.test(f.path));
 const js = files.filter((f) => f.path.endsWith('.js')).map((f) => readFileSync(join(root, f.from), 'utf8')).join('\n');
 const workerName = worker?.path.split('/').pop();
 if (!worker || !js.includes(`new URL("${workerName}",import.meta.url)`)) throw new Error('No encontré el worker de pdf.js con ruta relativa');
-if (!files.some((f) => f.path === 'ejemplo.xlsx')) throw new Error('Falta ejemplo.xlsx (public/ejemplo.xlsx)');
+if (!files.some((f) => f.path === 'ejemplo.json')) throw new Error('Falta ejemplo.json (public/ejemplo.json: node scripts/make-example.mjs)');
 
 const size = files.reduce((s, f) => s + statSync(join(root, f.from)).size, 0);
 console.log(`✓ dist-preview/pengar.html y files.json (${files.length} archivos, ${(size / 1024 / 1024).toFixed(1)} MB)`);
