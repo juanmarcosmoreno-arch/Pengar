@@ -46,6 +46,12 @@ describe('planilla mensual (datos/ejemplo.xlsx)', () => {
     expect(res.categories.find((c) => c.kind === 'ingreso')!.name).toBe('Ingresos');
     expect(res.warnings).toEqual([]);
   });
+  it('los rubros heredan palabras de los sugeridos', () => {
+    const sup = res.rubros.find((r) => r.name === 'Supermercado')!;
+    expect(sup.keywords).toContain('tienda inglesa');
+    expect(suggestRubro('LECHE', 'DISCO', res.rubros, {})?.rubroId).toBe(sup.id);
+    expect(res.rubros.find((r) => r.name === 'UTE')!.keywords).toContain('energia electrica');
+  });
   it('las cuentas coinciden con TOTAL e ingresos de la planilla', () => {
     for (const [col, month] of [[2, '2024-11'], [13, '2025-10'], [25, '2026-10']] as const) {
       const k = kpis(data, ix, { from: month, to: month, includeSavings: true });

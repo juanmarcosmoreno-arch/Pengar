@@ -102,6 +102,11 @@ export function newId(prefix = ''): string {
   return `${prefix}${Date.now().toString(36)}${counter.toString(36)}${rand}`;
 }
 
+/** Rubros sugeridos con sus palabras clave (para completar los rubros de una planilla importada) */
+export function templateKeywords(): { name: string; keywords: string[] }[] {
+  return TEMPLATE.flatMap((t) => t.rubros.map(([name, keywords]) => ({ name, keywords })));
+}
+
 export function templateData(): Pick<Data, 'categories' | 'rubros'> {
   const categories: Category[] = [];
   const rubros: Rubro[] = [];

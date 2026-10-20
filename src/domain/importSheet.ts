@@ -12,7 +12,7 @@
  */
 import { monthOf } from './dates';
 import { parseAmount } from './money';
-import { newId, OTHER_COLOR, PALETTE } from './template';
+import { newId, OTHER_COLOR, PALETTE, templateKeywords } from './template';
 import type { Budget, Category, Kind, Movement, Rubro } from './types';
 
 export type Cell = string | number | boolean | Date | null | undefined;
@@ -190,6 +190,8 @@ export function importMonthlySheet(rows: Cell[][]): ImportResult {
   // Categorías de la tabla que no tienen rubros todavía (para presupuestar igual)
   for (const code of table.keys()) ensureCategory(code, 'gasto');
 
+  const incomeCats = new Set([...categories.values()].filter((c) => c.kind === 'ingreso').map((c) => c.id));
+  enrichKeywords(rubros.filter((r) => !incomeCats.has(r.categoryId)));
   const list = finishCategories([...categories.values()], movements, rubros);
   const months = [...new Set(movements.map((m) => monthOf(m.date)))].sort();
   return { categories: list, rubros, movements, months, warnings };
@@ -319,4 +321,24 @@ export function mergeImport(existing: { categories: Category[]; rubros: Rubro[] 
   }
   const movements = res.movements.map((m) => ({ ...m, rubroId: rubroMap.get(m.rubroId) ?? m.rubroId }));
   return { ...res, categories, rubros, movements };
+}
+
+/**
+ * Los rubros de una planilla traen solo su nombre como palabra clave. Si el nombre se parece a un único rubro
+ * sugerido («UTE» → Luz, «super alimentacion» → Supermercado), hereda sus palabras (Tienda Inglesa, Disco…), así
+ * las facturas se asignan solas desde el primer día. Cada palabra queda en un solo rubro.
+ */
+export function enrichKeywords(rubros: Rubro[]): void {
+  const used = new Set(rubros.flatMap((r) => r.keywords));
+  const wordIn = (k: string, text: string) => new RegExp(`(^|[^a-z0-9])${k.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}($|[^a-z0-9])`).test(text);
+  for (const r of rubros) {
+    const name = norm(r.name);
+    const matches = templateKeywords().filter((t) => wordIn(norm(t.name), name) || t.keywords.some((k) => k.trim().length >= 3 && wordIn(norm(k), name)));
+    if (matches.length !== 1) continue;
+    for (const k of matches[0].keywords) {
+      if (used.has(k)) continue;
+      used.add(k);
+      r.keywords.push(k);
+    }
+  }
 }
