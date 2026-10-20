@@ -25,16 +25,3 @@ export function Landscape({ className }: { className?: string }) {
     </svg>
   );
 }
-
-export function Sprout({ className }: { className?: string }) {
-  return (
-    <svg viewBox="0 0 80 80" className={className} fill="none" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-      <path d="M8 72 C24 68 56 68 72 72" stroke="#8A9894" strokeWidth="1.5" />
-      <path d="M40 70 C40 56 41 44 44 34" stroke="#176B60" strokeWidth="2" />
-      <path d="M43 38 C46 22 58 12 74 10 C72 28 60 38 43 38 Z" fill="#7FC4AC" fillOpacity="0.6" stroke="#176B60" strokeWidth="1.6" />
-      <path d="M46 35 C54 28 62 20 70 14" stroke="#176B60" strokeWidth="1" />
-      <path d="M41 50 C34 38 22 34 10 36 C14 48 26 54 41 50 Z" fill="#7FC4AC" fillOpacity="0.45" stroke="#176B60" strokeWidth="1.6" />
-      <path d="M38 48 C30 44 22 40 14 38" stroke="#176B60" strokeWidth="1" />
-    </svg>
-  );
-}

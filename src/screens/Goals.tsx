@@ -2,6 +2,7 @@ import { Plus } from 'lucide-react';
 import { useState } from 'react';
 import { CategoryBubble, Icon } from '../components/Icon';
 import { PageHeader, Sheet } from '../components/Sheet';
+import { EmptyState, Suricata } from '../components/Suricata';
 import { parseAmount } from '../domain/money';
 import { ICON_CHOICES, newId } from '../domain/template';
 import type { Goal } from '../domain/types';
@@ -23,20 +24,23 @@ export function Goals({ onBack }: { onBack: () => void }) {
       />
       <div className="space-y-3 px-4 pb-10">
         {!data.goals.length && (
-          <div className="card p-5 text-center">
-            <p className="text-lg">¿Estás juntando para algo?</p>
-            <p className="text-muted">Vacaciones, el auto, la casa… Poné cuánto necesitás y andá sumando.</p>
-            <button className="btn-primary mt-4" onClick={() => setEdit('new')}><Plus size={18} /> Nueva meta</button>
+          <div className="card">
+            <EmptyState pose="metas" title="¿Estás juntando para algo?">
+              <p>Vacaciones, el auto, la casa… Poné cuánto necesitás y andá sumando.</p>
+              <button className="btn-primary mt-4" onClick={() => setEdit('new')}><Plus size={18} /> Nueva meta</button>
+            </EmptyState>
           </div>
         )}
         {data.goals.map((g) => {
           const pct = g.target > 0 ? Math.min(1, g.saved / g.target) : 0;
           return (
             <div key={g.id} className="card flex items-center gap-4 p-4">
-              <button onClick={() => setEdit(g)} aria-label={`Editar ${g.name}`}><CategoryBubble icon={g.icon} color="#176B60" size={60} /></button>
+              <button onClick={() => setEdit(g)} aria-label={`Editar ${g.name}`}>
+                {pct >= 1 ? <Suricata pose="celebrando" size={64} /> : <CategoryBubble icon={g.icon} color="#176B60" size={60} />}
+              </button>
               <div className="min-w-0 flex-1">
                 <button className="w-full text-left" onClick={() => setEdit(g)}>
-                  <div className="text-xl">{g.name}</div>
+                  <div className="text-xl">{g.name}{pct >= 1 && <span className="ml-2 text-[15px] text-ok">¡Lo lograste!</span>}</div>
                   <div className="text-[16px]">{money(g.saved)} <span className="text-muted">/ {money(g.target)}</span></div>
                 </button>
                 <div className="mt-2 flex items-center gap-2">

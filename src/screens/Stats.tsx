@@ -6,6 +6,7 @@ import { HBars } from '../components/charts/HBars';
 import { Legend, TimeChart } from '../components/charts/TimeChart';
 import { Icon } from '../components/Icon';
 import { PageHeader } from '../components/Sheet';
+import { EmptyState, Suricata } from '../components/Suricata';
 import { Segmented, Toggle } from '../components/Toggle';
 import { addMonths, currentMonth, monthLabel, monthOf } from '../domain/dates';
 import { formatPct } from '../domain/money';
@@ -76,7 +77,7 @@ function Trends() {
   const activeGroup = folded.find((g) => g.key === active);
   const label = by === 'category' ? 'categoría' : 'rubro';
 
-  if (!span) return <p className="py-10 text-center text-muted">Cuando anotes gastos, acá vas a ver cómo cambian en el tiempo.</p>;
+  if (!span) return <EmptyState pose="analizando" title="Todavía no hay números">Cuando anotes gastos, acá vas a ver cómo cambian en el tiempo.</EmptyState>;
 
   return (
     <>
@@ -168,6 +169,7 @@ function MonthView({ month, setMonth }: { month: string; setMonth: (m: string) =
   const [open, setOpen] = useState<string | null>(null);
   const s = monthSummary(data, ix, month, includeSavings);
   const cards = percentCards(data, ix, month);
+  const over = s.rows.find((r) => r.status === 'over');
 
   const detail = useMemo(() => {
     const byCat = new Map<string, Map<string, number>>();
@@ -197,6 +199,17 @@ function MonthView({ month, setMonth }: { month: string; setMonth: (m: string) =
         <Kpi label="Presupuesto" value={money(s.budget)} />
         <Kpi label={s.diff > 0 ? 'Pasado del presupuesto' : 'Debajo del presupuesto'} value={money(Math.abs(s.diff))} tone={s.diff > 0 ? 'danger' : 'ok'} />
       </div>
+
+      {s.budget > 0 && (
+        <div className="card flex items-center gap-3 px-4 py-2">
+          <Suricata pose={s.diff > 0 ? 'cara-preocupado' : 'cara-feliz'} size={84} />
+          <p className="text-[17px]">
+            {s.diff > 0
+              ? <>Este mes te pasaste {money(s.diff)} del presupuesto. {over ? <>Lo que más se fue: <b>{over.category.name}</b>.</> : null}</>
+              : <>¡Vas bien! Te quedan {money(-s.diff)} del presupuesto de {monthLabel(month, { year: false }).toLowerCase()}.</>}
+          </p>
+        </div>
+      )}
 
       <Card title="Real contra presupuesto" sub="La barra es lo gastado; la rayita, el presupuesto de la categoría.">
         {s.rows.length ? <BudgetRows rows={s.rows} onSelect={(id) => setOpen(open === id ? null : id)} /> : <p className="text-muted">No hay gastos ni presupuesto este mes.</p>}

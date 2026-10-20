@@ -1,7 +1,7 @@
 import { useRef, useState } from 'react';
 import { ImportFlow, ImportFormatHelp } from '../components/ImportFlow';
 import { Landscape } from '../components/Illustrations';
-import { LogoMark } from '../components/Logo';
+import { Suricata } from '../components/Suricata';
 import { readBackup } from '../lib/backup';
 import { useStore } from '../store/store';
 
@@ -15,11 +15,11 @@ export function Welcome() {
 
   if (step === 'hola') {
     return (
-      <div className="flex min-h-full flex-col items-center px-8 pt-[calc(env(safe-area-inset-top)+12vh)] pb-[calc(env(safe-area-inset-bottom)+24px)]">
-        <LogoMark size={120} />
-        <h1 className="mt-2 text-6xl">Pengar</h1>
+      <div className="flex min-h-full flex-col items-center px-8 pt-[calc(env(safe-area-inset-top)+7vh)] pb-[calc(env(safe-area-inset-bottom)+24px)]">
+        <Suricata pose="principal" size={240} />
+        <h1 className="mt-1 text-6xl">Pengar</h1>
         <p className="mt-1 text-xl text-muted">Tu dinero, más simple.</p>
-        <Landscape className="mt-auto w-full max-w-sm" />
+        <Landscape className="mt-auto w-full max-w-sm opacity-90" />
         <div className="mt-6 flex w-full max-w-sm flex-col gap-3">
           <button className="btn-primary text-xl" onClick={() => setStep('empezar')}>Comenzar</button>
           <button className="btn-outline" onClick={() => backupInput.current?.click()}>Restaurar un respaldo</button>
@@ -49,7 +49,10 @@ export function Welcome() {
   return (
     <div className="mx-auto max-w-md px-6 pt-[calc(env(safe-area-inset-top)+32px)] pb-[calc(env(safe-area-inset-bottom)+32px)]">
       <button className="btn-ghost -ml-4" onClick={() => setStep('hola')}>‹ Volver</button>
-      <h1 className="mt-2 text-4xl">¡Hola!</h1>
+      <div className="mt-2 flex items-end justify-between">
+        <h1 className="text-4xl">¡Hola!</h1>
+        <Suricata pose="saludando" size={110} />
+      </div>
       <label className="mt-6 block">
         <span className="label">¿Cómo te llamás?</span>
         <input className="field" value={name} onChange={(e) => setName(e.target.value)} placeholder="Tu nombre" autoFocus />

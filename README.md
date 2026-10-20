@@ -2,7 +2,7 @@
 
 # Pengar
 
-**Tu dinero, más simple.** App de iPhone para anotar gastos en dos toques, escanear facturas y tickets (foto o PDF)
+**Tu dinero, más simple.** Con un suricata que te acompaña. App de iPhone para anotar gastos en dos toques, escanear facturas y tickets (foto o PDF)
 y ver cómo se mueve la plata en el tiempo. Todo queda en el teléfono.
 
 <p align="center">
@@ -27,7 +27,7 @@ y ver cómo se mueve la plata en el tiempo. Todo queda en el teléfono.
     promedio mensual por categoría, los 10 rubros con más gasto. Por categorías o por rubros, con o sin ahorro,
     en 6 meses, 12 meses, el año o todo.
 - **A tu gusto**: categorías (nombre, ícono, color, presupuesto fijo o % del ingreso, si cuenta como ahorro) y rubros
-  (nombre, categoría, palabras para reconocerlos en facturas; se pueden unir o archivar). Moneda y decimales. Modo oscuro.
+  (nombre, categoría, palabras para reconocerlos en facturas; se pueden unir o archivar). Moneda y decimales.
 - **Metas** de ahorro, **importar** planillas de Excel/CSV, **exportar** a CSV y **respaldo** completo (con facturas).
 
 ## Tus datos
@@ -55,7 +55,7 @@ npm run dev          # http://localhost:5173 (en la web las fotos se leen con Te
 npm test             # pruebas de la lógica (importar planillas, cuentas, lectura de facturas)
 npm run build
 npm run shots        # capturas en docs/capturas (importa datos/ejemplo.xlsx)
-npm run icons        # íconos a partir del logo
+npm run icons        # íconos a partir del suricata principal
 ```
 
 ### Instalar en el iPhone
@@ -76,6 +76,11 @@ iPhone y dale ▶︎. Después de cambiar código web: `npm run ios:sync`.
 | `src/lib` | Teléfono: guardado (IndexedDB), lector de fotos (Vision / Tesseract), PDF (pdf.js), Claude, archivos |
 | `src/screens`, `src/components` | Pantallas y piezas de la interfaz (gráficas en SVG propio, con d3-shape) |
 | `ios/App/App/PengarOCRPlugin.swift` | Plugin nativo: texto de una foto con Vision |
+
+El **suricata** (docs/marca) aparece en la bienvenida, el ícono, el inicio (su cara cambia según cómo viene el
+mes), los estados vacíos, la lectura de facturas, las metas y el presupuesto. `python3 scripts/suricata.py` recorta
+las poses de la hoja y les saca el fondo de papel (quedan en `src/assets/suricata`); `<Suricata pose="…" />` las
+muestra. La app es solo en modo claro.
 
 Stack: React 18 + TypeScript + Vite + Tailwind, Capacitor 8 para iOS. Tipografía Patrick Hand y paleta del boceto
 (verde #176B60, verde suave #7FC4AC, crema #F5F3EE, gris #8A9894). Los colores de las categorías en las gráficas

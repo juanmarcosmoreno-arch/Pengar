@@ -1,7 +1,7 @@
 import { ArrowDown, ArrowUp, Camera, Minus, Plus, Target } from 'lucide-react';
 import { BudgetRows } from '../components/charts/BudgetRows';
 import { Columns } from '../components/charts/Columns';
-import { Sprout } from '../components/Illustrations';
+import { Suricata, type Pose } from '../components/Suricata';
 import { MovementRow } from '../components/MovementRow';
 import { addMonths, currentMonth, monthLabel } from '../domain/dates';
 import { formatPct } from '../domain/money';
@@ -36,27 +36,32 @@ export function Home({ onAdd, onScan, onEdit, onGo }: {
     .sort((a, b) => b.date.localeCompare(a.date) || b.createdAt - a.createdAt)
     .slice(0, 5);
   const hasMonthsOnly = !recent.length && data.movements.length > 0;
+  // La cara del suricata según cómo viene el mes
+  const mood: Pose = k.balance < 0 ? 'cara-preocupado' : summary.budget > 0 && summary.diff > 0 ? 'cara-pensando' : k.income > 0 ? 'cara-feliz' : 'cara-normal';
 
   return (
     <div className="space-y-4 px-4 pt-[calc(env(safe-area-inset-top)+16px)]">
-      <header className="px-1">
-        <div className="text-xl text-muted">Hola,</div>
-        <h1 className="text-4xl leading-tight">{data.settings.name || 'de nuevo'}</h1>
+      <header className="flex items-end justify-between px-1">
+        <div className="pb-2">
+          <div className="text-xl text-muted">Hola,</div>
+          <h1 className="text-4xl leading-tight">{data.settings.name || 'de nuevo'}</h1>
+        </div>
+        <Suricata pose="saludando" size={92} />
       </header>
 
       <section className="card relative overflow-hidden p-5">
         <div className="text-lg text-muted">Te queda en {monthLabel(month, { year: false }).toLowerCase()}</div>
         <div className={`mt-1 text-[44px] leading-none ${k.balance < 0 ? 'text-danger' : ''}`}>{money(k.balance)}</div>
-        <div className="mt-2 text-[15px] text-muted">
+        <div className="mt-2 pr-20 text-[15px] text-muted">
           Entró {money(k.income)} · Gastaste {money(k.expense)}{savings > 0 ? ` · Ahorraste ${money(savings)}` : ''}
         </div>
         {change != null && (
-          <div className={`mt-2 flex items-center gap-1 text-[15px] ${change > 0 ? 'text-danger' : 'text-ok'}`}>
+          <div className={`mt-2 flex items-center gap-1 pr-20 text-[15px] ${change > 0 ? 'text-danger' : 'text-ok'}`}>
             {change > 0 ? <ArrowUp size={16} /> : <ArrowDown size={16} />}
             {formatPct(Math.abs(change))} {change > 0 ? 'más' : 'menos'} de gastos que el mes anterior
           </div>
         )}
-        <Sprout className="absolute -right-1 top-3 h-24 w-24 opacity-90" />
+        <Suricata pose={mood} size={104} className="absolute -bottom-1 right-2" />
       </section>
 
       <section className="grid grid-cols-4 gap-2 px-1">
@@ -104,11 +109,14 @@ export function Home({ onAdd, onScan, onEdit, onGo }: {
         {recent.length ? (
           <div className="divide-y divide-line">{recent.map((m) => <MovementRow key={m.id} m={m} onClick={() => onEdit(m)} />)}</div>
         ) : (
-          <p className="py-4 text-muted">
+          <div className="flex items-center gap-3 py-3">
+            <Suricata pose="lista" size={96} />
+            <p className="text-muted">
             {hasMonthsOnly
               ? 'Tus meses importados están en Movimientos. Lo que anotes desde ahora aparece acá, día por día.'
               : 'Todavía no anotaste nada. Tocá «Gasto» o sacale una foto a una factura.'}
-          </p>
+            </p>
+          </div>
         )}
       </section>
       <div className="h-4" />

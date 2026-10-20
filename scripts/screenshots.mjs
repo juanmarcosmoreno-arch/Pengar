@@ -32,8 +32,8 @@ async function run(scheme) {
   const shot = async (name, full = false) => {
     if (only && !name.startsWith(only)) return;
     await page.waitForTimeout(350);
-    await page.screenshot({ path: join(out, `${name}${scheme === 'dark' ? '-oscuro' : ''}.png`), fullPage: full });
-    console.log('✓', name, scheme);
+    await page.screenshot({ path: join(out, `${name}.png`), fullPage: full });
+    console.log('✓', name);
   };
   await page.goto(url);
   await shot('01-bienvenida');
@@ -82,6 +82,5 @@ async function run(scheme) {
 }
 
 await run('light');
-if (!only) await run('dark');
 await browser.close();
 server.close();

@@ -2,14 +2,12 @@ import { Download, Sparkles, Upload } from 'lucide-react';
 import { useRef, useState } from 'react';
 import { ImportFlow, ImportFormatHelp } from '../components/ImportFlow';
 import { PageHeader } from '../components/Sheet';
-import { Segmented } from '../components/Toggle';
 import { useToast } from '../components/Toast';
 import { today } from '../domain/dates';
 import { movementsCsv } from '../domain/export';
 import { emptyData } from '../domain/template';
 import { makeBackup, readBackup } from '../lib/backup';
 import { saveOrShare } from '../lib/files';
-import { getTheme, setTheme, type ThemeChoice } from '../lib/theme';
 import { useStore } from '../store/store';
 
 const MODELS = [
@@ -31,7 +29,6 @@ export function Settings({ onBack }: { onBack: () => void }) {
   const { data, updateSettings, replaceAll } = useStore();
   const toast = useToast();
   const s = data.settings;
-  const [theme, setThemeState] = useState<ThemeChoice>(getTheme());
   const [importing, setImporting] = useState(false);
   const [showKey, setShowKey] = useState(false);
   const restore = useRef<HTMLInputElement>(null);
@@ -57,14 +54,6 @@ export function Settings({ onBack }: { onBack: () => void }) {
                 <option value={2}>Con 2 decimales</option>
               </select>
             </div>
-          </div>
-          <div>
-            <div className="label">Apariencia</div>
-            <Segmented
-              value={theme}
-              onChange={(t) => { setThemeState(t); setTheme(t); }}
-              options={[{ id: 'auto', label: 'Como el iPhone' }, { id: 'light', label: 'Clara' }, { id: 'dark', label: 'Oscura' }]}
-            />
           </div>
         </Section>
 

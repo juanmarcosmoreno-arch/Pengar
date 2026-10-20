@@ -2,6 +2,7 @@ import { ChevronLeft, ChevronRight, Plus, Search } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { MovementRow } from '../components/MovementRow';
 import { PageHeader } from '../components/Sheet';
+import { EmptyState } from '../components/Suricata';
 import { addMonths, currentMonth, dayLabel, monthLabel, monthOf } from '../domain/dates';
 import { norm } from '../domain/importSheet';
 import type { Movement } from '../domain/types';
@@ -82,7 +83,11 @@ export function Movements({ onAdd, onEdit, month, setMonth }: {
             <div className="divide-y divide-line">{g.items.map((m) => <MovementRow key={m.id} m={m} onClick={() => onEdit(m)} />)}</div>
           </section>
         ))}
-        {!groups.length && <p className="py-10 text-center text-muted">{q ? 'Nada coincide con la búsqueda.' : 'No hay movimientos este mes.'}</p>}
+        {!groups.length && (
+          <EmptyState pose={q ? 'pensando' : 'lista'} title={q ? 'Nada coincide con la búsqueda' : 'No hay movimientos este mes'}>
+            {!q && 'Anotá un gasto con el + o escaneá una factura.'}
+          </EmptyState>
+        )}
         <div className="h-20" />
       </div>
       <button

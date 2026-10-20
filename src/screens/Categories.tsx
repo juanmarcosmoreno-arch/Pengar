@@ -2,6 +2,7 @@ import { ChevronRight, Plus } from 'lucide-react';
 import { useState } from 'react';
 import { CategoryBubble, Icon } from '../components/Icon';
 import { PageHeader, Sheet } from '../components/Sheet';
+import { Suricata } from '../components/Suricata';
 import { Segmented, Toggle } from '../components/Toggle';
 import { useToast } from '../components/Toast';
 import { guessIcon, norm } from '../domain/importSheet';
@@ -69,10 +70,13 @@ export function Categories({ onBack }: { onBack: () => void }) {
     <div>
       <PageHeader title="Categorías y rubros" onBack={onBack} />
       <div className="space-y-5 px-4 pb-10">
-        <p className="px-1 text-muted">
+        <div className="flex items-center gap-3 px-1">
+        <p className="flex-1 text-muted">
           Las <b>categorías</b> agrupan (Alimentación, Transporte…) y tienen presupuesto. Los <b>rubros</b> son lo que elegís al anotar (Feria, UTE, Netflix…).
           Tocá el ícono para cambiar nombre, color o ícono.
         </p>
+        <Suricata pose="compras" size={100} />
+        </div>
         {section('gasto', 'Gastos')}
         {section('ingreso', 'Ingresos')}
       </div>

@@ -18,20 +18,6 @@
   color-scheme: light;
 }
 
-.dark {
-  --bg: 20 26 24;
-  --surface: 28 36 33;
-  --sunken: 35 44 41;
-  --ink: 236 239 233;
-  --muted: 154 168 163;
-  --line: 48 60 56;
-  --primary: 93 179 154;
-  --soft: 45 90 78;
-  --on-primary: 12 22 19;
-  --ok: 92 196 142;
-  --danger: 236 120 112;
-  color-scheme: dark;
-}
 
 html,
 body,

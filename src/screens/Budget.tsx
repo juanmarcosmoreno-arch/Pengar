@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Icon } from '../components/Icon';
 import { PageHeader } from '../components/Sheet';
+import { Suricata } from '../components/Suricata';
 import { currentMonth } from '../domain/dates';
 import { parseAmount } from '../domain/money';
 import { budgetAmount, incomeFor } from '../domain/stats';
@@ -20,7 +21,10 @@ export function Budget({ onBack }: { onBack: () => void }) {
     <div>
       <PageHeader title="Presupuesto" onBack={onBack} />
       <div className="space-y-4 px-4 pb-10">
-        <p className="px-1 text-muted">Cuánto pensás gastar por mes en cada categoría. Se compara con lo real en Estadísticas → Mes.</p>
+        <div className="flex items-center gap-3 px-1">
+          <p className="flex-1 text-muted">Cuánto pensás gastar por mes en cada categoría. Se compara con lo real en Estadísticas → Mes.</p>
+          <Suricata pose="organizando" size={90} />
+        </div>
         <div className="grid grid-cols-2 gap-3">
           <div className="card px-4 py-3"><div className="text-[15px] text-muted">Gastos sin ahorro</div><div className="text-2xl">{money(noSavings)}</div></div>
           <div className="card px-4 py-3"><div className="text-[15px] text-muted">Con ahorro</div><div className="text-2xl">{money(total)}</div></div>

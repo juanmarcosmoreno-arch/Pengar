@@ -1,4 +1,5 @@
 import { PageHeader } from '../components/Sheet';
+import { Suricata } from '../components/Suricata';
 
 const TOPICS: [string, string][] = [
   ['Anotar un gasto', 'En Inicio tocá «Gasto» (o el + en Movimientos), escribí el monto y elegí el rubro. Listo: la fecha es hoy salvo que la cambies. Los rubros que más usás aparecen primero.'],
@@ -15,6 +16,7 @@ export function Help({ onBack }: { onBack: () => void }) {
     <div>
       <PageHeader title="Cómo se usa" onBack={onBack} />
       <div className="space-y-3 px-4 pb-10">
+        <div className="flex justify-center"><Suricata pose="cara-curioso" size={120} /></div>
         {TOPICS.map(([t, body]) => (
           <section key={t} className="card p-4">
             <h2 className="text-xl">{t}</h2>

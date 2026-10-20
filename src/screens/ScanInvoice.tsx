@@ -2,6 +2,7 @@ import { Camera, FileText, ImageIcon, Plus, Sparkles, Trash2 } from 'lucide-reac
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { RubroPicker } from '../components/RubroPicker';
 import { PageHeader, Sheet } from '../components/Sheet';
+import { Suricata } from '../components/Suricata';
 import { Segmented } from '../components/Toggle';
 import { useToast } from '../components/Toast';
 import { suggestRubro } from '../domain/classify';
@@ -64,13 +65,15 @@ export function ScanInvoice({ onClose }: { onClose: () => void }) {
       {input(pdf, 'application/pdf,.pdf')}
       {progress ? (
         <div className="flex flex-col items-center gap-4 px-8 py-24 text-center">
-          <div className="h-12 w-12 animate-spin rounded-full border-4 border-soft border-t-primary" />
+          <Suricata pose="calculadora" size={170} className="animate-pulse" />
           <p className="text-xl">{progress}</p>
+          <div className="h-6 w-6 animate-spin rounded-full border-[3px] border-soft border-t-primary" />
         </div>
       ) : draft ? (
         <Review draft={draft} onDone={onClose} onRetry={() => setDraft(null)} />
       ) : (
         <div className="space-y-3 px-4 pb-10">
+          <div className="flex justify-center"><Suricata pose="lista" size={150} /></div>
           <p className="px-1 text-lg text-muted">
             Sacale una foto a un ticket o subí el PDF de una factura. Pengar lee el comercio, la fecha, el total y cada renglón, y le pone el rubro.
           </p>
