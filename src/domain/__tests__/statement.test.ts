@@ -538,6 +538,58 @@ describe('duplicados y planilla', () => {
     expect(findDuplicates(txs, movements).size).toBe(0);
     expect(findDuplicates(txs, movements, 40).get(0)).toBe(movements[0].id);
   });
+  describe('compras en dólares contra gastos anotados en pesos: la cotización del BCU de cada fecha', () => {
+    // BCU (inventadas): el dólar subió en la quincena; viernes 9 y lunes 12 (el fin de semana vale la del viernes)
+    const rates = [
+      { date: '2026-10-01', rate: 39.8 },
+      { date: '2026-10-09', rate: 42.4 },
+      { date: '2026-10-12', rate: 42.6 },
+    ];
+    const amazon = tx('2026-10-10', 100, 'AMAZON MKTPLACE', { currency: 'usd' }); // sábado: 42,40
+    const anotado = mov('2026-10-10', 4240, { merchant: 'Amazon' });
+
+    it('con la del día de la compra se reconoce; con 40 fijo, no (6% de diferencia)', () => {
+      expect(findDuplicates([amazon], [anotado], { rates }).get(0)).toBe(anotado.id);
+      expect(findDuplicates([amazon], [anotado], { rates, fallback: 40 }).get(0)).toBe(anotado.id);
+      expect(findDuplicates([amazon], [anotado], 40).size).toBe(0);
+      expect(findDuplicates([amazon], [anotado], { fallback: 40 }).size).toBe(0);
+    });
+
+    it('con 40 fijo aparecía un repetido que no es: con la del día, ya no', () => {
+      const otro = mov('2026-10-10', 4050, { merchant: 'Amazon' }); // 101,25 U$S a 40: otra compra
+      expect(findDuplicates([amazon], [otro], 40).get(0)).toBe(otro.id);
+      expect(findDuplicates([amazon], [otro], { rates, fallback: 40 }).size).toBe(0);
+    });
+
+    it('o con la del día en que se anotó (a no más de 3 días)', () => {
+      // Con la del sábado (42,40): 4240 ± 3% (hasta 4367,2); con la del lunes (42,60): 4260 ± 3% (hasta 4387,8)
+      const cerca = mov('2026-10-12', 4385, { merchant: 'Amazon' });
+      expect(findDuplicates([amazon], [cerca], { rates }).get(0)).toBe(cerca.id);
+      const lejos = mov('2026-10-12', 4390, { merchant: 'Amazon' });
+      expect(findDuplicates([amazon], [lejos], { rates }).size).toBe(0);
+    });
+
+    it('un día sin cotización del BCU (antes de las que hay) usa la de respaldo; sin respaldo, no se compara', () => {
+      const viejo = tx('2026-09-20', 100, 'AMAZON MKTPLACE', { currency: 'usd' });
+      const m = mov('2026-09-20', 4000, { merchant: 'Amazon' });
+      expect(findDuplicates([viejo], [m], { rates, fallback: 40 }).get(0)).toBe(m.id);
+      expect(findDuplicates([viejo], [m], { rates }).size).toBe(0);
+      expect(findDuplicates([viejo], [m], { rates: null }).size).toBe(0);
+    });
+
+    it('lo anotado con la cuenta en dólares en la nota se compara en dólares, con o sin cotizaciones', () => {
+      const conNota = mov('2026-10-10', 4100, { merchant: 'Amazon', note: 'U$S 100 × 41,00' });
+      expect(findDuplicates([amazon], [conNota], { rates }).get(0)).toBe(conNota.id);
+      expect(findDuplicates([amazon], [conNota]).get(0)).toBe(conNota.id);
+    });
+
+    it('las compras en pesos no cambian', () => {
+      const pesos = tx('2026-10-10', 1500, 'FARMASHOP 14');
+      const m = mov('2026-10-11', 1510, { merchant: 'Farmashop' });
+      expect(findDuplicates([pesos], [m], { rates, fallback: 40 }).get(0)).toBe(m.id);
+      expect(findDuplicates([pesos], [m]).get(0)).toBe(m.id);
+    });
+  });
   it('meses que ya vinieron como totales de la planilla', () => {
     const txs = [tx('2025-12-28', 100, 'DISCO'), tx('2026-01-03', 200, 'DEVOTO'), tx('2026-02-01', -50, 'DEVOLUCION', { kind: 'credito' })];
     const movements = [mov('2025-12-01', 30000, { origin: 'planilla', monthly: true }), mov('2026-02-01', 9000, { origin: 'planilla', monthly: true }), mov('2026-01-01', 90000, { kind: 'ingreso', origin: 'planilla', monthly: true })];

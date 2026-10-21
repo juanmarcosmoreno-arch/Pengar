@@ -19,6 +19,8 @@ import { useStore } from '../store/store';
 interface Row extends DraftItem {
   key: number;
   amountText: string;
+  /** El descuento de un producto: la clave de su renglón (si le cambian el rubro, el descuento lo sigue) */
+  ofKey?: number;
 }
 
 // En la vista previa web no hay lector de fotos (en el iPhone es Vision; en la web, Tesseract se descarga de otro sitio)
@@ -28,6 +30,10 @@ const AI_NAME = { apple: 'Apple Intelligence', claude: 'Claude' } as const;
 
 let rowKey = 0;
 const toRow = (i: DraftItem): Row => ({ ...i, key: ++rowKey, amountText: String(i.amount).replace('.', ',') });
+const toRows = (items: DraftItem[]): Row[] => {
+  const rows = items.map(toRow);
+  return rows.map((r) => (r.discountOf != null && rows[r.discountOf] ? { ...r, ofKey: rows[r.discountOf].key } : r));
+};
 
 /** Foto o PDF de una factura → revisar lo leído → guardar como gasto(s) con la factura adjunta */
 export function ScanInvoice({ onClose }: { onClose: () => void }) {
@@ -166,7 +172,7 @@ function Review({ draft, onDone, onRetry, onDirty }: { draft: InvoiceDraft; onDo
   const [date, setDate] = useState(draft.date ?? today());
   const itemsSum = draft.items.reduce((s, i) => s + i.amount, 0);
   const [totalText, setTotalText] = useState(String(draft.total ?? round2(itemsSum) ?? '').replace('.', ','));
-  const [rows, setRows] = useState<Row[]>(() => draft.items.map(toRow));
+  const [rows, setRows] = useState<Row[]>(() => toRows(draft.items));
   const [picking, setPicking] = useState<number | 'single' | null>(null);
   const [saving, setSaving] = useState(false);
   const [preview, setPreview] = useState<string | null>(null);
@@ -231,6 +237,14 @@ function Review({ draft, onDone, onRetry, onDirty }: { draft: InvoiceDraft; onDo
   const setRow = (key: number, patch: Partial<Row>) => {
     setTouched(true);
     setRows((rs) => rs.map((r) => (r.key === key ? { ...r, ...patch } : r)));
+  };
+  // Otro rubro para un producto: sus descuentos lo siguen (si todavía estaban en el mismo)
+  const setRubro = (key: number, rubroId: string) => {
+    setTouched(true);
+    setRows((rs) => {
+      const before = rs.find((r) => r.key === key)?.rubroId;
+      return rs.map((r) => (r.key === key || (r.ofKey === key && r.rubroId === before) ? { ...r, rubroId, reason: undefined } : r));
+    });
   };
 
   return (
@@ -360,7 +374,7 @@ function Review({ draft, onDone, onRetry, onDirty }: { draft: InvoiceDraft; onDo
             onChange={(id) => {
               setTouched(true);
               if (picking === 'single') setSingleRubro(id);
-              else setRow(picking, { rubroId: id, reason: undefined });
+              else setRubro(picking, id);
               setPicking(null);
             }}
           />

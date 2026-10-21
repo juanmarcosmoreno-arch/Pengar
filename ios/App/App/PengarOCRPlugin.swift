@@ -15,7 +15,8 @@ public class PengarOCRPlugin: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "fetchCfe", returnType: CAPPluginReturnPromise),
     ]
 
-    /// Recibe un JPEG en base64 (ya orientado) y devuelve `boxes`: texto con x, y, w, h normalizados (origen arriba a la izquierda).
+    /// Recibe un JPEG en base64 (ya orientado) y devuelve `boxes`: texto con x, y, w, h normalizados (origen arriba a la izquierda)
+    /// y su inclinación (`slope`, en píxeles: con eso JS endereza la foto, como en Kvar).
     /// Con `qr: true` también lee los códigos QR de la misma foto y los devuelve en `qr`.
     @objc func recognize(_ call: CAPPluginCall) {
         guard let base64 = call.getString("image"),
@@ -26,6 +27,8 @@ public class PengarOCRPlugin: CAPPlugin, CAPBridgedPlugin {
             call.reject("Imagen inválida", "INVALID_IMAGE")
             return
         }
+        let width = Double(cgImage.width)
+        let height = Double(cgImage.height)
         let wantsQR = call.getBool("qr") ?? false
 
         DispatchQueue.global(qos: .userInitiated).async {
@@ -59,12 +62,17 @@ public class PengarOCRPlugin: CAPPlugin, CAPBridgedPlugin {
                 let boxes: [[String: Any]] = (request.results ?? []).compactMap { observation in
                     guard let candidate = observation.topCandidates(1).first else { return nil }
                     let box = observation.boundingBox // normalizado, origen abajo a la izquierda
+                    let topLeft = observation.topLeft
+                    let topRight = observation.topRight
+                    let dx = Double(topRight.x - topLeft.x) * width
+                    let dy = Double(topLeft.y - topRight.y) * height // positiva si baja hacia la derecha
                     return [
                         "text": candidate.string,
                         "x": Double(box.minX),
                         "y": Double(1 - box.maxY),
                         "w": Double(box.width),
                         "h": Double(box.height),
+                        "slope": dx > 1 ? dy / dx : 0.0,
                     ]
                 }
                 var qr: [String] = []

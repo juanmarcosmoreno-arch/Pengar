@@ -204,6 +204,22 @@ describe('ticket con el QR de la DGI, en el iPhone', () => {
     expect(d).toMatchObject({ merchant: 'FERIA DEL BARRIO', total: 120, dgi: undefined, notice: undefined });
     expect(pairs(d)).toEqual([['TOMATES', 120]]);
   });
+
+  it('ticket de súper con un descuento debajo de un producto: el descuento va al rubro de ese producto (sin preguntarle a la IA)', async () => {
+    photoSays('TA-TA\nAGUJA SIN HUESO 422,36\n1,324 KG x 319,00\nDCTO SOCIO -42,24\nLECHE CONAPROLE 91,80\n2 x 45,90\nTOTAL $ 471,92');
+    const data = makeData();
+    data.rubros = data.rubros.map((r) => ({ ...r, keywords: [] }));
+    data.settings.learned = { [itemKey('LECHE CONAPROLE')!]: idOf(data, 'Supermercado') };
+    mocks.appleStatus.mockResolvedValue('available');
+    mocks.apple.mockImplementation(async (qs: { id: string; text: string }[]) => new Map(qs.map((q) => [q.id, 'Carnicería'])));
+    const d = await readInvoice(photo(), data, () => {});
+    expect(mocks.apple.mock.calls.flatMap((c) => c[0].map((q: { text: string }) => q.text))).toEqual(['AGUJA SIN HUESO (en Ta-Ta)']);
+    expect(d.items.map((i) => [i.description, i.amount, i.rubroId, i.reason])).toEqual([
+      ['AGUJA SIN HUESO', 422.36, idOf(data, 'Carnicería'), 'apple'],
+      ['DCTO SOCIO', -42.24, idOf(data, 'Carnicería'), 'apple'],
+      ['LECHE CONAPROLE', 91.8, idOf(data, 'Supermercado'), 'aprendido'],
+    ]);
+  });
 });
 
 describe('con Claude', () => {

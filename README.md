@@ -23,6 +23,18 @@ o, si querés, compartido con tu casa (cada uno anota en el suyo).
   - En el iPhone se lee con Vision de Apple (en el teléfono, gratis, sin conexión). Los PDF con texto se leen
     directo; los escaneados se pasan por el lector de fotos.
   - Opcional: con una clave de la API de Claude (Ajustes) la lectura es mejor, sobre todo en tickets arrugados.
+  - **Tickets del súper** (`src/domain/receipt.ts`, el lector de Kvar con sus pruebas): los productos en dos renglones de
+    Disco, Devoto y Géant («AGUJA SIN HUESO 422.36» y abajo «1.324 KG x 319.00», también con la cantidad arriba, el monto
+    pegado a la cantidad o los dos renglones juntos), el renglón con código, cantidad, precio y la letra del IVA de
+    Macromercado, los de Tienda Inglesa, Ta-Ta o El Dorado, descuentos, anulaciones, bolsas y el ruido del OCR (O por 0,
+    puntos perdidos, signos sueltos). Si el texto parece un ticket de súper (un súper conocido o su RUT, «e-Ticket» o
+    renglones de cantidad × precio) se lee con los dos lectores y queda el que más se acerca al TOTAL (a igualdad, el de
+    tickets); las facturas de servicios (UTE, Antel) siguen con el de facturas. El descuento de un producto queda como su
+    propio renglón, abajo del producto y con su rubro (`discountOf`; si en la revisión se le cambia el rubro al producto, el
+    descuento lo sigue, y de un descuento no se aprende nada); las bolsas y los descuentos de toda la compra, sueltos. En el
+    iPhone, Vision manda la inclinación de cada pedazo de texto y, si los renglones así armados no cierran con el TOTAL,
+    se prueban otras inclinaciones (una para toda la foto y una por franja, por el papel arrugado) y queda la que mejor
+    lee la factura (`bestGrouping` en `src/domain/ocrLines.ts`, con `invoiceLinesScore`).
   - Los renglones que no reconoce por lo aprendido ni por las palabras clave se los pregunta a Apple Intelligence
     (iOS 26+, en el teléfono y sin costo) y, lo que siga sin rubro, a Claude si hay clave. Quedan marcados
     «sugerido por …» para revisarlos; al guardar, se aprenden. Ajustes muestra si el iPhone tiene Apple Intelligence.
@@ -35,9 +47,9 @@ o, si querés, compartido con tu casa (cada uno anota en el suyo).
     «TOTAL A PAGAR» (nunca la ADENDA, que trae los datos del cliente) y el PDF no se guarda. Si todavía no está
     publicado (hay hasta el día hábil siguiente), no hay conexión o no se entiende, queda lo leído de la foto con el
     total y la fecha del QR, y lo dice («mañana sacale la foto de nuevo»; sin QR, con los códigos leídos de lo
-    impreso, también puede ser un código mal leído, y lo dice así). Lo leído de la foto de un ticket de Disco, Devoto o
-    Géant no trae renglones de más: ni el año de la fecha, ni el renglón de la cantidad («1.324 KG x 319.00»), ni el
-    código de seguridad. La revisión muestra «Ticket oficial de la DGI» o «Total y fecha del QR de la
+    impreso, también puede ser un código mal leído, y lo dice así). Lo leído de la foto es lo del lector de tickets (ver
+    arriba): ni el año de la fecha, ni el renglón de la cantidad («1.324 KG x 319.00»), ni el código de seguridad. La
+    revisión muestra «Ticket oficial de la DGI» o «Total y fecha del QR de la
     DGI», con «Ver en la DGI» (el link del QR). En la web no hay QR ni ticket oficial.
 - **Estado de cuenta de la tarjeta** («Tarjeta» en Inicio): el PDF del banco (OCA, Visa/Master del BROU, Itaú,
   Santander, Scotiabank…), la planilla CSV o Excel que exporta o, en el iPhone, una foto. Las compras se juntan por
@@ -48,7 +60,10 @@ o, si querés, compartido con tu casa (cada uno anota en el suyo).
   - Compras en U$S pasadas a pesos con la cotización del BCU del día de cada compra (o una sola, si se escribe en
     «Usar una sola cotización»; la del estado de cuenta se ofrece con un toque), cuotas en la nota,
     posibles repetidos con lo ya anotado (no se guardan salvo que se pida; lo anotado en dólares se compara en dólares,
-    por la cuenta de la nota, sin depender de la cotización), pagos, saldos y créditos aparte (el reintegro de IVA se
+    por la cuenta de la nota, sin depender de la cotización; lo anotado en pesos, con la cotización del BCU del día de la
+    compra o la del día en que se anotó, con 3% de tolerancia: mientras llega, sin conexión o un día que no tiene, con la
+    del estado de cuenta y, si no trae, 40; cuando llegan las del BCU los repetidos se rehacen solos, sin frenar la
+    pantalla), pagos, saldos y créditos aparte (el reintegro de IVA se
     puede restar) y aviso si el mes ya tiene los totales de la planilla. Si el BCU no contesta, lo dice («No se pudo
     traer la cotización del BCU: escribila») con «Probar de nuevo».
   - Cada compra queda como un gasto con su fecha, la tarjeta en la nota y el estado de cuenta adjunto (Más →
@@ -104,13 +119,13 @@ o, si querés, compartido con tu casa (cada uno anota en el suyo).
   llegue a tiempo). Si Face ID no reconoce, el iPhone ofrece su código (`.deviceOwnerAuthentication`); si el iPhone ya
   no tiene código, se abre (no hay con qué bloquear) y Ajustes lo explica.
   - Es un ajuste de **este teléfono** (`src/lib/device.ts`, clave `device` de IndexedDB), igual que el aviso del día 1:
-    no va en los datos ni en los respaldos. «Borrar todo» los apaga.
+    no va en los datos ni en los respaldos. «Borrar todo» los apaga. En el modo demo no bloquea (ver abajo).
 - **Respaldo automático** (en el iPhone, Ajustes → Respaldo automático; prendido de fábrica): un respaldo por día
   (como el manual, sin la clave de Claude), al abrir la app y al pasar a segundo plano, si los datos cambiaron desde el
   último (un hash del JSON sin los archivos). Se llama `pengar-AAAA-MM-DD.json`; quedan los 14 más nuevos y el último
   de cada uno de los 12 meses más nuevos (por cantidad, no por fecha: si no abrís la app por un tiempo no se borra lo de
   antes); los demás archivos de la carpeta no se tocan. No respalda los datos de ejemplo ni la app vacía (la
-  bienvenida, después de «Borrar todo»). Antes de «Borrar todo» y de restaurar, si está prendido, guarda uno con lo de
+  bienvenida, después de «Borrar todo»); en el modo demo no corre. Antes de «Borrar todo» y de restaurar, si está prendido, guarda uno con lo de
   ahora (si no se puede, pregunta si seguir igual).
   - Las fotos y PDF de las facturas no van adentro de cada respaldo (serían todas, en hasta 26 copias): cada una se
     guarda una sola vez, `pengar-archivo-<id>.json`, y cada respaldo dice cuáles usa (`fileRefs`). Se borran cuando ya
@@ -184,7 +199,8 @@ o, si querés, compartido con tu casa (cada uno anota en el suyo).
     baja la primera vez que abre la factura y queda guardado.
   - Con la **pantalla de bloqueo** de Face ID puesta no se trae ni se manda nada (al abrir bloqueada, ni arranca); al
     desbloquear se pone al día. Lo que esperaba para mandarse se manda al bloquear.
-  - Los datos de ejemplo nunca se mandan (ni se le habla al servidor mientras están). «Borrar todo» y «Empezar con los
+  - Los datos de ejemplo nunca se mandan (ni se le habla al servidor mientras están). En el modo demo, tampoco: el
+    motor se congela y los datos inventados ni se miran. «Borrar todo» y «Empezar con los
     míos» no tocan el hogar: el teléfono queda en pausa y la bienvenida ofrece solo «Volver a los datos del hogar»
     (con conexión; la planilla, empezar de cero y restaurar, recién después de salir del hogar). «Borrar todo» avisa
     si quedan cambios sin mandar e intenta mandarlos antes. Con el ejemplo puesto, Ajustes no deja restaurar ni
@@ -197,6 +213,33 @@ o, si querés, compartido con tu casa (cada uno anota en el suyo).
     tabla propia, `pengar_signals` (qué cambió y quién), y no por las tablas de verdad: Realtime no aplica la RLS a los
     DELETE. Cómo
     prepararlo: «Hogar compartido (Supabase)», más abajo; cómo probarlo sin Supabase: «Probar el hogar compartido».
+- **Modo demo** (Más → Ajustes → Modo demo; no en la vista previa ni con el ejemplo de la bienvenida): para mostrarle la
+  app a alguien sin que vea tus números. «Pasar al modo demo» (con confirmación) muestra datos inventados: los del
+  ejemplo («Ana», la planilla corrida hasta el mes pasado, lo anotado este mes, la meta) más gastos fijos para anotar
+  (y otros más adelante), el resumen del mes pasado sin abrir, el diezmo con historial («Contar desde» hace un año, un
+  saldo inicial y meses de menos y de más), una factura del súper separada por rubro con su ticket en PDF (hecho en el
+  teléfono: `ticketPdf`, sin nada externo) y los comercios del estado de cuenta de ejemplo ya aprendidos (solo dos
+  quedan como nuevos). Aviso «Modo demo: los datos son inventados» y un chip chico «Demo» arriba en Inicio,
+  Movimientos, Estadísticas y Más; tocarlo abre una hoja con «Salir del modo demo».
+  - **Dos juegos de datos**: los de verdad en la clave `data` y los del demo en `data-demo`, con los archivos de sus
+    facturas en `file:<id>` y `demo-file:<id>` (ninguno empieza con el prefijo del otro: borrar los que sobran de uno
+    nunca toca los del otro). Cuál se ve lo dice el ajuste de este teléfono `demo` (`src/lib/device.ts`). El store
+    carga y guarda solo el activo; al pasar de uno a otro, primero guarda el que deja. Al entrar, el ajuste se guarda
+    antes de mostrar el demo (si no quedara, al reabrir se verían los de verdad); al salir, después. Los datos del demo
+    llevan además `settings.demo`: ni el hogar ni el respaldo los aceptan aunque los vieran. Lo que se anota o cambia en
+    el demo queda en el demo; «Rehacer los datos de demo» (en lugar de «Borrar todo») los arma de nuevo, y si son de
+    otro mes se arman solos al entrar o al abrir.
+  - **Mientras tanto**: el hogar compartido se congela antes de que aparezcan los datos inventados (espera la vuelta que
+    estaba en curso: `setSyncDemo`/`freeze` en `src/lib/sync.ts`) y no se le habla al servidor ni se ve nada del hogar
+    (su pantalla dice «En el modo demo no se muestra»); lo que esperaba para mandarse se manda al salir. El respaldo
+    automático no corre. Ajustes no muestra Privacidad, la clave de Claude, Importar, el respaldo automático ni
+    «Exportar y respaldo»; el resumen no ofrece el aviso del día 1. El bloqueo con Face ID no salta al volver a la app
+    ni al abrirla en el demo (se cerró mostrándola).
+  - **Salir** (Ajustes o el chip): en el iPhone pide **siempre** Face ID o el código del iPhone (`PengarLock`, con
+    `.deviceOwnerAuthentication`), aunque el bloqueo esté apagado; si se cancela, sigue en el demo. Si el iPhone no
+    tiene código ni biometría, y en la web, pide confirmar. Al salir vuelven los datos de verdad, el hogar se pone al
+    día y el respaldo vuelve a andar; con el bloqueo prendido no vuelve a pedir Face ID (ya se autenticó).
+  - El armado, en `src/domain/demo.ts` (con pruebas); el recorrido, `npm run e2e:demo`.
 - **A tu gusto**: categorías (nombre, ícono, color, presupuesto fijo o % del ingreso, si cuenta como ahorro) y rubros
   (nombre, categoría, palabras para reconocerlos en facturas; se pueden unir o archivar). Moneda y decimales.
 - **Metas** de ahorro, **importar** planillas de Excel/CSV, **exportar** a CSV y **respaldo** completo (con facturas).
@@ -239,6 +282,7 @@ npm run e2e:dolar    # recorrido de la cotización del dólar con el BCU simulad
 npm run e2e:lock     # recorrido del bloqueo con Face ID con el iPhone simulado (scripts/native-mock.mjs)
 npm run e2e:backup   # recorrido del respaldo automático con el iPhone simulado (PengarBackup en memoria)
 npm run e2e:hogar    # hogar compartido: dos pestañas (Ana y Bruno) contra un servidor de mentira en el navegador
+npm run e2e:demo     # modo demo con el iPhone simulado y el hogar de mentira: entrar, anotar, que el hogar no reciba nada, salir con Face ID
 npm run icons        # íconos a partir del suricata principal
 ```
 
@@ -292,6 +336,7 @@ Qué no funciona en la vista previa (sí en el iPhone):
 - **Descargas**: exportar a CSV, el respaldo y «Compartir o guardar» una factura avisan que en la vista previa no se
   pueden descargar archivos.
 - **Hogar compartido**: la vista previa nunca se conecta con Supabase; Más → Hogar compartido lo explica.
+- **Modo demo**: Ajustes no lo ofrece (la vista previa ya son datos de ejemplo).
 - Los datos quedan solo en ese navegador (IndexedDB; si no se puede usar, en memoria mientras la página esté abierta).
 
 ### Instalar en el iPhone
@@ -377,8 +422,8 @@ app, ese teléfono vuelve a entrar con el código (y vuelven los datos).
 
 | Carpeta | Qué hay |
 |---|---|
-| `src/domain` | Lógica pura, con pruebas: modelo, hogar compartido (`sync.ts`: los datos como registros, qué cambió y cómo se mezcla lo recibido), importar planillas, estadísticas, lectura de facturas y de estados de cuenta de la tarjeta (`statement.ts`, `statementReview.ts`), e-Tickets de la DGI y el ticket oficial del súper (`cfe.ts`), rubros sugeridos, diezmo acumulado (`ledger.ts`), resumen del mes (`report.ts`) y la respuesta del BCU (`fx.ts`, probada con respuestas reales) |
-| `src/lib` | Teléfono: guardado (IndexedDB), ajustes de este teléfono que no se comparten (`device.ts`), lector de fotos (Vision / Tesseract), PDF (pdf.js), Claude, Apple Intelligence, rubros sugeridos (`suggest.ts`), archivos, aviso del día 1 (`reportReminder.ts`), bloqueo con Face ID (`lock.ts`; cuándo bloquear, en `src/domain/lock.ts`), cotización del dólar del BCU con su caché (`fx.ts`), respaldo automático (`autoBackup.ts`; cuándo y cuáles quedan, en `src/domain/autoBackup.ts`), hogar compartido (`remote.ts`: Supabase y el servidor en memoria de las pruebas; `sync.ts`: el motor; `fakeRemote.ts` y `fakePhone.ts`: el servidor de mentira entre pestañas, solo con `VITE_FAKE_REMOTE=1`) |
+| `src/domain` | Lógica pura, con pruebas: modelo, modo demo (`demo.ts`: dónde se guarda cada juego de datos, el armado de los inventados y el ticket en PDF), hogar compartido (`sync.ts`: los datos como registros, qué cambió y cómo se mezcla lo recibido), importar planillas, estadísticas, lectura de facturas (`invoice.ts`) y de tickets del súper (`receipt.ts`, de Kvar; `ocrLines.ts` arma los renglones de la foto) y de estados de cuenta de la tarjeta (`statement.ts`, `statementReview.ts`), e-Tickets de la DGI y el ticket oficial del súper (`cfe.ts`), rubros sugeridos, diezmo acumulado (`ledger.ts`), resumen del mes (`report.ts`) y la respuesta del BCU (`fx.ts`, probada con respuestas reales) |
+| `src/lib` | Teléfono: guardado (IndexedDB; los datos de verdad y los del modo demo, aparte), ajustes de este teléfono que no se comparten (`device.ts`, también si está el modo demo), lector de fotos (Vision / Tesseract), PDF (pdf.js), Claude, Apple Intelligence, rubros sugeridos (`suggest.ts`), archivos, aviso del día 1 (`reportReminder.ts`), bloqueo con Face ID (`lock.ts`; cuándo bloquear, en `src/domain/lock.ts`), cotización del dólar del BCU con su caché (`fx.ts`), respaldo automático (`autoBackup.ts`; cuándo y cuáles quedan, en `src/domain/autoBackup.ts`), hogar compartido (`remote.ts`: Supabase y el servidor en memoria de las pruebas; `sync.ts`: el motor; `fakeRemote.ts` y `fakePhone.ts`: el servidor de mentira entre pestañas, solo con `VITE_FAKE_REMOTE=1`) |
 | `supabase/` | La base del hogar compartido (`migrations/`) y su prueba en un Postgres local (`tests/`, `npm run test:db`) |
 | `src/screens`, `src/components` | Pantallas y piezas de la interfaz (gráficas en SVG propio, con d3-shape) |
 | `ios/App/App/PengarOCRPlugin.swift` | Plugin nativo: texto y QR de una foto con Vision, y el ticket oficial del súper (`fetchCfe`: Rondanet y Tienda Inglesa) |
@@ -404,7 +449,11 @@ son una paleta validada para daltonismo; pasadas las 8 más grandes, se juntan e
   tickets reales de Disco, Devoto, Géant y Tienda Inglesa). El pedido al BCU con `CapacitorHttp` está probado contra el web
   service real con curl y con el BCU simulado en Playwright (`npm run e2e:dolar`), no desde un iPhone. `PengarLock` y la tapa
   del `SceneDelegate` tampoco se probaron en un iPhone: la parte web del bloqueo se prueba con el puente nativo simulado
-  (`npm run e2e:lock`). Lo mismo `PengarBackup` (ni con iCloud ni sin él): la parte web, con `npm run e2e:backup`.
+  (`npm run e2e:lock`). Lo mismo `PengarBackup` (ni con iCloud ni sin él): la parte web, con `npm run e2e:backup`. El modo
+  demo no tiene nada nativo nuevo (salir usa `PengarLock.authenticate`): se probó con el iPhone simulado
+  (`npm run e2e:demo`), no en un iPhone. La inclinación de cada pedazo de texto (`slope`) que ahora devuelve
+  `PengarOCR.recognize` es la de KvarOCR; el armado de los renglones con ella (`bestGrouping`) se prueba con fotos
+  simuladas (torcidas y con el papel arrugado), no con fotos de un iPhone.
 - Hogar compartido: la migración se probó en un Postgres 16 local con lo mínimo de Supabase simulado
   (`npm run test:db`), sola y junto con las de Kvar; el motor, con dos teléfonos contra un servidor en memoria; y la
   pantalla, con dos pestañas contra el servidor de mentira del navegador (`npm run e2e:hogar`). No se probó contra un

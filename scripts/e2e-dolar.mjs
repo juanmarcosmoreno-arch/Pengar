@@ -128,6 +128,34 @@ async function pickRubro(page, rubro) {
   await ctx.close();
 }
 
+// --- Repetidos en dólares: con la cotización del BCU del día de la compra, cuando llega (sin frenar la pantalla) ---
+{
+  // El BCU a ≈ 44,1 y el estado de cuenta dice 40,10: Netflix (U$S 12,99 el domingo 4/10) ya anotado en pesos a la del BCU
+  const { ctx, page, state } = await start({ bcu: 'ok', shift: 4 });
+  const pesos = Math.round(12.99 * (fakeRate('2026-10-02') + 4)); // la del viernes 2
+  await page.getByRole('button', { name: 'Gasto', exact: true }).click();
+  await page.getByLabel('Monto').fill(String(pesos));
+  await page.getByRole('dialog').last().locator('input[type=date]').fill('2026-10-04');
+  await pickRubro(page, 'Netflix');
+  await page.getByRole('button', { name: 'Guardar' }).click();
+  await page.getByRole('status').getByText(`Gasto anotado: $ ${pesos.toLocaleString('es-UY')}`).waitFor();
+  // El BCU tarda: la revisión se ve y se usa mientras tanto (con 40,10, Netflix no parece repetido)
+  state.delay = 2500;
+  await page.getByRole('button', { name: 'Tarjeta', exact: true }).click();
+  await page.getByRole('button', { name: 'Probar con un estado de cuenta de ejemplo' }).click();
+  await page.getByRole('heading', { name: 'Revisar compras' }).waitFor();
+  const repetidos = page.locator('section', { has: page.getByRole('heading', { name: 'Posibles repetidos' }) });
+  check(await page.getByText('Buscando la cotización del BCU…').isVisible(), 'mientras busca la cotización, la revisión ya se ve');
+  check(!(await repetidos.getByRole('group', { name: 'Netflix' }).count()), 'con la del estado de cuenta (40,10), Netflix no es un repetido');
+  await page.getByRole('button', { name: 'Ver y cambiar' }).click();
+  check(await page.getByRole('button', { name: 'Ocultar' }).first().isVisible(), 'y se puede usar (se abre «Ya los conozco»)');
+  // Llega la del BCU: Netflix pasa a «Posibles repetidos»
+  await repetidos.getByRole('group', { name: 'Netflix' }).waitFor({ timeout: 8000 });
+  check(await repetidos.getByText(`Ya anotaste $ ${pesos.toLocaleString('es-UY')} en Netflix el 4/10`).isVisible(), `con la del BCU del día, Netflix es un repetido («Ya anotaste $ ${pesos} en Netflix el 4/10»)`);
+  check(!(await page.locator('section', { has: page.getByRole('heading', { name: 'Ya los conozco' }) }).getByRole('group', { name: 'Netflix' }).count()), 'y ya no está entre los que se guardan');
+  await ctx.close();
+}
+
 // --- El BCU no responde (sin conexión) ---
 {
   const { ctx, page } = await start({ bcu: 'caido', erApi: 'caido' });

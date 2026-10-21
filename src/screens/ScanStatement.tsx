@@ -1,5 +1,5 @@
 import { Camera, CreditCard, FileSpreadsheet, FileText, Sparkles, TriangleAlert } from 'lucide-react';
-import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react';
 import { ConfirmSheet } from '../components/ConfirmSheet';
 import { RubroPicker } from '../components/RubroPicker';
 import { PageHeader, Sheet } from '../components/Sheet';
@@ -7,7 +7,7 @@ import { Suricata } from '../components/Suricata';
 import { useToast } from '../components/Toast';
 import { Toggle } from '../components/Toggle';
 import { suggestRubro } from '../domain/classify';
-import { MONTHS, monthOf } from '../domain/dates';
+import { addDays, MONTHS, monthOf } from '../domain/dates';
 import { formatRate, validUsdRate, type UsdRate } from '../domain/fx';
 import { NBSP, parseDecimal, round2 } from '../domain/money';
 import { findDuplicates, isSpend, planillaMonths, toLocal, withoutInstallment, type StatementTx } from '../domain/statement';
@@ -37,7 +37,10 @@ import { useStore } from '../store/store';
 
 const AI_NAME: Partial<Record<SuggestReason, string>> = { apple: 'Apple Intelligence', claude: 'Claude' };
 
-/** Solo para buscar los repetidos en dólares (con 3% de tolerancia) si el estado de cuenta no trae cotización */
+/**
+ * Solo para buscar los repetidos en dólares sin la cotización del BCU (sin conexión, mientras llega o un día que no tiene)
+ * ni la del estado de cuenta: el último recurso
+ */
 const DEFAULT_USD_RATE = 40;
 
 const SHEETS = '.csv,.xlsx,.xls,.ods,text/csv,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
@@ -185,7 +188,8 @@ function Review({ draft, onDone, onRetry, onDirty }: { draft: StatementDraft; on
   const { money } = useMoney();
   const toast = useToast();
   const { txs } = draft;
-  const firstRate = draft.usdRate ?? DEFAULT_USD_RATE;
+  // Para los repetidos en dólares de un día sin cotización del BCU: la del estado de cuenta (o la última escrita) o 40
+  const fallbackRate = draft.usdRate ?? DEFAULT_USD_RATE;
   const [usdRange] = useState(() => usdDates(txs));
   const hasUsd = !!usdRange;
   // Las compras en dólares van con la cotización del BCU de su fecha (undefined mientras se busca, null si no se
@@ -197,7 +201,8 @@ function Review({ draft, onDone, onRetry, onDirty }: { draft: StatementDraft; on
     if (!usdRange) return;
     let alive = true;
     setBcu(undefined);
-    void usdRates(usdRange.from, usdRange.to, askBcu).then((r) => alive && setBcu(r));
+    // Desde 3 días antes: lo anotado hasta 3 días antes de una compra puede ser un repetido (con la cotización de ese día)
+    void usdRates(addDays(usdRange.from, -3), usdRange.to, askBcu).then((r) => alive && setBcu(r));
     return () => { alive = false; };
   }, [askBcu]); // eslint-disable-line react-hooks/exhaustive-deps
   const [rateText, setRateText] = useState('');
@@ -215,42 +220,60 @@ function Review({ draft, onDone, onRetry, onDirty }: { draft: StatementDraft; on
   const [touched, setTouched] = useState(false);
   useEffect(() => onDirty(touched), [touched]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Lo que no cambia mientras se revisa: repetidos, meses de la planilla y en qué sección va cada comercio
+  // Los posibles repetidos: los en dólares, primero con la cotización de respaldo y, cuando llega la del BCU, con la de
+  // cada fecha (sin frenar la revisión: se rehacen solos)
+  const [dups, setDups] = useState(() => findDuplicates(txs, data.movements, { fallback: fallbackRate }));
+  useEffect(() => {
+    if (!bcu) return;
+    const next = findDuplicates(txs, data.movements, { rates: bcu, fallback: fallbackRate });
+    setDups((prev) => (prev.size === next.size && [...next].every(([i, id]) => prev.get(i) === id) ? prev : next));
+  }, [bcu]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Los comercios (sin las compras repetidas)
+  const groups = useMemo(() => groupSpends(txs, (i) => dups.has(i)), [txs, dups]);
+
+  // Lo que no cambia mientras se revisa: meses de la planilla y en qué sección va cada comercio (todos, también los que
+  // hoy son solo repetidos: con la cotización del BCU pueden dejar de serlo)
   const [fixed] = useState(() => {
-    const dups = findDuplicates(txs, data.movements, firstRate);
-    const groups = groupSpends(txs, (i) => dups.has(i));
     const rubros = spendRubros(data.rubros, data.categories);
     const section: Record<string, Section> = {};
     const choice: Record<string, Choice> = {};
-    for (const g of groups) {
+    for (const g of groupSpends(txs)) {
       const known = knownRubro(txs[g.idx[0]], rubros, data.settings.learned);
       section[g.key] = known === NOT_SPEND ? 'excluido' : known ? 'conocido' : 'nuevo';
       if (known && known !== NOT_SPEND) choice[g.key] = known;
     }
-    return { dups, groups, section, choice, months: planillaMonths(txs, data.movements) };
+    return { section, choice, months: planillaMonths(txs, data.movements) };
   });
   const [section, setSection] = useState(fixed.section);
   const [choice, setChoice] = useState(fixed.choice);
-  const [excluded, setExcluded] = useState(() => new Set(fixed.groups.filter((g) => fixed.section[g.key] === 'excluido').map((g) => g.key)));
+  const [excluded, setExcluded] = useState(() => new Set(Object.keys(fixed.section).filter((k) => fixed.section[k] === 'excluido')));
   const [skipPlanilla, setSkipPlanilla] = useState(true);
   const [importDup, setImportDup] = useState<Set<number>>(() => new Set());
   const [subtract, setSubtract] = useState<Set<number>>(() => new Set());
   const [showKnown, setShowKnown] = useState(false);
   const [showOther, setShowOther] = useState(false);
   const [picking, setPicking] = useState<MerchantGroup | null>(null);
-  const [suggesting, setSuggesting] = useState(false);
+  // Cuántos pedidos de sugerencias hay en curso
+  const [suggesting, setSuggesting] = useState(0);
   const [saving, setSaving] = useState(false);
 
-  // Los comercios nuevos se le preguntan a Apple Intelligence (o a Claude) sin frenar la revisión
+  // Los comercios nuevos se le preguntan a Apple Intelligence (o a Claude) sin frenar la revisión; si con la cotización
+  // del BCU aparece otro (una compra que dejó de ser un repetido), también. Cada uno, una sola vez
+  const asked = useRef(new Set<string>());
+  const mounted = useRef(true);
   useEffect(() => {
-    const ask = fixed.groups.filter((g) => fixed.section[g.key] === 'nuevo');
+    mounted.current = true;
+    return () => { mounted.current = false; };
+  }, []);
+  useEffect(() => {
+    const ask = groups.filter((g) => fixed.section[g.key] === 'nuevo' && !asked.current.has(g.key));
     if (!ask.length) return;
-    let alive = true;
+    for (const g of ask) asked.current.add(g.key);
     const spend = new Set(spendRubros(data.rubros, data.categories).map((r) => r.id));
-    setSuggesting(true);
+    setSuggesting((n) => n + 1);
     void suggestRubros(ask.map((g) => ({ id: g.key, text: g.merchant })), data)
       .then((found) => {
-        if (!alive) return;
+        if (!mounted.current) return;
         // Lo que ya eligió el usuario no se toca
         setChoice((c) => {
           const next = { ...c };
@@ -258,9 +281,8 @@ function Review({ draft, onDone, onRetry, onDirty }: { draft: StatementDraft; on
           return next;
         });
       })
-      .finally(() => alive && setSuggesting(false));
-    return () => { alive = false; };
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+      .finally(() => mounted.current && setSuggesting((n) => n - 1));
+  }, [groups]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const local = (i: number) => toLocal(txs[i], rateOf(i));
   const skipMonth = (i: number) => skipPlanilla && fixed.months.includes(monthOf(txs[i].date));
@@ -270,11 +292,11 @@ function Review({ draft, onDone, onRetry, onDirty }: { draft: StatementDraft; on
 
   // Lo que se guarda: un gasto por compra (las de los meses de la planilla, si se saltean, no)
   const rows: { i: number; rubroId: string; merchant: string }[] = [];
-  for (const g of fixed.groups) {
+  for (const g of groups) {
     const rubroId = rubroOf(g.key);
     if (rubroId) for (const i of g.idx) if (!skipMonth(i)) rows.push({ i, rubroId, merchant: g.merchant });
   }
-  const dupList = [...fixed.dups].filter(([i]) => !skipMonth(i)).sort((a, b) => a[0] - b[0]);
+  const dupList = [...dups].filter(([i]) => !skipMonth(i)).sort((a, b) => a[0] - b[0]);
   for (const [i, id] of dupList) {
     if (!importDup.has(i)) continue;
     const rubroId = rubroOf(txs[i].key) ?? data.movements.find((m) => m.id === id)?.rubroId;
@@ -289,7 +311,7 @@ function Review({ draft, onDone, onRetry, onDirty }: { draft: StatementDraft; on
   const total = round2(movements.reduce((s, m) => s + m.amount, 0));
 
   const pending = (g: MerchantGroup) => !excluded.has(g.key) && !choice[g.key]?.rubroId && g.idx.some((i) => !skipMonth(i));
-  const missing = fixed.groups.filter(pending).length;
+  const missing = groups.filter(pending).length;
 
   const spends = txs.map((t, i) => [t, i] as const).filter(([t]) => isSpend(t));
   const spendTotal = round2(spends.reduce((s, [, i]) => s + local(i), 0));
@@ -301,9 +323,9 @@ function Review({ draft, onDone, onRetry, onDirty }: { draft: StatementDraft; on
   const avgRate = usdWeight ? usdConverted.reduce((s, [t, i]) => s + Math.abs(t.amount) * rateOf(i), 0) / usdWeight : 0;
   const period = draft.period && `del ${dayMonth(draft.period.from)} al ${dayMonth(draft.period.to)}`;
 
-  const nuevos = fixed.groups.filter((g) => section[g.key] === 'nuevo');
-  const conocidos = fixed.groups.filter((g) => section[g.key] === 'conocido');
-  const noGasto = fixed.groups.filter((g) => section[g.key] === 'excluido');
+  const nuevos = groups.filter((g) => section[g.key] === 'nuevo');
+  const conocidos = groups.filter((g) => section[g.key] === 'conocido');
+  const noGasto = groups.filter((g) => section[g.key] === 'excluido');
   const others = txs.map((t, i) => [t, i] as const).filter(([t]) => !isSpend(t) && KIND_LABEL[t.kind]);
   const groupTotal = (g: MerchantGroup) => round2(g.idx.reduce((s, i) => s + local(i), 0));
 
@@ -340,7 +362,7 @@ function Review({ draft, onDone, onRetry, onDirty }: { draft: StatementDraft; on
     try {
       // Cada comercio queda aprendido: su rubro o «no es un gasto»
       const learned: Record<string, string> = {};
-      for (const g of fixed.groups) {
+      for (const g of groups) {
         const key = learnedKeyOf(txs[g.idx[0]]);
         if (excluded.has(g.key)) learned[key] = NOT_SPEND;
         else if (choice[g.key]?.rubroId) learned[key] = choice[g.key].rubroId!;
@@ -507,7 +529,7 @@ function Review({ draft, onDone, onRetry, onDirty }: { draft: StatementDraft; on
         <section>
           <h2 className="section-title px-1">Nuevos: decime de qué rubro son</h2>
           <p className="px-1 text-[15px] text-muted">Lo que elijas queda aprendido para los próximos meses.</p>
-          {suggesting && (
+          {suggesting > 0 && (
             <p className="mt-1 flex items-center gap-2 px-1 text-[15px] text-muted">
               <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-soft border-t-primary" /> Buscando sugerencias…
             </p>

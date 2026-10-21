@@ -20,6 +20,8 @@ import { suggestRubros, type SuggestReason } from './suggest';
 export interface DraftItem extends InvoiceItem {
   /** De dónde salió el rubro: la pantalla marca con «sugerido» los que eligió la IA */
   reason?: SuggestReason;
+  /** El descuento de un producto (el renglón de ese índice): va a su rubro */
+  discountOf?: number;
 }
 
 export interface InvoiceDraft {
@@ -59,20 +61,27 @@ async function base64Of(blob: Blob): Promise<string> {
   return btoa(s);
 }
 
-/** Renglones sin rubro → suggestRubros (Apple Intelligence y, si `claude`, Claude) */
+/** El descuento de un producto va al rubro de ese producto */
+const withDiscountRubros = (items: DraftItem[]): DraftItem[] =>
+  items.map((it) => {
+    const product = it.discountOf != null ? items[it.discountOf] : undefined;
+    return product?.rubroId && !it.rubroId ? { ...it, rubroId: product.rubroId, reason: product.reason } : it;
+  });
+
+/** Renglones sin rubro → suggestRubros (Apple Intelligence y, si `claude`, Claude); los descuentos, el de su producto */
 async function fillMissing(
   items: DraftItem[],
   merchant: string | undefined,
   data: Data,
   opts: { claude: boolean; onProgress: (msg: string) => void },
 ): Promise<DraftItem[]> {
-  const missing = items.flatMap((it, i) => (!it.rubroId && it.description.trim() ? [{ id: String(i), text: it.description, merchant }] : []));
-  if (!missing.length) return items;
+  const missing = items.flatMap((it, i) => (!it.rubroId && it.discountOf == null && it.description.trim() ? [{ id: String(i), text: it.description, merchant }] : []));
+  if (!missing.length) return withDiscountRubros(items);
   const found = await suggestRubros(missing, data, opts);
-  return items.map((it, i) => {
+  return withDiscountRubros(items.map((it, i) => {
     const s = found.get(String(i));
     return s && !it.rubroId ? { ...it, rubroId: s.rubroId, reason: s.reason } : it;
-  });
+  }));
 }
 
 /**
@@ -125,12 +134,13 @@ function dgiMark(ticket: DgiTicket | null): InvoiceDraft['dgi'] {
 
 const joinNotices = (notices: (string | undefined)[]) => notices.filter(Boolean).join(' ') || undefined;
 
-/** Renglones leídos → con el rubro de lo aprendido y las palabras clave */
+/** Renglones leídos → con el rubro de lo aprendido y las palabras clave (el descuento de un producto, el de ese producto) */
 const withLocalRubros = (items: ParsedInvoice['items'], merchant: string | undefined, data: Data) =>
-  items.map((i): DraftItem => {
+  withDiscountRubros(items.map((i): DraftItem => {
+    if (i.discountOf != null) return { description: i.description, amount: i.amount, discountOf: i.discountOf };
     const s = suggestRubro(i.description, merchant, data.rubros, data.settings.learned);
     return { description: i.description, amount: i.amount, rubroId: s?.rubroId, reason: s?.reason };
-  });
+  }));
 
 /** `password`: la del PDF, si tiene (ver PdfPasswordError) */
 export async function readInvoice(file: File, data: Data, onProgress: (msg: string) => void, password?: string): Promise<InvoiceDraft> {
@@ -144,7 +154,7 @@ export async function readInvoice(file: File, data: Data, onProgress: (msg: stri
   let photo: TicketPhoto | null = null;
   if (image && isNative) {
     try {
-      photo = await readTicketPhoto(image.base64);
+      photo = await readTicketPhoto(image.base64, image.height / image.width);
     } catch (e) {
       // Se sigue como siempre: Claude, o el lector de fotos (que avisa si no puede)
       console.error(e);

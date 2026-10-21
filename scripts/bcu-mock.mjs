@@ -15,12 +15,12 @@ export function fakeRate(iso) {
   return Math.round((40.1 + 0.12 * Math.sin(n / 3)) * 1000) / 1000;
 }
 
-/** Respuesta del BCU con los días hábiles (de lunes a viernes) entre dos fechas */
-export function bcuXml(from, to) {
+/** Respuesta del BCU con los días hábiles (de lunes a viernes) entre dos fechas; `shift`: sumado a cada cotización */
+export function bcuXml(from, to, shift = 0) {
   const days = [];
   for (let d = from; d <= to; d = addDays(d, 1)) if (weekday(d) % 6 !== 0) days.push(d);
   const dato = (d) => `<datoscotizaciones.dato xmlns="Cotiza"><Fecha>${d}</Fecha><Moneda>2225</Moneda><Nombre>DLS. USA BILLETE</Nombre>`
-    + `<CodigoISO>DLS.</CodigoISO><Emisor>ESTADOS UNIDOS</Emisor><TCC>${fakeRate(d).toFixed(6)}</TCC><TCV>${fakeRate(d).toFixed(6)}</TCV>`
+    + `<CodigoISO>DLS.</CodigoISO><Emisor>ESTADOS UNIDOS</Emisor><TCC>${(fakeRate(d) + shift).toFixed(6)}</TCC><TCV>${(fakeRate(d) + shift).toFixed(6)}</TCV>`
     + '<ArbAct>1.000000</ArbAct><FormaArbitrar>0</FormaArbitrar></datoscotizaciones.dato>';
   const status = days.length
     ? '<status>1</status><codigoerror>0</codigoerror><mensaje/>'
@@ -32,7 +32,8 @@ export function bcuXml(from, to) {
 
 /**
  * Atiende el BCU y open.er-api.com en un contexto (o una página). `state.bcu` y `state.erApi`: 'ok' o 'caido'
- * (se pueden cambiar en el medio). Cada pedido queda en `state.log` ({ host, from, to }).
+ * (se pueden cambiar en el medio). Cada pedido queda en `state.log` ({ host, from, to }). `state.shift`: se suma a cada
+ * cotización del BCU (para que no sea la del estado de cuenta); `state.delay`: ms que tarda en contestar.
  */
 export async function mockFx(target, state = {}) {
   state.bcu ??= 'ok';
@@ -45,8 +46,9 @@ export async function mockFx(target, state = {}) {
     const from = body.match(/<cot:FechaDesde>([\d-]+)</)?.[1];
     const to = body.match(/<cot:FechaHasta>([\d-]+)</)?.[1];
     state.log.push({ host: 'bcu', from, to, soapAction: req.headers()['soapaction'] });
+    if (state.delay) await new Promise((r) => setTimeout(r, state.delay));
     if (state.bcu !== 'ok' || !from || !to) return route.abort('internetdisconnected');
-    return route.fulfill({ status: 200, headers: { ...CORS, 'Content-Type': 'text/xml;charset=utf-8' }, body: bcuXml(from, to) });
+    return route.fulfill({ status: 200, headers: { ...CORS, 'Content-Type': 'text/xml;charset=utf-8' }, body: bcuXml(from, to, state.shift ?? 0) });
   });
   await target.route(ER_API_PATTERN, async (route) => {
     state.log.push({ host: 'er-api' });

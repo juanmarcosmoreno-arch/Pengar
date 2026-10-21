@@ -67,16 +67,16 @@ export function suggestRubro(
   return null;
 }
 
-/** Lo que se aprende al guardar una factura revisada */
+/** Lo que se aprende al guardar una factura revisada (de los descuentos, nada: «DCTO SOCIO» no dice de qué rubro es) */
 export function learnFrom(
   learned: Settings['learned'],
   merchant: string | undefined,
-  items: { description: string; rubroId?: string }[],
+  items: { description: string; amount?: number; rubroId?: string }[],
 ): Settings['learned'] {
   const next = { ...learned };
   const counts = new Map<string, number>();
   for (const it of items) {
-    if (!it.rubroId) continue;
+    if (!it.rubroId || (it.amount ?? 0) < 0) continue;
     const k = itemKey(it.description);
     if (k) next[k] = it.rubroId;
     counts.set(it.rubroId, (counts.get(it.rubroId) ?? 0) + 1);

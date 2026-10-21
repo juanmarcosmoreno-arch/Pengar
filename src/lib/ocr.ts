@@ -5,7 +5,8 @@
  */
 import { registerPlugin } from '@capacitor/core';
 import { officialPortal, parseRondanetLines, rondanetForm, type Cfe, type OfficialInvoice, type Portal } from '../domain/cfe';
-import { groupLines, type TextBox } from '../domain/ocrLines';
+import { INVOICE_CLOSES, invoiceLinesScore } from '../domain/invoice';
+import { bestGrouping, groupLines, type TextBox } from '../domain/ocrLines';
 import { rowsFromBoxes, type StatementRow } from '../domain/statement';
 import { isNative, isPreview } from './platform';
 
@@ -60,10 +61,14 @@ export interface TicketPhoto {
   qr: string[];
 }
 
-/** El texto y los QR de una foto ya reducida (`toJpeg`), en una sola pasada de Vision. Solo en el iPhone */
-export async function readTicketPhoto(base64: string): Promise<TicketPhoto> {
+/**
+ * El texto y los QR de una foto ya reducida (`toJpeg`), en una sola pasada de Vision. Solo en el iPhone. `aspect`: alto ÷
+ * ancho de la foto. Si los renglones así armados no cierran con el TOTAL (la foto torcida, el papel arrugado), se
+ * prueban otras inclinaciones y queda la que mejor lee la factura (como en Kvar)
+ */
+export async function readTicketPhoto(base64: string, aspect: number): Promise<TicketPhoto> {
   const res = await PengarOCR.recognize({ image: base64, qr: true });
-  return { text: groupLines(res.boxes).join('\n'), qr: res.qr ?? [] };
+  return { text: bestGrouping(res.boxes, aspect, invoiceLinesScore, INVOICE_CLOSES).join('\n'), qr: res.qr ?? [] };
 }
 
 export async function readImageText(file: Blob, onProgress?: (msg: string) => void): Promise<string> {

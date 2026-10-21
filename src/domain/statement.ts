@@ -7,7 +7,7 @@
  */
 import { monthOf, today as todayISO } from './dates';
 import { norm, sheetDate, type Cell } from './importSheet';
-import { splitUsdNote } from './fx';
+import { rateOn, splitUsdNote, type UsdRate } from './fx';
 import { parseAmount, round2 } from './money';
 import { groupRows, type TextBox } from './ocrLines';
 import type { Movement } from './types';
@@ -905,12 +905,27 @@ function similarity(key: string, other: string | undefined): number {
 }
 
 /**
+ * Cotizaciones para pasar a pesos las compras en dólares al buscar repetidos: las del BCU (`rates`: la de cada día, o la
+ * del último día hábil antes) y, para un día que no tiene, `fallback` (la del estado de cuenta o, sin conexión, una
+ * aproximada). Un número solo es `fallback`.
+ */
+export interface DuplicateRates {
+  rates?: UsdRate[] | null;
+  fallback?: number;
+}
+
+/**
  * Compras del estado de cuenta que ya están anotadas (a mano, con una factura o de otro estado de cuenta):
  * un gasto con el mismo monto (tolerancia de $ 1 o 1%) y a no más de 3 días. Cada movimiento se empareja con una
- * sola compra, prefiriendo el de comercio parecido. Las compras en dólares se comparan solo si hay cotización.
+ * sola compra, prefiriendo el de comercio parecido. Las compras en dólares se comparan en dólares si lo anotado tiene
+ * la cuenta en la nota; si no, en pesos con la cotización del día de la compra o la del día en que se anotó (3% de
+ * tolerancia: el banco cobra el dólar algo más caro), y sin ninguna cotización no se comparan.
  * Devuelve índice de la compra → id del movimiento.
  */
-export function findDuplicates(txs: StatementTx[], movements: Movement[], usdRate?: number): Map<number, string> {
+export function findDuplicates(txs: StatementTx[], movements: Movement[], usdRates?: number | DuplicateRates): Map<number, string> {
+  const opts: DuplicateRates = typeof usdRates === 'number' ? { fallback: usdRates } : usdRates ?? {};
+  const fallback = opts.fallback && opts.fallback > 0 ? opts.fallback : null;
+  const rateFor = (date: string) => (opts.rates ? rateOn(date, opts.rates)?.rate : undefined) || fallback;
   const pool = movements.filter((m) => m.kind === 'gasto' && !m.monthly);
   // Lo anotado en dólares lleva la cuenta en la nota («U$S 100 × 42,50»): se compara en dólares, sin cotización
   const usdOf = new Map(pool.map((m) => [m.id, splitUsdNote(m.note).usd]));
@@ -918,11 +933,18 @@ export function findDuplicates(txs: StatementTx[], movements: Movement[], usdRat
   txs.forEach((tx, i) => {
     if (!isSpend(tx)) return;
     const usd = tx.currency === 'usd';
-    // Sin cotización, en dólares solo se reconoce lo que tiene la cuenta en dólares en la nota
-    const rate = usd ? (usdRate && usdRate > 0 ? usdRate : null) : 1;
-    const amount = rate ? toLocal(tx, rate) : 0;
-    // En dólares la cotización del día de la compra puede ser otra (la de `usdRate` es una sola, y a veces aproximada)
-    const tol = Math.max(1, amount * (usd ? 0.03 : 0.01));
+    /** El monto en pesos que más se acerca a lo anotado ese día: con la cotización de la compra o la del día anotado */
+    const diffInPesos = (m: Movement): { dAmount: number; tol: number } | null => {
+      if (!usd) return { dAmount: Math.abs(m.amount - tx.amount), tol: Math.max(1, tx.amount * 0.01) };
+      let best: { dAmount: number; tol: number } | null = null;
+      for (const rate of new Set([rateFor(tx.date), rateFor(m.date)])) {
+        if (!rate) continue;
+        const amount = toLocal(tx, rate);
+        const dAmount = Math.abs(m.amount - amount);
+        if (!best || dAmount < best.dAmount) best = { dAmount, tol: Math.max(1, amount * 0.03) };
+      }
+      return best;
+    };
     for (const m of pool) {
       // Otra cuota de la misma compra: hay bancos que repiten la fecha de la compra todos los meses
       const cuota = m.note?.match(/cuota (\d+\/\d+)/)?.[1];
@@ -935,9 +957,9 @@ export function findDuplicates(txs: StatementTx[], movements: Movement[], usdRat
         dAmount = Math.abs(mUsd - tx.amount);
         if (dAmount > Math.max(0.01, tx.amount * 0.005)) continue;
       } else {
-        if (!rate) continue;
-        dAmount = Math.abs(m.amount - amount);
-        if (dAmount > tol) continue;
+        const d = diffInPesos(m);
+        if (!d || d.dAmount > d.tol) continue;
+        dAmount = d.dAmount;
       }
       pairs.push({ i, id: m.id, sim: similarity(tx.key, m.merchant || m.note), dAmount, dDays });
     }

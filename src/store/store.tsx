@@ -390,22 +390,30 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       // Sin datos de verdad guardados (no debería pasar: se entra desde Ajustes), la bienvenida
       next ??= emptyData();
       lastSaved.current[to] = next;
+      // El ajuste va por el mismo camino que los demás del teléfono (de a uno): lo que se guarde después ya lo lleva
       const dev = { ...deviceNow.current, demo: to === 'demo' };
-      if (to === 'demo') await saveDevice(dev);
+      deviceNow.current = dev;
+      pendingDevice.current = dev;
+      if (to === 'demo') {
+        await flush();
+        if (pendingDevice.current) throw new Error('No se pudo guardar el ajuste del teléfono');
+      }
       dataset.current = to;
       setActiveDataset(to);
       current.current = next;
       setData(next);
       if (to === 'real' && from === 'demo') void setSyncDemo(false);
-      deviceNow.current = dev;
       setDevice(dev);
       // Al salir, el ajuste se guarda después de mostrar los de verdad (si no quedara, al reabrir sigue el demo)
-      if (to === 'real') {
-        pendingDevice.current = dev;
+      if (to === 'real') void flush();
+    } catch (e) {
+      // Queda como estaba: el ajuste dice los datos que se ven y el hogar vuelve a andar
+      if (deviceNow.current.demo !== (dataset.current === 'demo')) {
+        const back = { ...deviceNow.current, demo: dataset.current === 'demo' };
+        deviceNow.current = back;
+        pendingDevice.current = back;
         void flush();
       }
-    } catch (e) {
-      // Queda como estaba: el hogar vuelve a andar
       if (entering && dataset.current === 'real') void setSyncDemo(false);
       throw e;
     } finally {

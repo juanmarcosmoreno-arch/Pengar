@@ -5,6 +5,7 @@
  */
 import { Presentation } from 'lucide-react';
 import { useState } from 'react';
+import { createPortal } from 'react-dom';
 import { authenticate, canLock, lockAvailability } from '../lib/lock';
 import { useStore } from '../store/store';
 import { ConfirmSheet } from './ConfirmSheet';
@@ -83,7 +84,8 @@ export function DemoChip({ className = '' }: { className?: string }) {
       >
         <Presentation size={15} strokeWidth={2} aria-hidden="true" /> Demo
       </button>
-      {open && (
+      {/* Fuera del encabezado: con su fondo borroso (backdrop-filter), una hoja fija adentro quedaría atrapada en él */}
+      {open && createPortal(
         <Sheet
           title="Modo demo"
           onClose={() => setOpen(false)}
@@ -97,9 +99,10 @@ export function DemoChip({ className = '' }: { className?: string }) {
             <Suricata pose="cara-curioso" size={72} className="shrink-0" />
             <p className="text-lg">Los datos que ves son inventados, para mostrar la app. {canLock ? 'Para volver a los tuyos te pide Face ID o el código del iPhone.' : 'Tus datos están guardados y vuelven al salir.'}</p>
           </div>
-        </Sheet>
+        </Sheet>,
+        document.getElementById('root') ?? document.body,
       )}
-      {exit.sheet}
+      {exit.sheet && createPortal(exit.sheet, document.getElementById('root') ?? document.body)}
     </>
   );
 }

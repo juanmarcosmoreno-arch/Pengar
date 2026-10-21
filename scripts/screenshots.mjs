@@ -350,6 +350,46 @@ async function runBackup() {
   await ctx.close();
 }
 
+// Modo demo: con el iPhone simulado y datos propios, la sección de Ajustes, Inicio con el chip «Demo» y la hoja para salir
+async function runDemo() {
+  const names = ['40-ajustes-modo-demo', '41-inicio-demo', '42-salir-demo', '43-ajustes-en-demo'];
+  if (only && !names.some((n) => n.startsWith(only))) return;
+  const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, colorScheme: 'light', locale: 'es-UY', hasTouch: true });
+  await mockFx(ctx);
+  await mockNative(ctx);
+  const page = await ctx.newPage();
+  page.on('pageerror', (e) => console.error('pageerror', e.message));
+  const shot = async (name) => {
+    if (only && !name.startsWith(only)) return;
+    await page.waitForTimeout(350);
+    await page.screenshot({ path: join(out, `${name}.png`), animations: 'disabled' });
+    console.log('✓', name);
+  };
+  const scrollTo = (heading) => page.getByRole('heading', { name: heading }).evaluate((el) => window.scrollTo(0, el.getBoundingClientRect().top + window.scrollY - 76));
+  await page.clock.setFixedTime(new Date('2026-10-21T10:00:00'));
+  await page.goto(url);
+  await page.getByRole('button', { name: 'Comenzar' }).click();
+  await page.getByPlaceholder('Tu nombre').fill('Marcos');
+  await page.getByRole('button', { name: 'Empezar de cero' }).click();
+  await page.getByRole('navigation').getByRole('button', { name: 'Más' }).click();
+  await page.getByRole('button', { name: /Ajustes/ }).click();
+  await scrollTo('Modo demo');
+  await shot('40-ajustes-modo-demo');
+  await page.getByRole('button', { name: 'Pasar al modo demo' }).click();
+  await page.getByRole('dialog', { name: '¿Pasar al modo demo?' }).getByRole('button', { name: 'Pasar al modo demo' }).click();
+  await page.getByText('Modo demo: los datos son inventados', { exact: true }).waitFor({ timeout: 20000 });
+  await page.waitForTimeout(4200); // que se vaya el aviso
+  await page.evaluate(() => window.scrollTo(0, 0));
+  await shot('43-ajustes-en-demo');
+  await page.getByRole('navigation').getByRole('button', { name: 'Inicio' }).click();
+  await page.getByRole('heading', { name: 'Ana' }).waitFor();
+  await shot('41-inicio-demo');
+  await page.getByRole('button', { name: 'Modo demo: los datos son inventados' }).click();
+  await page.getByRole('dialog', { name: 'Modo demo' }).waitFor();
+  await shot('42-salir-demo');
+  await ctx.close();
+}
+
 // Hogar compartido: dos pestañas (Ana y Bruno, cada una otro iPhone simulado) contra el servidor de mentira del
 // navegador. Arma la build de prueba en dist-fake (scripts/fake-remote.mjs; nunca va al iPhone)
 async function runHousehold() {
@@ -436,6 +476,7 @@ async function runHousehold() {
 await run('light');
 await runLock();
 await runBackup();
+await runDemo();
 await runHousehold();
 await browser.close();
 server.close();
