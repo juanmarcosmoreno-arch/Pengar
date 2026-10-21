@@ -230,6 +230,29 @@ export const ART_VARIANTS_3 = [
   'inversiones', 'otros',
 ];
 
+/**
+ * Versiones casi iguales de un mismo dibujo: al elegir se ofrece solo una (la del tercer juego, más grande, si hay). Las
+ * otras siguen viéndose donde ya se eligieron y cuentan como la que se ofrece
+ */
+export const ART_SAME: Record<string, string> = (() => {
+  const same: Record<string, string> = {};
+  for (const n of ART_VARIANTS_3) {
+    if (n === 'inversiones' || n === 'libros') continue;
+    same[`m:${n}`] = `m:${n}-3`;
+    if (ART_VARIANTS.includes(n)) same[`m:${n}-2`] = `m:${n}-3`;
+  }
+  // Monedas y gráfico (inversiones), leyendo y pila de libros: dos dibujos distintos de cada una
+  same['m:inversiones-2'] = 'm:inversiones-3';
+  same['m:libros'] = 'm:libros-3';
+  same['m:telefonia'] = 'm:telefonia-2';
+  same['m:compras-online'] = 'm:compras-online-2';
+  same['m:hogar-2'] = 'm:hogar';
+  same['m:salidas-2'] = 'm:salidas';
+  // El de la factura en la mano ya está en servicios
+  same['m:imprevistos-2'] = 'm:imprevistos';
+  return same;
+})();
+
 /** Íconos de línea de versiones anteriores → ilustración equivalente (los que no tienen equivalente quedan igual) */
 export const LEGACY_ICON_TO_ART: Record<string, string> = {
   cart: 'm:super', home: 'm:vivienda', car: 'm:mant-auto', fuel: 'm:mant-auto', heart: 'm:salud', pill: 'm:salud',
@@ -242,8 +265,9 @@ export const LEGACY_ICON_TO_ART: Record<string, string> = {
 
 /** Íconos que se pueden elegir para una categoría o una meta: primero las ilustraciones, después los de línea */
 export const ICON_CHOICES = [
-  // Cada ilustración seguida de sus otras versiones, si tiene
-  ...ART.flatMap(([n]) => [`m:${n}`, ...(ART_VARIANTS.includes(n) ? [`m:${n}-2`] : []), ...(ART_VARIANTS_3.includes(n) ? [`m:${n}-3`] : [])]),
+  // Cada ilustración una sola vez (o dos, si las versiones son dibujos distintos)
+  ...ART.flatMap(([n]) => [`m:${n}`, ...(ART_VARIANTS.includes(n) ? [`m:${n}-2`] : []), ...(ART_VARIANTS_3.includes(n) ? [`m:${n}-3`] : [])])
+    .filter((n) => !ART_SAME[n]),
   'cart', 'home', 'car', 'fuel', 'bus', 'heart', 'pill', 'graduation', 'book', 'sparkles', 'wrench', 'sofa', 'shirt',
   'tv', 'music', 'wifi', 'phone', 'zap', 'droplet', 'flame', 'utensils', 'coffee', 'plane', 'palm', 'gift', 'hand-heart',
   'paw', 'baby', 'dumbbell', 'piggy', 'coins', 'briefcase', 'landmark', 'receipt', 'tag', 'target',

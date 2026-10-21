@@ -12,7 +12,7 @@
  */
 import { monthOf } from './dates';
 import { parseAmount, round2 } from './money';
-import { newId, OTHER_COLOR, PALETTE, templateKeywords } from './template';
+import { ART_SAME, newId, OTHER_COLOR, PALETTE, templateKeywords } from './template';
 import type { Budget, Category, Data, Kind, Movement, Rubro } from './types';
 
 export type Cell = string | number | boolean | Date | null | undefined;
@@ -82,7 +82,8 @@ export function guessIcon(name: string): string {
     [/imprevist|emergencia/, 'm:imprevistos'],
     [/otro|vario/, 'm:otros'],
   ];
-  return rules.find(([re]) => re.test(n))?.[1] ?? 'm:otros';
+  const icon = rules.find(([re]) => re.test(n))?.[1] ?? 'm:otros';
+  return ART_SAME[icon] ?? icon;
 }
 
 const pad2 = (n: number) => String(n).padStart(2, '0');
