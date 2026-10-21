@@ -23,11 +23,13 @@ function problemText(res: AuthResult, name: string): string | null {
 /**
  * Envuelve la app. Al abrir con el bloqueo prendido no se arma nada de la app hasta desbloquear (ni los gastos
  * fijos ni el resumen); al volver bloqueada, lo de abajo queda como estaba (una hoja a medio llenar) pero tapado.
+ * En el modo demo no bloquea (se está mostrando la app y los datos son inventados): salir del demo pide Face ID, y al
+ * salir no lo vuelve a pedir.
  */
 export function LockGate({ children }: { children: ReactNode }) {
   const { device } = useStore();
   const { enabled, after } = device.lock;
-  const on = canLock && enabled;
+  const on = canLock && enabled && !device.demo;
   const [locked, setLocked] = useState(on);
   // Ya se desbloqueó una vez: desde ahí la app queda armada debajo
   const [opened, setOpened] = useState(!on);
@@ -66,8 +68,9 @@ export function LockGate({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (locked && canLock) void lockAvailability().then(setAvail);
   }, [locked, ask]);
-  // El iPhone pone la tapa del selector de apps solo con el bloqueo prendido
-  useEffect(() => void setPrivacyCover(on), [on]);
+  // El iPhone pone la tapa del selector de apps solo con el bloqueo prendido (también en el demo)
+  const cover = canLock && enabled;
+  useEffect(() => void setPrivacyCover(cover), [cover]);
   useEffect(() => {
     if (on) return;
     setLocked(false);

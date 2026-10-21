@@ -10,6 +10,9 @@
  * Archivos de facturas y estados de cuenta: los nuevos se suben a pengar-files/<hogar>/<id> después de mandar el
  * registro; quien no lo tiene lo baja la primera vez que lo abre (loadInvoiceFile, en el visor).
  *
+ * Modo demo (store, lib/device): el motor se congela antes de que aparezcan los datos inventados (espera lo que estaba
+ * haciendo) y no ve nada de ellos; las pantallas no ven el hogar. Al salir, sigue con lo que había quedado pendiente.
+ *
  * «Borrar todo» y los datos de ejemplo no tocan el hogar: el motor queda en pausa y, cuando la app vuelve a tener datos
  * propios, baja los del hogar en lugar de lo que haya acá. Para enterarse aunque el motor no lo vea (no pudo leer su
  * estado, o la app se compiló sin el servidor), los datos llevan un id (Data.datasetId) que cambia con «Borrar todo» y
@@ -115,7 +118,7 @@ export interface SyncStatus {
   error: string | null;
 }
 
-export type SyncErrorKind = 'unavailable' | 'in-household' | 'no-household' | 'example' | 'not-ready' | 'storage' | 'files' | 'removed';
+export type SyncErrorKind = 'unavailable' | 'in-household' | 'no-household' | 'example' | 'not-ready' | 'storage' | 'files' | 'removed' | 'demo';
 
 /** Algo que no se puede hacer (las fallas del servidor llegan como RemoteError). `count`: con 'files', cuántos archivos */
 export class SyncError extends Error {
@@ -245,6 +248,8 @@ export class SyncEngine {
   private dataDirty = false;
   /** La persona confirmó un reemplazo (restaurar, la planilla) o dijo «Borrar igual»: la próxima tanda puede borrar mucho */
   private bigDeleteOk = false;
+  /** Modo demo: no hace nada (ni arranca, ni manda, ni trae) hasta thaw */
+  private frozen = false;
   private readonly o: Required<SyncOptions>;
 
   constructor(
@@ -283,6 +288,7 @@ export class SyncEngine {
 
   /** Al abrir: lee el estado y, si hay hogar, trae y manda lo pendiente */
   async start(): Promise<void> {
+    if (this.frozen) return;
     this.running = true;
     if (!(await this.ensureLoaded())) {
       // No se pudo leer el estado (IndexedDB): se vuelve a probar en un rato
@@ -315,10 +321,12 @@ export class SyncEngine {
    * o el ejemplo se anotan ya: lo que venga después (la plantilla, un respaldo) no se toma como cambios para el hogar
    */
   dataChanged(): void {
+    // En el modo demo los datos son los inventados: ni se miran
+    if (this.frozen) return;
     // Sin el estado leído no se sabe si hay hogar: se lee y se vuelve a mirar (un «Borrar todo» no se puede escapar)
     if (!this.status.loaded) {
       void this.ensureLoaded().then((ok) => {
-        if (!ok || !this.state.household) return;
+        if (!ok || !this.state.household || this.frozen) return;
         if (this.running && !this.detachFns.length) this.attach();
         this.dataChanged();
       });
@@ -352,6 +360,21 @@ export class SyncEngine {
     const waiting = this.debounceTimer !== undefined;
     this.stop();
     if (waiting) void this.syncNow();
+  }
+
+  /**
+   * Modo demo: para todo (sin mandar lo que esperaba: queda pendiente para la vuelta) y espera que termine lo que estaba
+   * haciendo, así nada toca los datos después de que cambien por los del demo. Hasta thaw, no hace nada
+   */
+  async freeze(): Promise<void> {
+    this.frozen = true;
+    this.stop();
+    await this.exclusive(async () => {});
+  }
+
+  /** Sale del modo demo: vuelve a andar con start (lo arranca el store) */
+  thaw(): void {
+    this.frozen = false;
   }
 
   /** Manda lo pendiente y trae lo nuevo. Nunca tira: cómo salió queda en el estado (getStatus) */
@@ -690,7 +713,7 @@ export class SyncEngine {
   }
 
   private async cycle(): Promise<void> {
-    if (!(await this.ensureLoaded())) return;
+    if (this.frozen || !(await this.ensureLoaded())) return;
     const hh = this.state.household;
     if (!hh || this.status.phase === 'removed') return;
     try {
@@ -985,6 +1008,9 @@ const statusListeners = new Set<() => void>();
 /** La pantalla de bloqueo está puesta (holdSync): el motor no arranca ni sigue hasta que se saque */
 let held = false;
 let started = false;
+/** Modo demo (setSyncDemo): el motor congelado y, para las pantallas, sin hogar */
+let demo = false;
+let demoStatus: SyncStatus | null = null;
 
 /**
  * Lo engancha el store cuando los datos ya se leyeron. Sin Supabase configurado (o en la vista previa) no hace nada.
@@ -992,8 +1018,15 @@ let started = false;
  * Devuelve cómo pararlo
  */
 export function startSync(host: Pick<SyncHost, 'getData' | 'setData' | 'saveData'> & Partial<SyncHost>): () => void {
-  if (!isRemoteConfigured()) return () => {};
-  const full: SyncHost = { loadFile, saveFile, deleteFile, pruneFiles, ...host };
+  if (!isRemoteConfigured() || demo) return () => {};
+  // Los archivos, siempre los de los datos de verdad (nunca los del modo demo)
+  const full: SyncHost = {
+    loadFile: (id) => loadFile(id, 'real'),
+    saveFile: (id, file) => saveFile(id, file, 'real'),
+    deleteFile: (id) => deleteFile(id, 'real'),
+    pruneFiles: (keep) => pruneFiles(keep, 'real'),
+    ...host,
+  };
   if (!engine) {
     engine = new SyncEngine(fakePhone ? createFakeRemote(fakePhone) : createSupabaseRemote(), full, { load: loadSyncState, save: saveSyncState });
     engine.subscribe(() => statusListeners.forEach((l) => l()));
@@ -1014,15 +1047,38 @@ export function startSync(host: Pick<SyncHost, 'getData' | 'setData' | 'saveData
 export function holdSync(on: boolean): void {
   if (held === on) return;
   held = on;
-  if (!engine || !started) return;
+  if (!engine || !started || demo) return;
   if (on) engine.pause();
   else void engine.start();
 }
 
-/** El store avisa cada vez que cambian los datos */
-export const notifyDataChanged = (): void => engine?.dataChanged();
+/**
+ * Modo demo (lo llama el store). Al entrar, antes de que aparezcan los datos inventados: congela el motor y espera lo que
+ * estaba haciendo; las pantallas dejan de ver el hogar (ni su nombre, ni el código, ni los integrantes). Al salir, ya con
+ * los datos de verdad: el store lo vuelve a arrancar (startSync)
+ */
+export async function setSyncDemo(on: boolean): Promise<void> {
+  if (demo === on) return;
+  demo = on;
+  statusListeners.forEach((l) => l());
+  if (!engine) return;
+  if (on) await engine.freeze();
+  else {
+    engine.thaw();
+    // No se llegó a entrar al demo (falló algo): el motor sigue enganchado al store y vuelve a andar
+    if (started && !held) void engine.start();
+  }
+}
 
-export const getSyncStatus = (): SyncStatus => engine?.getStatus() ?? OFF;
+/** El store avisa cada vez que cambian los datos (en el modo demo, nada: son los inventados) */
+export const notifyDataChanged = (): void => {
+  if (!demo) engine?.dataChanged();
+};
+
+export const getSyncStatus = (): SyncStatus => {
+  if (demo) return (demoStatus ??= { ...OFF, configured: isRemoteConfigured(), loaded: true });
+  return engine?.getStatus() ?? OFF;
+};
 
 const subscribeStatus = (l: () => void) => {
   statusListeners.add(l);
@@ -1063,6 +1119,7 @@ export function authorLabel(a: Authors, createdBy: string | undefined): string |
 }
 
 const need = (): SyncEngine => {
+  if (demo) throw new SyncError('demo', 'En el modo demo no se usa el hogar compartido');
   if (!engine) throw new SyncError('unavailable', 'El hogar compartido no está configurado');
   return engine;
 };
@@ -1074,14 +1131,17 @@ export const household = {
   leave: (opts?: { force?: boolean }) => need().leave(opts),
   reloadNow: () => need().reloadNow(),
   resolveHeld: (choice: 'send' | 'reload') => need().resolveHeld(choice),
-  allowBigDelete: () => engine?.allowBigDelete(),
+  allowBigDelete: () => !demo && engine?.allowBigDelete(),
   removeMember: (userId: string) => need().removeMember(userId),
   regenerateCode: () => need().regenerateCode(),
   refreshMembers: () => need().refreshMembers(),
   setDisplayName: (name: string | null) => need().setDisplayName(name),
   rename: (name: string) => need().renameHousehold(name),
-  syncNow: () => engine?.syncNow() ?? Promise.resolve(),
+  syncNow: () => (demo ? Promise.resolve() : engine?.syncNow() ?? Promise.resolve()),
 };
 
-/** El archivo de una factura: el del teléfono o, en un hogar, el del servidor (ver SyncEngine.loadInvoiceFile) */
-export const loadInvoiceFile = (id: string): Promise<Blob | undefined> => (engine ? engine.loadInvoiceFile(id) : loadFile(id));
+/**
+ * El archivo de una factura: el del teléfono o, en un hogar, el del servidor (ver SyncEngine.loadInvoiceFile). En el modo
+ * demo, solo los del demo (nunca se baja nada del hogar)
+ */
+export const loadInvoiceFile = (id: string): Promise<Blob | undefined> => (engine && !demo ? engine.loadInvoiceFile(id) : loadFile(id));

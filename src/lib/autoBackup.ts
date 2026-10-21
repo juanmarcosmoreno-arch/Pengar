@@ -143,7 +143,8 @@ async function writeArchives(data: Data, day: string, archived: Record<string, s
   const refs: string[] = [];
   for (const inv of data.invoices) {
     if (!present.has(inv.id)) {
-      const blob = await loadFile(inv.id);
+      // Siempre de los datos de verdad (en el modo demo el respaldo no corre: store)
+      const blob = await loadFile(inv.id, 'real');
       if (!blob) continue;
       await PengarBackup.write({ name: archiveName(inv.id), data: JSON.stringify(await fileToBackup(blob, inv.mime)) });
     }
@@ -157,8 +158,8 @@ export interface AutoBackupRun {
   /** Lo que cambia en el ajuste (nada si no se intentó): `last`, `lastHash` y `archived` si salió, `failed` si no */
   state?: Pick<AutoBackupState, 'last' | 'lastHash' | 'failed' | 'archived'>;
   saved?: { name: string; location: BackupLocation };
-  /** Por qué no se hizo; 'busy': ya había uno en curso */
-  skipped?: BackupSkip | 'busy';
+  /** Por qué no se hizo; 'busy': ya había uno en curso; 'demo': en el modo demo no corre (store) */
+  skipped?: BackupSkip | 'busy' | 'demo';
   error?: string;
 }
 

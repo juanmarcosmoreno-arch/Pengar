@@ -1,7 +1,8 @@
 /**
  * Hogar compartido (Más → Hogar compartido): crear un hogar con los datos de este teléfono, unirse con el código (que
  * también sirve para recuperarlos en otro teléfono), quiénes están, el código para sumar a alguien, cómo va la
- * sincronización y salir. El motor es lib/sync.ts. Sin Supabase configurado (o en la vista previa) solo se explica.
+ * sincronización y salir. El motor es lib/sync.ts. Sin Supabase configurado (o en la vista previa) solo se explica; en el
+ * modo demo, tampoco se muestra nada del hogar.
  */
 import { Share } from '@capacitor/share';
 import { Check, CloudCheck, CloudDownload, CloudOff, CloudUpload, Copy, HousePlus, KeyRound, LogOut, Pause, RefreshCw, Share2, TriangleAlert, UserRound } from 'lucide-react';
@@ -561,10 +562,22 @@ function Removed({ hh, lost, onJoin }: { hh: HouseholdT; lost: boolean; onJoin: 
 
 export function Household({ onBack }: { onBack: () => void }) {
   const s = useSync();
+  const { demo } = useStore();
   // Las hojas van acá: al crear o unirse, la pantalla cambia (y la hoja tiene que seguir para mostrar el código)
   const [sheet, setSheet] = useState<'create' | 'join' | null>(null);
   let body: ReactNode;
-  if (!s.configured) {
+  if (demo) {
+    // Ni el nombre del hogar, ni el código, ni los integrantes: se está mostrando la app
+    body = (
+      <div className="card flex flex-col items-center p-5 text-center">
+        <Suricata pose="casa" size={150} />
+        <h2 className="mt-2 text-2xl">En el modo demo no se muestra</h2>
+        <p className="mt-1 text-[17px] text-muted">
+          Con un hogar compartido, cada uno anota en su teléfono y todos ven lo mismo. En el modo demo no se sincroniza nada: lo que anotes acá no le llega a nadie, y al salir todo sigue como estaba.
+        </p>
+      </div>
+    );
+  } else if (!s.configured) {
     body = (
       <div className="card flex flex-col items-center p-5 text-center">
         <Suricata pose="casa" size={150} />

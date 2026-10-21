@@ -173,6 +173,7 @@ export function normalizeData(d: Partial<Omit<Data, 'version'>> & { version?: nu
       currency: { ...base.settings.currency, ...s.currency },
       learned: s.learned ?? {},
       example: s.example === true || undefined,
+      demo: s.demo === true || undefined,
       usdRate: typeof s.usdRate === 'number' && Number.isFinite(s.usdRate) && s.usdRate > 0 ? s.usdRate : undefined,
       lastReportSeen: isMonth(s.lastReportSeen) ? s.lastReportSeen : undefined,
       sharedExtra: s.sharedExtra && typeof s.sharedExtra === 'object' && !Array.isArray(s.sharedExtra) ? s.sharedExtra : undefined,

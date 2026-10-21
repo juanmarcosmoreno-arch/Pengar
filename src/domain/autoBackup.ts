@@ -65,7 +65,8 @@ export type BackupDecision = { due: true; hash: string } | { due: false; why: Ba
  */
 export function backupDue(state: AutoBackupState, data: Data, now: number, force = false): BackupDecision {
   if (!data.settings.onboarded) return { due: false, why: 'empty' };
-  if (data.settings.example) return { due: false, why: 'example' };
+  // Ni el ejemplo ni los datos del modo demo (en el demo el respaldo ni corre: store)
+  if (data.settings.example || data.settings.demo) return { due: false, why: 'example' };
   if (!force) {
     if (!state.enabled) return { due: false, why: 'off' };
     const { failed } = state;

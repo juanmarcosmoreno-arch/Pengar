@@ -2,6 +2,7 @@ import { ArrowDown, ArrowUp, Camera, ChevronRight, CreditCard, Minus, Plus } fro
 import { useEffect, useState } from 'react';
 import { BudgetRows } from '../components/charts/BudgetRows';
 import { Columns } from '../components/charts/Columns';
+import { DemoChip } from '../components/Demo';
 import { ExampleBanner } from '../components/ExampleBanner';
 import { CategoryBubble } from '../components/Icon';
 import { Suricata, type Pose } from '../components/Suricata';
@@ -64,7 +65,10 @@ export function Home({ onAdd, onScan, onStatement, onEdit, onRecord, onGo, onRep
     <div className="space-y-4 px-4 pt-[calc(env(safe-area-inset-top)+16px)]">
       <header className="flex items-end justify-between px-1">
         <div className="pb-2">
-          <div className="text-xl text-muted">Hola,</div>
+          <div className="flex items-center gap-2">
+            <span className="text-xl text-muted">Hola,</span>
+            <DemoChip />
+          </div>
           <h1 className="text-4xl leading-tight">{data.settings.name || 'de nuevo'}</h1>
         </div>
         <Suricata pose="saludando" size={92} flip motion={wave ? 'wave' : undefined} />

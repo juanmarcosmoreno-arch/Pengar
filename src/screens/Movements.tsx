@@ -1,6 +1,7 @@
 import { ChevronLeft, ChevronRight, Plus, Search } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { MovementRow } from '../components/MovementRow';
+import { DemoChip } from '../components/Demo';
 import { PageHeader } from '../components/Sheet';
 import { EmptyState } from '../components/Suricata';
 import { addMonths, currentMonth, dayLabel, monthLabel, monthOf } from '../domain/dates';
@@ -55,7 +56,7 @@ export function Movements({ onAdd, onEdit, month, setMonth }: {
 
   return (
     <div>
-      <PageHeader title="Movimientos" />
+      <PageHeader title="Movimientos" right={<DemoChip className="mr-1" />} />
       <div className="space-y-3 px-4">
         <div className="relative">
           <Search size={18} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-muted" />

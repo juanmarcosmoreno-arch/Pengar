@@ -1,7 +1,9 @@
 import { ChevronRight, CircleHelp, FileText, Layers, Repeat, Settings, Target, Users, Wallet } from 'lucide-react';
+import { DemoChip } from '../components/Demo';
 import { ExampleBanner } from '../components/ExampleBanner';
 import { PageHeader } from '../components/Sheet';
 import { useSync } from '../lib/sync';
+import { useStore } from '../store/store';
 
 export type MorePage = 'presupuesto' | 'fijos' | 'categorias' | 'metas' | 'facturas' | 'hogar' | 'ajustes' | 'ayuda';
 
@@ -12,16 +14,18 @@ const ITEMS: { id: MorePage; label: string; sub: string; Icon: typeof Wallet }[]
   { id: 'metas', label: 'Metas', sub: 'Ahorrar para algo', Icon: Target },
   { id: 'facturas', label: 'Facturas y estados de cuenta', sub: 'Las fotos, PDF y planillas que subiste', Icon: FileText },
   { id: 'hogar', label: 'Hogar compartido', sub: 'Anotar entre varios, cada uno en su teléfono', Icon: Users },
-  { id: 'ajustes', label: 'Ajustes', sub: 'Moneda, importar, respaldo, lectura con IA', Icon: Settings },
+  { id: 'ajustes', label: 'Ajustes', sub: 'Moneda, importar, respaldo, lectura con IA, modo demo', Icon: Settings },
   { id: 'ayuda', label: 'Cómo se usa', sub: 'Lo básico en un minuto', Icon: CircleHelp },
 ];
 
 export function More({ onOpen }: { onOpen: (p: MorePage) => void }) {
   const { household, phase } = useSync();
+  const { demo } = useStore();
   const hogar = (sub: string) => (!household ? sub : phase === 'held' ? `«${household.name}»: hay algo para revisar` : `Estás en «${household.name}»`);
+  const subOf = (id: MorePage, sub: string) => (id === 'hogar' ? hogar(sub) : id === 'ajustes' && demo ? 'Estás en el modo demo: para salir, acá' : sub);
   return (
     <div>
-      <PageHeader title="Más" />
+      <PageHeader title="Más" right={<DemoChip className="mr-1" />} />
       <ExampleBanner className="mx-4 mb-3" />
       <div className="card mx-4 divide-y divide-line px-4">
         {ITEMS.map(({ id, label, sub, Icon }) => (
@@ -29,7 +33,7 @@ export function More({ onOpen }: { onOpen: (p: MorePage) => void }) {
             <Icon size={24} className="shrink-0 text-primary" strokeWidth={1.75} />
             <div className="min-w-0 flex-1">
               <div className="text-lg">{label}</div>
-              <div className="line-clamp-2 text-[15px] text-muted">{id === 'hogar' ? hogar(sub) : sub}</div>
+              <div className="line-clamp-2 text-[15px] text-muted">{subOf(id, sub)}</div>
             </div>
             <ChevronRight className="text-muted" size={20} />
           </button>

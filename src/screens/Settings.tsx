@@ -1,6 +1,7 @@
-import { ChevronRight, Cloud, CloudUpload, Download, HardDrive, LockKeyhole, RefreshCw, Smartphone, Sparkles, Upload } from 'lucide-react';
+import { ChevronRight, Cloud, CloudUpload, Download, HardDrive, LockKeyhole, Presentation, RefreshCw, Smartphone, Sparkles, Upload } from 'lucide-react';
 import { useEffect, useId, useRef, useState } from 'react';
 import { ConfirmSheet, NoticeSheet } from '../components/ConfirmSheet';
+import { DEMO_EXPLAINED, useExitDemo } from '../components/Demo';
 import { ImportFlow, ImportFormatHelp } from '../components/ImportFlow';
 import { PageHeader, Sheet } from '../components/Sheet';
 import { useToast } from '../components/Toast';
@@ -386,8 +387,63 @@ function Section({ title, children }: { title: string; children: React.ReactNode
   );
 }
 
+/**
+ * Modo demo: datos inventados para mostrar la app sin que se vean los tuyos. Entrar pide confirmar; salir, en el
+ * iPhone, Face ID o el código. No está en la vista previa (ya son datos de ejemplo) ni con el ejemplo de la bienvenida
+ */
+function DemoMode() {
+  const { demo, enterDemo } = useStore();
+  const hh = activeHousehold(useSync());
+  const toast = useToast();
+  const exit = useExitDemo();
+  const [asking, setAsking] = useState(false);
+  if (demo) {
+    return (
+      <Section title="Modo demo">
+        <p className="flex gap-2 rounded-2xl bg-sunken px-4 py-3 text-[16px]">
+          <Presentation size={18} className="mt-0.5 shrink-0 text-primary" />
+          <span>Estás en el modo demo: los datos son inventados. Lo que anotes o cambies queda en el demo; tus datos no se tocan.</span>
+        </p>
+        <button className="btn-primary w-full" disabled={exit.busy} onClick={exit.start}>Salir del modo demo</button>
+        {canLock && <p className="text-[14px] text-muted">Para volver a tus datos te pide Face ID o el código del iPhone.</p>}
+        {exit.sheet}
+      </Section>
+    );
+  }
+  return (
+    <Section title="Modo demo">
+      <p className="flex gap-2 text-[16px]">
+        <Presentation size={18} className="mt-0.5 shrink-0 text-primary" />
+        <span>{DEMO_EXPLAINED}</span>
+      </p>
+      <button className="btn-outline w-full" onClick={() => setAsking(true)}>Pasar al modo demo</button>
+      <p className="text-[14px] text-muted">
+        {canLock ? 'Para volver te pide Face ID o el código del iPhone, aunque no tengas el bloqueo prendido: quien mira la app no puede ver tus datos. ' : ''}
+        Mientras tanto no se sincroniza el hogar compartido ni se hacen respaldos.
+      </p>
+      {asking && (
+        <ConfirmSheet
+          title="¿Pasar al modo demo?"
+          message={`Vas a ver datos inventados para mostrar la app. Tus datos quedan guardados como están y vuelven al salir.${hh ? ` Mientras tanto no se sincroniza el hogar «${hh.name}»: lo que falte mandar se manda al salir.` : ''}`}
+          confirmLabel="Pasar al modo demo"
+          onConfirm={() => {
+            enterDemo().then(
+              () => toast('Modo demo: los datos son inventados'),
+              (e) => {
+                console.error(e);
+                toast('No se pudo pasar al modo demo: probá de nuevo');
+              },
+            );
+          }}
+          onClose={() => setAsking(false)}
+        />
+      )}
+    </Section>
+  );
+}
+
 export function Settings({ onBack }: { onBack: () => void }) {
-  const { data, device, update, updateSettings, updateDevice, replaceAll, restoreBackup } = useStore();
+  const { data, device, demo, update, updateSettings, updateDevice, replaceAll, restoreBackup, resetDemo } = useStore();
   const sync = useSync();
   const hh = activeHousehold(sync);
   // Con el ejemplo puesto en un hogar, lo que se restaure o importe se reemplazaría por los datos del hogar
@@ -404,6 +460,10 @@ export function Settings({ onBack }: { onBack: () => void }) {
   const [backup, setBackup] = useState<ReadBackup | null>(null);
   const [wiping, setWiping] = useState(false);
   const [forgetting, setForgetting] = useState(false);
+  // «Rehacer los datos de demo» (en el modo demo, en lugar de «Borrar todo»)
+  const [redoing, setRedoing] = useState(false);
+  // El modo demo: no en la vista previa ni con el ejemplo de la bienvenida (ya son datos inventados)
+  const demoAvailable = !isPreview && (demo || !s.example);
   // Mientras se arma el respaldo o está abierta «Compartir» (un segundo toque la rechaza)
   const [busy, setBusy] = useState(false);
   // Apple Intelligence en este teléfono (en la web no hay)
@@ -442,6 +502,8 @@ export function Settings({ onBack }: { onBack: () => void }) {
     <div>
       <PageHeader title="Ajustes" onBack={onBack} />
       <div className="space-y-5 px-4 pb-12">
+        {/* En el modo demo, lo primero: cómo salir */}
+        {demo && <DemoMode />}
         <Section title="Vos">
           <div>
             <label className="label" htmlFor={`${id}-nombre`}>Nombre</label>
@@ -482,7 +544,8 @@ export function Settings({ onBack }: { onBack: () => void }) {
           </Section>
         )}
 
-        {canLock && <Privacy />}
+        {/* En el modo demo no se muestra (se está mostrando la app a otra persona) */}
+        {canLock && !demo && <Privacy />}
 
         <Section title="Facturas y rubros con IA">
           {apple && (
@@ -498,6 +561,10 @@ export function Settings({ onBack }: { onBack: () => void }) {
           {isPreview ? (
             <p className="rounded-2xl bg-sunken px-4 py-3 text-[16px]">
               En la vista previa web, la lectura con Claude no está disponible. Los PDF se leen igual, en el navegador; en la app de iPhone podés poner tu clave.
+            </p>
+          ) : demo ? (
+            <p className="rounded-2xl bg-sunken px-4 py-3 text-[16px]">
+              En el modo demo la clave de Claude no se usa ni se muestra: las facturas se leen en el teléfono.
             </p>
           ) : (
             <>
@@ -532,59 +599,68 @@ export function Settings({ onBack }: { onBack: () => void }) {
           )}
         </Section>
 
-        <Section title="Importar">
-          {importing ? (
-            <ImportFlow mode="ask" compact onDone={() => { setImporting(false); toast('Planilla importada'); }} />
-          ) : (
-            <button className="btn-outline w-full" onClick={() => (paused ? setNotice('importar') : setImporting(true))}><Upload size={18} /> Importar una planilla</button>
-          )}
-          <ImportFormatHelp />
-        </Section>
+        {/* En el modo demo no se importa, ni se respalda, ni se restaura nada: son cosas de los datos de verdad */}
+        {!demo && (
+          <Section title="Importar">
+            {importing ? (
+              <ImportFlow mode="ask" compact onDone={() => { setImporting(false); toast('Planilla importada'); }} />
+            ) : (
+              <button className="btn-outline w-full" onClick={() => (paused ? setNotice('importar') : setImporting(true))}><Upload size={18} /> Importar una planilla</button>
+            )}
+            <ImportFormatHelp />
+          </Section>
+        )}
 
-        {canAutoBackup && <AutoBackup />}
+        {canAutoBackup && !demo && <AutoBackup />}
 
-        <Section title="Exportar y respaldo">
-          <button
-            className="btn-outline w-full"
-            disabled={busy}
-            onClick={() => void share(() => new Blob(['﻿' + movementsCsv(data)], { type: 'text/csv' }), `pengar-movimientos-${today()}.csv`)}
-          >
-            <Download size={18} /> Movimientos en CSV (Excel)
-          </button>
-          <button
-            className="btn-outline w-full"
-            disabled={busy}
-            onClick={() => void share(() => buildBackup(data, loadInvoiceFile), `pengar-respaldo-${today()}.json`)}
-          >
-            <Download size={18} /> {busy ? 'Preparando…' : 'Respaldo completo (con facturas)'}
-          </button>
-          <button className="btn-ghost w-full" onClick={() => (paused ? setNotice('restaurar') : restore.current?.click())}>Restaurar un respaldo…</button>
-          <p className="text-[14px] text-muted">
-            {canAutoBackup
-              ? 'Además del automático, podés guardar un respaldo cuando quieras (en Archivos, iCloud Drive o por mail), por ejemplo para pasarlo a otro teléfono.'
-              : 'Los datos viven solo en este teléfono. Guardá un respaldo de vez en cuando (en Archivos o iCloud Drive) por si lo cambiás o se pierde.'}
-          </p>
-          <input
-            ref={restore}
-            type="file"
-            accept=".json,application/json"
-            className="hidden"
-            onChange={async (e) => {
-              const f = e.target.files?.[0];
-              e.target.value = '';
-              if (!f) return;
-              try {
-                // Uno automático copiado a mano: sus fotos están aparte, en la carpeta de los automáticos
-                setBackup(await withArchives(await readBackup(f)));
-              } catch (err) {
-                toast(err instanceof Error ? err.message : 'No se pudo leer el respaldo');
-              }
-            }}
-          />
-        </Section>
+        {!demo && (
+          <Section title="Exportar y respaldo">
+            <button
+              className="btn-outline w-full"
+              disabled={busy}
+              onClick={() => void share(() => new Blob(['﻿' + movementsCsv(data)], { type: 'text/csv' }), `pengar-movimientos-${today()}.csv`)}
+            >
+              <Download size={18} /> Movimientos en CSV (Excel)
+            </button>
+            <button
+              className="btn-outline w-full"
+              disabled={busy}
+              onClick={() => void share(() => buildBackup(data, loadInvoiceFile), `pengar-respaldo-${today()}.json`)}
+            >
+              <Download size={18} /> {busy ? 'Preparando…' : 'Respaldo completo (con facturas)'}
+            </button>
+            <button className="btn-ghost w-full" onClick={() => (paused ? setNotice('restaurar') : restore.current?.click())}>Restaurar un respaldo…</button>
+            <p className="text-[14px] text-muted">
+              {canAutoBackup
+                ? 'Además del automático, podés guardar un respaldo cuando quieras (en Archivos, iCloud Drive o por mail), por ejemplo para pasarlo a otro teléfono.'
+                : 'Los datos viven solo en este teléfono. Guardá un respaldo de vez en cuando (en Archivos o iCloud Drive) por si lo cambiás o se pierde.'}
+            </p>
+            <input
+              ref={restore}
+              type="file"
+              accept=".json,application/json"
+              className="hidden"
+              onChange={async (e) => {
+                const f = e.target.files?.[0];
+                e.target.value = '';
+                if (!f) return;
+                try {
+                  // Uno automático copiado a mano: sus fotos están aparte, en la carpeta de los automáticos
+                  setBackup(await withArchives(await readBackup(f)));
+                } catch (err) {
+                  toast(err instanceof Error ? err.message : 'No se pudo leer el respaldo');
+                }
+              }}
+            />
+          </Section>
+        )}
+
+        {demoAvailable && !demo && <DemoMode />}
 
         <Section title="Empezar de nuevo">
-          <button className="btn-ghost -ml-4 text-danger" onClick={() => setWiping(true)}>Borrar todo</button>
+          {demo
+            ? <button className="btn-ghost -ml-4" onClick={() => setRedoing(true)}>Rehacer los datos de demo</button>
+            : <button className="btn-ghost -ml-4 text-danger" onClick={() => setWiping(true)}>Borrar todo</button>}
         </Section>
         <p className="text-center text-[14px] text-muted">Pengar · versión {__APP_VERSION__}</p>
       </div>
@@ -622,6 +698,23 @@ export function Settings({ onBack }: { onBack: () => void }) {
           onClose={() => setForgetting(false)}
         />
       )}
+      {redoing && (
+        <ConfirmSheet
+          title="¿Rehacer los datos de demo?"
+          message="Lo que anotaste o cambiaste en el modo demo se va y se arman de nuevo los datos inventados, al día de hoy. Tus datos no se tocan."
+          confirmLabel="Rehacer"
+          onConfirm={() => {
+            resetDemo().then(
+              () => toast('Datos de demo nuevos'),
+              (e) => {
+                console.error(e);
+                toast('No se pudieron rehacer los datos de demo');
+              },
+            );
+          }}
+          onClose={() => setRedoing(false)}
+        />
+      )}
       {wiping && (
         <ConfirmSheet
           title="¿Borrar todo?"
@@ -633,7 +726,7 @@ export function Settings({ onBack }: { onBack: () => void }) {
               replaceAll(emptyData());
               // Como recién instalada: sin bloqueo ni aviso del día 1. El respaldo automático queda como está (con
               // cuándo fue el último: así no pisa el de hoy, que tiene los datos de antes)
-              const { autoBackup: _same, ...factory } = defaultDevice();
+              const { autoBackup: _same, demo: _real, ...factory } = defaultDevice();
               updateDevice(factory);
             });
           }}

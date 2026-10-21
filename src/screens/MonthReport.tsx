@@ -76,7 +76,7 @@ function Change({ change, than, sub }: { change: number; than: string; sub: stri
 
 /** Resumen al cerrar el mes: pantalla entera, como escanear una factura */
 export function MonthReport({ month, onClose, onStats }: { month: string; onClose: () => void; onStats: (month: string) => void }) {
-  const { data, ix, updateSettings } = useStore();
+  const { data, ix, demo, updateSettings } = useStore();
   const { money } = useMoney();
   const r = useMemo(() => monthReport(data, ix, month), [data, ix, month]);
   const [history, setHistory] = useState<string | null>(null);
@@ -227,7 +227,8 @@ export function MonthReport({ month, onClose, onStats }: { month: string; onClos
           </>
         )}
 
-        {canRemind && <ReminderToggle />}
+        {/* Es un ajuste de este teléfono: en el modo demo no se toca */}
+        {canRemind && !demo && <ReminderToggle />}
 
         <div className="space-y-3 pt-1">
           {r.movements > 0 && <button className="btn-outline w-full" onClick={() => onStats(month)}>Ver en Estadísticas</button>}

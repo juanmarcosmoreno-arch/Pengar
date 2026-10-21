@@ -1,5 +1,10 @@
-/** Todo se guarda en el teléfono (IndexedDB): los datos en una clave y cada archivo de factura en la suya. */
+/**
+ * Todo se guarda en el teléfono (IndexedDB): los datos en una clave y cada archivo de factura en la suya. Los del modo
+ * demo van aparte (otra clave y otro prefijo: domain/demo); el store dice cuál se ve (setActiveDataset) y quien tiene que
+ * tocar siempre los de verdad (el hogar compartido, el respaldo automático) lo pide con 'real'.
+ */
 import { createStore, del, get, keys, set, type UseStore } from 'idb-keyval';
+import { dataKey, fileIdOf, fileKey, type Dataset } from '../domain/demo';
 import { normalizeData } from '../domain/template';
 import type { Data } from '../domain/types';
 import { fakePhone } from './fakePhone';
@@ -10,6 +15,12 @@ import { isPreview } from './platform';
 // no es «no hay datos» (si no, el primer cambio pisaría lo guardado) y «no se pudo guardar» se avisa
 let kv: UseStore | null | undefined;
 const memory = new Map<string, unknown>();
+
+// Los datos que se ven: los de verdad o los del modo demo (lo cambia el store al pasar de uno a otro)
+let active: Dataset = 'real';
+export const setActiveDataset = (set: Dataset) => {
+  active = set;
+};
 
 function store(): UseStore | null {
   if (kv === undefined) {
@@ -54,10 +65,10 @@ async function write(key: string, value: unknown): Promise<boolean> {
 }
 
 /** Lo guardado, o null si no hay nada. Si no se pudo leer, tira (no es lo mismo que no tener datos) */
-export async function loadData(): Promise<Data | null> {
-  const d = await read<Data>('data');
+export async function loadData(set: Dataset = active): Promise<Data | null> {
+  const d = await read<Data>(dataKey(set));
   if (!d) return null;
-  await moveToDevice(d);
+  if (set === 'real') await moveToDevice(d);
   return normalizeData(d);
 }
 
@@ -79,19 +90,26 @@ async function moveToDevice(d: Data): Promise<void> {
 export const readDevice = () => read<unknown>('device');
 export const writeDevice = (value: unknown) => write('device', value);
 
-export const saveData = (d: Data) => write('data', d);
+export const saveData = (d: Data, set: Dataset = active) => write(dataKey(set), d);
 
-export const saveFile = (id: string, file: Blob) => write(`file:${id}`, file);
-export const loadFile = (id: string) => read<Blob>(`file:${id}`).catch(() => undefined);
-export async function deleteFile(id: string): Promise<void> {
-  memory.delete(`file:${id}`);
+export const saveFile = (id: string, file: Blob, set: Dataset = active) => write(fileKey(set, id), file);
+export const loadFile = (id: string, set: Dataset = active) => read<Blob>(fileKey(set, id)).catch(() => undefined);
+export async function deleteFile(id: string, set: Dataset = active): Promise<void> {
+  const key = fileKey(set, id);
+  memory.delete(key);
   const s = store();
-  if (s) await del(`file:${id}`, s).catch(() => {});
+  if (s) await del(key, s).catch(() => {});
 }
 
-/** Borra los archivos de facturas y estados de cuenta que ya no están en los datos (después de «Borrar todo», restaurar…) */
-export async function pruneFiles(keep: Set<string>): Promise<void> {
-  const stale = (k: string) => k.startsWith('file:') && !keep.has(k.slice(5));
+/**
+ * Borra los archivos de facturas y estados de cuenta que ya no están en los datos (después de «Borrar todo», restaurar…).
+ * Solo los de ese juego: los del modo demo nunca tocan los de verdad, ni al revés
+ */
+export async function pruneFiles(keep: Set<string>, set: Dataset = active): Promise<void> {
+  const stale = (k: string) => {
+    const id = fileIdOf(set, k);
+    return id !== null && !keep.has(id);
+  };
   for (const k of [...memory.keys()]) if (stale(k)) memory.delete(k);
   const s = store();
   if (!s) return;

@@ -646,6 +646,66 @@ describe('pantalla de bloqueo (pausa)', () => {
   });
 });
 
+describe('modo demo (congelado)', () => {
+  it('no ve los datos del demo, no manda ni trae nada; al volver manda lo que esperaba y se pone al día', async () => {
+    const hh = await together();
+    // Algo de Bruno que esperaba los 1,5 s para mandarse: queda pendiente para la vuelta
+    bruno.edit((d) => ({ ...d, movements: [...d.movements, mov('b6', 6)] }));
+    await bruno.engine.freeze();
+    expect(server.records.get(hh.id)!.has('movement:b6')).toBe(false);
+    const calls = { ...bruno.client.calls };
+    // Los datos del demo: otros, con otro id y lo anotado en el demo
+    const real = bruno.data;
+    bruno.data = normalizeData({ ...anaData(), datasetId: 'd-demo', settings: { ...anaData().settings, demo: true } });
+    bruno.edit((d) => ({ ...d, movements: [...d.movements, mov('demo1', 1)] }));
+    ana.edit((d) => ({ ...d, goals: [{ ...d.goals[0], saved: 300 }] }));
+    await vi.advanceTimersByTimeAsync(3 * 60_000);
+    // Ni arrancar ni «Sincronizar ahora» hacen nada
+    await bruno.engine.start();
+    await bruno.engine.syncNow();
+    expect(bruno.client.calls).toEqual(calls);
+    expect(bruno.data.goals[0].saved).toBe(100);
+    expect(server.records.get(hh.id)!.has('movement:demo1')).toBe(false);
+    // Ver otros datos no lo dejó esperando para bajar todo de nuevo (lo de acá sin mandar se perdería)
+    expect(bruno.state.reload).toBe(false);
+    // Sale del demo: vuelven sus datos y se pone al día
+    bruno.data = real;
+    bruno.engine.thaw();
+    await bruno.engine.start();
+    expect(server.records.get(hh.id)!.has('movement:b6')).toBe(true);
+    expect(server.records.get(hh.id)!.has('movement:demo1')).toBe(false);
+    expect(bruno.data.goals[0].saved).toBe(300);
+    expect(bruno.data.movements.some((m) => m.id === 'demo1')).toBe(false);
+  });
+
+  it('al congelar espera la vuelta que estaba en curso: después nada toca los datos', async () => {
+    await together();
+    ana.edit((d) => ({ ...d, goals: [{ ...d.goals[0], saved: 300 }] }));
+    await vi.advanceTimersByTimeAsync(2000);
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    const pull = bruno.client.pull.bind(bruno.client);
+    bruno.client.pull = async (...args: Parameters<typeof pull>) => {
+      await gate;
+      return pull(...args);
+    };
+    const cycle = bruno.engine.syncNow();
+    // La vuelta ya está trayendo lo nuevo
+    await vi.advanceTimersByTimeAsync(0);
+    let frozen = false;
+    const freezing = bruno.engine.freeze().then(() => {
+      frozen = true;
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(frozen).toBe(false);
+    release();
+    await freezing;
+    await cycle;
+    // Lo recibido quedó en los datos de verdad antes de que terminara de congelarse
+    expect(bruno.data.goals[0].saved).toBe(300);
+  });
+});
+
 describe('integrantes', () => {
   it('quedan guardados: sin conexión se sigue sabiendo quién anotó cada cosa', async () => {
     await together();

@@ -83,8 +83,11 @@ export function parseKey(key: string): { kind: RecordKind; id: string } | null {
   return RECORD_KINDS.includes(kind) && i < key.length - 1 ? { kind, id: key.slice(i + 1) } : null;
 }
 
-/** Se sincroniza solo con datos propios ya empezados: ni la bienvenida (o después de «Borrar todo») ni el ejemplo */
-export const syncable = (d: Data): boolean => d.settings.onboarded === true && !d.settings.example;
+/**
+ * Se sincroniza solo con datos propios ya empezados: ni la bienvenida (o después de «Borrar todo») ni el ejemplo. Los
+ * del modo demo tampoco (el motor ni los ve: lib/sync se para; esto es por si acaso)
+ */
+export const syncable = (d: Data): boolean => d.settings.onboarded === true && !d.settings.example && !d.settings.demo;
 
 /** Los ajustes del hogar (con lo que trajo una versión más nueva y esta no conoce, tal cual: Settings.sharedExtra) */
 export function sharedSettings(s: Settings): SharedSettings {

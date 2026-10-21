@@ -6,6 +6,7 @@ import { HBars } from '../components/charts/HBars';
 import { Legend, TimeChart } from '../components/charts/TimeChart';
 import { Icon } from '../components/Icon';
 import { LedgerSheet, LedgerSummary } from '../components/LedgerSheet';
+import { DemoChip } from '../components/Demo';
 import { PageHeader } from '../components/Sheet';
 import { EmptyState, Suricata } from '../components/Suricata';
 import { Segmented, Toggle } from '../components/Toggle';
@@ -38,7 +39,7 @@ export function Stats({ view, setView, month, setMonth, savings, setSavings, onR
 }) {
   return (
     <div>
-      <PageHeader title="Estadísticas" />
+      <PageHeader title="Estadísticas" right={<DemoChip className="mr-1" />} />
       <div className="space-y-4 px-4 pb-6">
         <Segmented value={view} onChange={setView} options={[{ id: 'mes', label: 'Mes' }, { id: 'tendencias', label: 'Tendencias' }]} />
         {view === 'mes' ? <MonthView month={month} setMonth={setMonth} includeSavings={savings} setIncludeSavings={setSavings} onReport={onReport} /> : <Trends />}

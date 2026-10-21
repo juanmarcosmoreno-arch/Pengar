@@ -117,7 +117,7 @@ export interface Recurring {
 /**
  * Ajustes que van con los datos (y en los respaldos). Los que son solo de este teléfono (el bloqueo con Face ID, el
  * aviso del día 1) están en lib/device.ts. En un hogar compartido se comparten la moneda, lo aprendido y la última
- * cotización escrita; `name`, `ai`, `onboarded`, `example` y `lastReportSeen` quedan en cada teléfono (domain/sync.ts).
+ * cotización escrita; `name`, `ai`, `onboarded`, `example`, `demo` y `lastReportSeen` quedan en cada teléfono (domain/sync.ts).
  */
 export interface Settings {
   name: string;
@@ -137,6 +137,11 @@ export interface Settings {
   onboarded: boolean;
   /** Son los datos de ejemplo (inventados): Inicio y Más muestran un aviso para empezar con los propios */
   example?: boolean;
+  /**
+   * Son los datos del modo demo (inventados, guardados aparte de los de verdad: domain/demo, lib/device). No se
+   * sincronizan ni se respaldan nunca
+   */
+  demo?: boolean;
   /** Última cotización del dólar escrita a mano en el estado de cuenta (si no hay conexión con el BCU, se ofrece) */
   usdRate?: number;
   /** Último resumen del mes abierto (YYYY-MM): hasta abrir el del mes pasado, Inicio lo ofrece */

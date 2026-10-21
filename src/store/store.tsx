@@ -1,7 +1,11 @@
-/** Estado de la app: los datos en memoria, guardados en el teléfono a medida que cambian. */
+/**
+ * Estado de la app: los datos en memoria, guardados en el teléfono a medida que cambian. Con el modo demo (lib/device)
+ * se ven y se guardan los datos inventados, en otra clave (domain/demo): los de verdad no se tocan.
+ */
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { learnFrom } from '../domain/classify';
 import { currentMonth, today } from '../domain/dates';
+import { demoOutdated, type Dataset } from '../domain/demo';
 import { exampleOutdated } from '../domain/example';
 import { distributeTotal } from '../domain/invoice';
 import { mergeImport, replaceImport, type ImportResult } from '../domain/importSheet';
@@ -14,11 +18,11 @@ import { emptyData, newId, normalizeData, templateData } from '../domain/templat
 import type { Category, Data, Goal, Invoice, InvoiceItem, Movement, Recurring, Rubro, Settings } from '../domain/types';
 import { canAutoBackup, maybeAutoBackup, onBackground, type AutoBackupRun } from '../lib/autoBackup';
 import { restoreFiles, type ReadBackup } from '../lib/backup';
-import { deleteFile, loadData, pruneFiles, saveData, saveFile } from '../lib/db';
+import { deleteFile, loadData, pruneFiles, saveData, saveFile, setActiveDataset } from '../lib/db';
 import { defaultDevice, loadDevice, saveDevice, type Device } from '../lib/device';
-import { loadExample } from '../lib/example';
+import { loadDemo, loadExample } from '../lib/example';
 import { isPreview } from '../lib/platform';
-import { notifyDataChanged, startSync } from '../lib/sync';
+import { notifyDataChanged, setSyncDemo, startSync } from '../lib/sync';
 
 export interface InvoiceToSave {
   file: Blob;
@@ -63,6 +67,17 @@ interface Store {
   updateDevice: (patch: Partial<Device>) => void;
   /** «Hacer un respaldo ahora» (el automático, aunque ya haya uno de hoy). Nunca tira: dice cómo salió */
   backupNow: () => Promise<AutoBackupRun>;
+  /**
+   * Modo demo: se ven los datos inventados (guardados aparte). Mientras tanto el hogar compartido no sincroniza, el
+   * respaldo automático no corre y el bloqueo no salta al volver a la app
+   */
+  demo: boolean;
+  /** Pasa al modo demo (la primera vez, o si son de otro mes, arma los datos). Tira si no se pudo (y queda como estaba) */
+  enterDemo: () => Promise<void>;
+  /** Vuelve a los datos de verdad. Quien llama ya pidió Face ID (o la confirmación). Tira si no se pudo */
+  exitDemo: () => Promise<void>;
+  /** «Rehacer los datos de demo»: los arma de nuevo (lo anotado en el demo se va). Tira si no se pudo */
+  resetDemo: () => Promise<void>;
   update: (fn: (d: Data) => Data) => void;
   /** Con `id`, ese (el de un gasto fijo del mes); si ya existe, uno nuevo */
   addMovement: (m: Omit<Movement, 'id' | 'createdAt'> & { id?: string }) => void;
@@ -123,44 +138,79 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const [saveError, setSaveError] = useState(false);
   const [device, setDevice] = useState<Device>(defaultDevice);
   const timer = useRef<ReturnType<typeof setTimeout>>();
-  // Lo último sin guardar, si se cargó bien lo guardado, y lo que se hace recién con los datos ya guardados
-  const pending = useRef<Data>();
+  // Lo último sin guardar de cada juego (los de verdad y los del demo), si se cargó bien lo guardado, y lo que se hace
+  // recién con los datos ya guardados
+  const pending = useRef(new Map<Dataset, Data>());
   const current = useRef<Data>(data);
   const loaded = useRef(false);
   const afterSave = useRef<(() => Promise<void>)[]>([]);
+  // Qué datos se ven (los de verdad o los del demo), lo último guardado de cada uno y si se está pasando de uno a otro
+  const dataset = useRef<Dataset>('real');
+  const lastSaved = useRef<Partial<Record<Dataset, Data>>>({});
+  const switching = useRef(false);
   // Los ajustes del teléfono al día, y los que falta guardar
   const deviceNow = useRef<Device>(device);
   const pendingDevice = useRef<Device>();
 
+  /** Arma los datos del demo y los guarda con sus archivos (los del demo anterior se van; los de verdad no se tocan) */
+  const buildDemo = useCallback(async (): Promise<Data> => {
+    const { data: demo, files } = await loadDemo();
+    await pruneFiles(new Set(), 'demo');
+    for (const f of files) await saveFile(f.id, new Blob([f.bytes], { type: f.mime }), 'demo');
+    await saveData(demo, 'demo');
+    lastSaved.current.demo = demo;
+    return demo;
+  }, []);
+
   const load = useCallback(async () => {
     setLoadError(false);
+    // Una conexión con IndexedDB que se perdió (pasa en el iPhone): se prueba una vez más con una nueva
+    const twice = async <T,>(fn: () => Promise<T>): Promise<T> => {
+      try {
+        return await fn();
+      } catch {
+        await new Promise((r) => setTimeout(r, 300));
+        return fn();
+      }
+    };
+    const failed = (e: unknown) => {
+      console.error(e);
+      setLoadError(true);
+      setReady(true);
+    };
+    // Primero los ajustes de este teléfono: dicen si se abre en el modo demo. Si no se pueden leer, no se muestra nada
+    // (podría ser el demo: los datos de verdad no se abren sin saberlo)
+    let dev: Device;
+    try {
+      dev = await twice(loadDevice);
+    } catch (e) {
+      failed(e);
+      return;
+    }
+    const set: Dataset = dev.demo && !isPreview ? 'demo' : 'real';
     let saved: Data | null;
     try {
-      saved = await loadData();
-    } catch {
-      // Una conexión con IndexedDB que se perdió (pasa en el iPhone): se prueba una vez más con una nueva
-      await new Promise((r) => setTimeout(r, 300));
-      try {
-        saved = await loadData();
-      } catch (e) {
-        console.error(e);
-        setLoadError(true);
-        setReady(true);
-        return;
-      }
+      saved = await twice(() => loadData(set));
+      // El demo se arma la primera vez o si es de otro mes (si no se puede, tampoco se muestran los de verdad)
+      if (set === 'demo' && (!saved || demoOutdated(saved, today()))) saved = await buildDemo();
+    } catch (e) {
+      failed(e);
+      return;
     }
     loaded.current = true;
+    dataset.current = set;
+    setActiveDataset(set);
+    // El hogar compartido no arranca en el demo
+    if (set === 'demo') await setSyncDemo(true);
     // Datos de antes, sin id: se les pone uno y se guarda ya (el hogar compartido compara con él; uno que no quedó
     // guardado cambiaría al reabrir). Si no se puede guardar, siguen sin id
     if (saved && !saved.datasetId) {
       const withId = { ...saved, datasetId: newId('d') };
-      saved = await saveData(withId).then(() => withId, () => saved);
+      saved = await saveData(withId, set).then(() => withId, () => saved);
     }
-    // Después de los datos: al leerlos se pasa acá lo que era de este teléfono (lib/db). Si no se pueden leer, de fábrica
-    const dev = await loadDevice().catch(() => new Promise((r) => setTimeout(r, 300)).then(loadDevice)).catch((e) => {
-      console.error(e);
-      return defaultDevice();
-    });
+    if (saved) lastSaved.current[set] = saved;
+    // Los de verdad, de nuevo: al leer los datos se pasa a este teléfono lo que era suyo (lib/db). Si no, los de antes
+    if (set === 'real') dev = await loadDevice().catch(() => dev);
     deviceNow.current = dev;
     setDevice(dev);
     if (saved && isPreview && exampleOutdated(saved, today())) {
@@ -196,20 +246,24 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         devFailed = true;
       }
     }
-    const next = pending.current;
-    if (!next || !loaded.current) {
+    const next = [...pending.current];
+    if (!next.length || !loaded.current) {
       if (dev) setSaveError(devFailed);
       return true;
     }
-    pending.current = undefined;
+    pending.current.clear();
     const jobs = afterSave.current.splice(0);
     try {
-      await saveData(next);
+      // Cada juego en su clave (al pasar al demo, lo de verdad se guarda antes)
+      for (const [set, d] of next) {
+        await saveData(d, set);
+        lastSaved.current[set] = d;
+      }
       setSaveError(devFailed);
     } catch (e) {
       console.error(e);
       setSaveError(true);
-      pending.current ??= next;
+      for (const [set, d] of next) if (!pending.current.has(set) && lastSaved.current[set] !== d) pending.current.set(set, d);
       afterSave.current.unshift(...jobs);
       return false;
     }
@@ -240,11 +294,12 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const update = useCallback((fn: (d: Data) => Data) => {
     const next = fn(current.current);
     current.current = next;
-    // Al instante, no después de dibujar: «Borrar todo» seguido de «Empezar de cero» no puede pasar por cambios del hogar
-    notifyDataChanged();
+    // Al instante, no después de dibujar: «Borrar todo» seguido de «Empezar de cero» no puede pasar por cambios del hogar.
+    // En el modo demo, nada: el hogar no ve los datos inventados
+    if (dataset.current === 'real') notifyDataChanged();
     // Si no se pudo leer lo guardado, nada se guarda encima
     if (loaded.current) {
-      pending.current = next;
+      pending.current.set(dataset.current, next);
       clearTimeout(timer.current);
       timer.current = setTimeout(() => void flush(), 250);
     }
@@ -252,17 +307,25 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   }, [flush]);
 
   // Hogar compartido (lib/sync): con los datos ya leídos, manda lo que cambia y trae lo de los demás. Sin Supabase
-  // configurado (y en la vista previa) no hace nada
+  // configurado (y en la vista previa) no hace nada. En el modo demo no arranca: ve solo los datos de verdad
+  const demo = device.demo;
   useEffect(() => {
-    if (!ready || loadError) return;
+    if (!ready || loadError || demo) return;
     return startSync({
-      getData: () => current.current,
-      setData: update,
+      // El motor se congela antes de pasar al demo (setSyncDemo); si algo se escapara, falla en vez de ver lo inventado
+      getData: () => {
+        if (dataset.current !== 'real') throw new Error('Modo demo: el hogar compartido no ve estos datos');
+        return current.current;
+      },
+      setData: (fn) => {
+        if (dataset.current !== 'real') throw new Error('Modo demo: el hogar compartido no cambia estos datos');
+        update(fn);
+      },
       saveData: async () => {
         if (!(await flush())) throw new Error('No se pudieron guardar los datos en el teléfono');
       },
     });
-  }, [ready, loadError, update, flush]);
+  }, [ready, loadError, demo, update, flush]);
 
   /** Los ajustes del teléfono se guardan enseguida (con lo que haya pendiente de los datos) */
   const updateDevice = useCallback((patch: Partial<Device>) => {
@@ -276,6 +339,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   /** Respaldo automático (lib/autoBackup): cómo salió queda en los ajustes del teléfono, para mostrarlo en Ajustes */
   const runBackup = useCallback(async (force: boolean): Promise<AutoBackupRun> => {
     if (!loaded.current) return { skipped: 'empty' };
+    // Solo los datos de verdad: en el modo demo no corre
+    if (dataset.current !== 'real') return { skipped: 'demo' };
     const res = await maybeAutoBackup(current.current, deviceNow.current.autoBackup, { force });
     // Sobre lo de ahora: mientras tanto lo pudieron apagar
     if (res.state) updateDevice({ autoBackup: { ...deviceNow.current.autoBackup, ...res.state } });
@@ -284,22 +349,69 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
   // Al abrir (un rato después, para no demorar lo primero que se ve) y al pasar a segundo plano
   useEffect(() => {
-    if (!ready || loadError || !canAutoBackup) return;
+    if (!ready || loadError || !canAutoBackup || demo) return;
     const timer = setTimeout(() => void runBackup(false), 3000);
     const off = onBackground(() => void runBackup(false));
     return () => {
       clearTimeout(timer);
       off();
     };
-  }, [ready, loadError, runBackup]);
+  }, [ready, loadError, demo, runBackup]);
 
   /** Para después de guardar los datos (borrar un archivo antes podría dejar una factura sin archivo) */
   const whenSaved = useCallback((job: () => Promise<void>) => {
     afterSave.current.push(job);
   }, []);
 
-  /** Ya guardados los datos nuevos, se borran los archivos que quedaron sin factura */
-  const pruneAfterSave = useCallback(() => whenSaved(() => pruneFiles(new Set(current.current.invoices.map((i) => i.id)))), [whenSaved]);
+  /** Ya guardados los datos nuevos, se borran los archivos que quedaron sin factura (de ese juego: el que se ve ahora) */
+  const pruneAfterSave = useCallback(() => {
+    const set = dataset.current;
+    whenSaved(async () => {
+      const latest = set === dataset.current ? current.current : lastSaved.current[set];
+      if (latest) await pruneFiles(new Set(latest.invoices.map((i) => i.id)), set);
+    });
+  }, [whenSaved]);
+
+  /**
+   * Pasa de los datos de verdad al demo o al revés (o rehace el demo). Al entrar, primero se congela el hogar compartido
+   * (y espera lo que estaba haciendo) y se guarda lo que se deja; el ajuste del teléfono se guarda antes de mostrar el
+   * demo (si no quedara, al reabrir se verían los de verdad). Al salir, el hogar vuelve a andar con los de verdad
+   */
+  const switchTo = useCallback(async (to: Dataset, rebuild = false) => {
+    if (switching.current) throw new Error('Ya se está cambiando de datos');
+    switching.current = true;
+    const from = dataset.current;
+    const entering = to === 'demo' && from === 'real';
+    try {
+      if (entering) await setSyncDemo(true);
+      if (!(await flush())) throw new Error('No se pudieron guardar los datos en el teléfono');
+      let next = rebuild ? null : await loadData(to);
+      if (to === 'demo' && (!next || demoOutdated(next, today()))) next = await buildDemo();
+      // Sin datos de verdad guardados (no debería pasar: se entra desde Ajustes), la bienvenida
+      next ??= emptyData();
+      lastSaved.current[to] = next;
+      const dev = { ...deviceNow.current, demo: to === 'demo' };
+      if (to === 'demo') await saveDevice(dev);
+      dataset.current = to;
+      setActiveDataset(to);
+      current.current = next;
+      setData(next);
+      if (to === 'real' && from === 'demo') void setSyncDemo(false);
+      deviceNow.current = dev;
+      setDevice(dev);
+      // Al salir, el ajuste se guarda después de mostrar los de verdad (si no quedara, al reabrir sigue el demo)
+      if (to === 'real') {
+        pendingDevice.current = dev;
+        void flush();
+      }
+    } catch (e) {
+      // Queda como estaba: el hogar vuelve a andar
+      if (entering && dataset.current === 'real') void setSyncDemo(false);
+      throw e;
+    } finally {
+      switching.current = false;
+    }
+  }, [flush, buildDemo]);
 
   const ix = useMemo(() => buildIndex(data), [data.rubros, data.categories]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -314,6 +426,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     device,
     updateDevice,
     backupNow: () => runBackup(true),
+    demo,
+    enterDemo: () => switchTo('demo'),
+    exitDemo: () => switchTo('real'),
+    resetDemo: () => switchTo('demo', true),
     update,
     addMovement: ({ id, ...m }) => update((d) => ({
       ...d,
@@ -323,7 +439,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     deleteMovement: (id) => update((d) => ({ ...d, movements: d.movements.filter((m) => m.id !== id) })),
     saveInvoice: async (inv) => {
       const id = newId('f');
-      const fileKept = await saveFile(id, inv.file);
+      const fileKept = await saveFile(id, inv.file, dataset.current);
       const invoice: Invoice = {
         id,
         fileName: inv.fileName,
@@ -365,7 +481,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     },
     saveStatement: async (st) => {
       const id = newId('f');
-      const fileKept = await saveFile(id, st.file);
+      const set = dataset.current;
+      const fileKept = await saveFile(id, st.file, set);
       const now = Date.now();
       const movements: Movement[] = st.movements.map((m, i) => ({
         ...m,
@@ -397,17 +514,18 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       // Deshacer borra lo creado; lo aprendido queda
       const undo = () => {
         update((d) => ({ ...d, invoices: d.invoices.filter((i) => i.id !== id), movements: d.movements.filter((m) => !ids.has(m.id)) }));
-        whenSaved(() => deleteFile(id));
+        whenSaved(() => deleteFile(id, set));
       };
       return { count: movements.length, undo, fileKept };
     },
     deleteInvoice: (id) => {
+      const set = dataset.current;
       update((d) => ({
         ...d,
         invoices: d.invoices.filter((i) => i.id !== id),
         movements: d.movements.map((m) => (m.invoiceId === id ? { ...m, invoiceId: undefined } : m)),
       }));
-      whenSaved(() => deleteFile(id));
+      whenSaved(() => deleteFile(id, set));
     },
     upsertCategory: (c) => update((d) => {
       const prev = d.categories.find((x) => x.id === c.id);
@@ -535,7 +653,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       update((d) => normalizeData({ ...b.data, datasetId: d.datasetId, settings: { ...b.data.settings, ...settings } }));
       pruneAfterSave();
     },
-  }), [data, ix, ready, loadError, saveError, device, updateDevice, runBackup, update, load, flush, whenSaved, pruneAfterSave]);
+  }), [data, ix, ready, loadError, saveError, device, demo, updateDevice, runBackup, switchTo, update, load, flush, whenSaved, pruneAfterSave]);
 
   return <Ctx.Provider value={store}>{children}</Ctx.Provider>;
 }

@@ -17,22 +17,28 @@ export interface Device {
   reportReminder: boolean;
   /** Respaldo automático en iCloud Drive o en Archivos (lib/autoBackup): prendido de fábrica en el iPhone */
   autoBackup: AutoBackupState;
+  /**
+   * Modo demo: se ven los datos inventados (guardados aparte: domain/demo) en lugar de los de verdad. Al abrir la app
+   * con esto prendido arranca en el demo; salir pide Face ID o el código del iPhone
+   */
+  demo: boolean;
 }
 
 const autoBackupByDefault = isNative && !isPreview;
 
-export const defaultDevice = (): Device => ({ lock: { enabled: false, after: 0 }, reportReminder: false, autoBackup: { enabled: autoBackupByDefault } });
+export const defaultDevice = (): Device => ({ lock: { enabled: false, after: 0 }, reportReminder: false, autoBackup: { enabled: autoBackupByDefault }, demo: false });
 
 /** Completa lo que falte y descarta lo que no sirve (lo guardado por otra versión, o nada) */
 export function normalizeDevice(raw: unknown): Device {
   const base = defaultDevice();
   if (!raw || typeof raw !== 'object') return base;
-  const r = raw as { lock?: { enabled?: unknown; after?: unknown }; reportReminder?: unknown; autoBackup?: unknown };
+  const r = raw as { lock?: { enabled?: unknown; after?: unknown }; reportReminder?: unknown; autoBackup?: unknown; demo?: unknown };
   const after = LOCK_AFTER.find((a) => a === r.lock?.after) ?? base.lock.after;
   return {
     lock: { enabled: r.lock?.enabled === true, after },
     reportReminder: r.reportReminder === true,
     autoBackup: normalizeAutoBackup(r.autoBackup, autoBackupByDefault),
+    demo: r.demo === true,
   };
 }
 
