@@ -187,6 +187,17 @@ export interface Settings {
    * respaldos para eso, pero nunca al hogar: con el código y esta llave, otro teléfono pasa a ser este integrante
    */
   recovery?: Recovery;
+  /** El ahorro: el saldo escrito a mano y el rubro de los pases al mes (domain/savingsBox). Queda en este teléfono */
+  savingsBox?: SavingsBox;
+}
+
+/** Saldo del ahorro escrito a mano el `at` (ms); lo que se anota después lo mueve */
+export interface SavingsBox {
+  pesos: number;
+  usd: number;
+  at: number;
+  /** El rubro de ingreso «Del ahorro» (los pases del ahorro al mes) */
+  rubroId?: string;
 }
 
 /** La llave para volver a entrar al hogar, con de qué hogar es (para decirlo en la pantalla) */

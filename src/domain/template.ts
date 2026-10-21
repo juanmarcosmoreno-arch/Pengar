@@ -178,6 +178,7 @@ export function normalizeData(d: Partial<Omit<Data, 'version'>> & { version?: nu
       lastReportSeen: isMonth(s.lastReportSeen) ? s.lastReportSeen : undefined,
       sharedExtra: s.sharedExtra && typeof s.sharedExtra === 'object' && !Array.isArray(s.sharedExtra) ? s.sharedExtra : undefined,
       recovery: validRecovery(s.recovery),
+      savingsBox: validSavingsBox(s.savingsBox),
     },
   };
 }
@@ -188,6 +189,14 @@ function validRecovery(r: unknown): Settings['recovery'] {
   const { token, householdId, householdName } = r as Record<string, unknown>;
   if (typeof token !== 'string' || token.length < 32 || token.length > 200 || typeof householdId !== 'string' || !householdId) return undefined;
   return { token, householdId, householdName: typeof householdName === 'string' ? householdName : '' };
+}
+
+function validSavingsBox(b: unknown): Settings['savingsBox'] {
+  if (!b || typeof b !== 'object') return undefined;
+  const { pesos, usd, at, rubroId } = b as Record<string, unknown>;
+  const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : 0);
+  if (typeof at !== 'number') return undefined;
+  return { pesos: num(pesos), usd: num(usd), at, ...(typeof rubroId === 'string' && rubroId ? { rubroId } : {}) };
 }
 
 const isMonth = (v: unknown): v is string => typeof v === 'string' && /^\d{4}-(0[1-9]|1[0-2])$/.test(v);

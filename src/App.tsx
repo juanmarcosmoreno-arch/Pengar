@@ -21,6 +21,7 @@ import { Household } from './screens/Household';
 import { InstallmentsScreen } from './screens/Installments';
 import { Invoices } from './screens/Invoices';
 import { More, type MorePage } from './screens/More';
+import { Savings } from './screens/Savings';
 import { MonthReport } from './screens/MonthReport';
 import { Movements } from './screens/Movements';
 import { RecurringScreen } from './screens/Recurring';
@@ -130,6 +131,7 @@ function AppContent() {
   // «Tarjetas y cuotas» también se abre desde Inicio: «volver» lleva a donde estaba
   if (page && (tab === 'mas' || page === 'cuotas')) {
     content = {
+      ahorro: <Savings onBack={back} />,
       presupuesto: <Budget onBack={back} />,
       fijos: <RecurringScreen onBack={back} />,
       cuotas: <InstallmentsScreen onBack={back} onStatement={() => setScanning('tarjeta')} />,
