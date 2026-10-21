@@ -169,8 +169,8 @@ describe('estado de cuenta de ejemplo', () => {
     expect(txs.filter((t) => t.installment).map((t) => [t.merchant, t.installment, t.date, t.purchaseDate ?? ''])).toEqual([
       ['Muebleria los Alamos', '3/10', today, '2026-08-10'],
       ['Bicicleteria la Rueda', '2/6', today, '2026-09-10'],
-      ['Farmashop', '2/3', '2026-10-09', ''],
-      ['Jugueteria el Tren', '1/3', '2026-10-17', ''],
+      ['Farmashop', '2/3', today, ''],
+      ['Jugueteria el Tren', '1/3', today, '2026-10-17'],
     ]);
     expect(txs.every((t) => t.date >= '2026-09-26' && t.date <= today)).toBe(true);
   });

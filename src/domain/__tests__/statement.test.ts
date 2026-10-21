@@ -320,10 +320,11 @@ describe('estado de cuenta Scotiabank (PDF, cuota pegada al comercio)', () => {
     expect(period).toEqual({ from: '2026-02-27', to: '2026-03-25' });
     const moved = installmentsAtClosing(txs, period);
     expect(moved[1]).toMatchObject({ date: '2026-03-25', purchaseDate: '2025-12-14', installment: '3/3' });
-    // La primera cuota de una compra del período queda con su fecha
-    expect(moved[3]).toMatchObject({ date: '2026-03-01', installment: '1/2' });
-    expect(moved[3].purchaseDate).toBeUndefined();
-    expect(moved.filter((t) => t.purchaseDate)).toHaveLength(1);
+    // La primera cuota de una compra del período también es de este mes: va al cierre, con la fecha de la compra
+    expect(moved[3]).toMatchObject({ date: '2026-03-25', purchaseDate: '2026-03-01', installment: '1/2' });
+    expect(moved.filter((t) => t.purchaseDate).map((t) => t.installment)).toEqual(['3/3', '1/2', '1/3']);
+    // Lo que no es cuota queda con su fecha
+    expect(moved[2]).toMatchObject({ date: '2026-02-27' });
   });
 });
 
@@ -430,9 +431,10 @@ describe('estado de cuenta Itaú (PDF sin encabezados)', () => {
       ['8/8', '2026-01-15', '2026-08-28'],
       ['2/3', '2026-07-06', '2026-08-28'],
       ['9/12', '2025-12-11', '2026-08-28'],
+      ['1/6', '2026-08-18', '2026-08-28'],
     ]);
-    // La primera cuota de una compra del período, con su fecha
-    expect(moved[9]).toMatchObject({ date: '2026-08-18', installment: '1/6' });
+    // La primera cuota de una compra del período también va al cierre
+    expect(moved[9]).toMatchObject({ date: '2026-08-28', purchaseDate: '2026-08-18', installment: '1/6' });
   });
   it('sin «cierre» escrito, el cierre es la fecha sola de arriba: las cuotas que siguen van ahí aunque el último movimiento sea antes', () => {
     const rows = [
@@ -611,12 +613,26 @@ describe('período sin fechas escritas', () => {
   });
 });
 
+describe('cada cuota es un gasto del mes en que se paga', () => {
+  // Un buzo de $ 3.000 en 3 cuotas, comprado el 28/8 (antes de fin de mes) con el estado de cuenta que cierra el 25/9
+  const period = { from: '2026-08-26', to: '2026-09-25' };
+  const txs = installmentsAtClosing(parseStatementText(['28/08/2026 TIENDA EL BUZO CUOTA 1/3 1.000,00', '29/08/2026 ALMACEN 300,00'].join('\n'), { today: '2026-10-01' }), period);
+  it('la primera cuota va al mes del cierre, no al de la compra', () => {
+    expect(txs.map((t) => [t.installment ?? '', t.date])).toEqual([['1/3', '2026-09-25'], ['', '2026-08-29']]);
+    expect(statementNote(txs[0], 'OCA', 1)).toBe('OCA · cuota 1/3 · compra del 28/8/2026');
+  });
+  it('si la anotaste a mano el día de la compra, es un repetido', () => {
+    expect([...findDuplicates(txs, [mov('2026-08-28', 1000, { id: 'a' })])]).toEqual([[0, 'a']]);
+  });
+});
+
 describe('cuotas con la fecha de la compra y los repetidos', () => {
   const period = { from: '2026-08-26', to: '2026-09-25' };
   const read = (lines: string[]) => installmentsAtClosing(parseStatementText(lines.join('\n'), { today: '2026-10-01' }), period);
   const sept = read(['03/03/2026 COLCHONERIA DESCANSO CUOTA 7/9 1.250,00', '29/08/2026 OPTICA VISION CUOTA 1/3 900,00', '02/09/2026 ALMACEN 300,00']);
   it('la cuota de una compra vieja va al cierre y la nota dice de cuándo es la compra', () => {
-    expect(sept.map((t) => [t.date, t.purchaseDate ?? ''])).toEqual([['2026-09-25', '2026-03-03'], ['2026-08-29', ''], ['2026-09-02', '']]);
+    // Las dos cuotas son gastos de setiembre (el mes del cierre); la compra sin cuotas queda con su fecha
+    expect(sept.map((t) => [t.date, t.purchaseDate ?? ''])).toEqual([['2026-09-25', '2026-03-03'], ['2026-09-25', '2026-08-29'], ['2026-09-02', '']]);
     expect(statementNote(sept[0], 'Itaú', 1)).toBe('Itaú · cuota 7/9 · compra del 3/3/2026');
     const usdTx = { ...sept[0], currency: 'usd' as const, amount: 30 };
     expect(statementNote(usdTx, 'Itaú', 40.1)).toBe('Itaú · cuota 7/9 · compra del 3/3/2026 · U$S\u00a030,00 × 40,10');

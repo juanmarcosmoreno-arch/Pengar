@@ -400,12 +400,12 @@ export function statementPeriod(txs: StatementTx[], info: StatementInfo): { from
 }
 
 /**
- * Las cuotas con fecha anterior al período (la de la compra original: «cuota 7/9» de marzo en el estado de cuenta
- * de setiembre) van con la fecha de cierre, que es cuando se cobran; la de la compra queda en `purchaseDate`. Así el
- * gasto cae en el mes del estado de cuenta, y los repetidos (findDuplicates) comparan con esa misma fecha. En un solo
- * estado de cuenta de un banco que repite la fecha de la compra (alguna cuota que sigue es de antes del período), las
- * que siguen (2/6, 3/6…) de los últimos 25 días tampoco son de este período: sin el cierre anterior escrito, el
- * comienzo es una estimación y puede quedar unos días antes.
+ * Cada cuota es un gasto del mes en que se paga: en un estado de cuenta de un mes, todas las cuotas van con la fecha de
+ * cierre. Un buzo de $ 3.000 en 3 cuotas son $ 1.000 de ropa en cada uno de los tres meses. Si la fecha que trae es la
+ * de la compra (la de la primera cuota, la de una cuota de antes del período: «cuota 7/9» de marzo en el de setiembre,
+ * o la de las que siguen en un banco que repite la fecha de la compra), queda en `purchaseDate`. Los repetidos
+ * (findDuplicates) comparan con las dos fechas. Sin el cierre anterior escrito, el comienzo es una estimación y puede
+ * quedar unos días antes. En un archivo de varios meses (una planilla exportada) solo pasan al cierre las de antes.
  */
 export function installmentsAtClosing(txs: StatementTx[], period: { from: string; to: string } | undefined): StatementTx[] {
   if (!period) return txs;
@@ -414,8 +414,10 @@ export function installmentsAtClosing(txs: StatementTx[], period: { from: string
   const purchaseDated = single && txs.some((t) => laterCuota(t) && t.kind !== 'saldo' && t.date < from);
   const cut = addDays(to, -25);
   return txs.map((t) => {
-    const before = t.installment && t.kind !== 'saldo' && (t.date < from || (purchaseDated && laterCuota(t) && t.date < cut));
-    return before ? { ...t, date: to, purchaseDate: t.date } : t;
+    if (!t.installment || t.kind === 'saldo' || t.date === to) return t;
+    if (!single) return t.date < from ? { ...t, date: to, purchaseDate: t.date } : t;
+    const bought = t.date < from || !laterCuota(t) || (purchaseDated && t.date < cut);
+    return bought ? { ...t, date: to, purchaseDate: t.date } : { ...t, date: to };
   });
 }
 
@@ -1250,7 +1252,8 @@ export function findDuplicates(
         // La cuota de una compra vieja: la misma cuota (en el cierre o, guardada antes, con la fecha de la compra), o lo
         // guardado de este mismo estado de cuenta con una versión anterior (con la fecha de la compra, sin la cuota)
         if (cuota === tx.installment) dDays = Math.min(days(tx.date), days(tx.purchaseDate));
-        else if (!cuota && m.invoiceId && same.has(m.invoiceId)) dDays = days(tx.purchaseDate);
+        // La primera cuota anotada a mano el día de la compra (sin la nota de la cuota) también es la misma
+        else if (!cuota && (tx.installment?.startsWith('1/') || (m.invoiceId && same.has(m.invoiceId)))) dDays = days(tx.purchaseDate);
         else continue;
       } else dDays = days(tx.date);
       if (dDays > 3) continue;
