@@ -12,3 +12,5 @@ ios/DerivedData
 xcuserdata
 datos/presupuesto.xlsx
 *.tsbuildinfo
+# Pruebas temporales de las revisiones (no van al repositorio)
+src/domain/__tests__/zz-*.test.ts
