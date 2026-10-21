@@ -1,5 +1,5 @@
-import { CreditCard, Paperclip, Trash2, Users } from 'lucide-react';
-import { useEffect, useId, useState } from 'react';
+import { Calculator as CalcIcon, CreditCard, Paperclip, Trash2, Users } from 'lucide-react';
+import { useEffect, useId, useRef, useState } from 'react';
 import { monthOf, today } from '../domain/dates';
 import { formatRate, isUsdSymbol, splitUsdNote, validUsdRate, withUsdNote } from '../domain/fx';
 import { formatMoney, parseAmount, parseDecimal, round2 } from '../domain/money';
@@ -11,6 +11,7 @@ import { usdRateOn, type UsdQuote } from '../lib/fx';
 import { isPreview } from '../lib/platform';
 import { authorLabel, useAuthors } from '../lib/sync';
 import { useStore } from '../store/store';
+import { Calculator } from './Calculator';
 import { InvoiceViewer } from './InvoiceViewer';
 import { RubroPicker } from './RubroPicker';
 import { Sheet } from './Sheet';
@@ -53,6 +54,20 @@ export function MovementSheet({ movement, kind: initialKind = 'gasto', preset, o
   const [rubroId, setRubroId] = useState(start?.rubroId);
   const [date, setDate] = useState(start?.date ?? today());
   const [note, setNote] = useState(startUsd ? startUsd.rest : start?.note ?? '');
+  const [calc, setCalc] = useState(false);
+  // Al abrir, el monto arriba y listo para escribir: el teclado del iPhone corría la hoja hacia abajo
+  const amountRef = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    const el = amountRef.current;
+    if (!el) return;
+    const top = () => {
+      el.closest('.overflow-y-auto')?.scrollTo({ top: 0 });
+      window.scrollTo(0, 0);
+    };
+    if (!start) el.focus({ preventScroll: true });
+    const timers = [50, 300, 600].map((ms) => setTimeout(top, ms));
+    return () => timers.forEach(clearTimeout);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
   const [repeats, setRepeats] = useState(false);
   const [viewing, setViewing] = useState(false);
   const validDate = /^\d{4}-\d{2}-\d{2}$/.test(date);
@@ -163,7 +178,7 @@ export function MovementSheet({ movement, kind: initialKind = 'gasto', preset, o
                 <input
                   className="w-full min-w-0 max-w-[240px] bg-transparent text-center text-5xl outline-none placeholder:text-line"
                   inputMode="decimal"
-                  autoFocus={!start}
+                  ref={amountRef}
                   placeholder="0"
                   value={amountText}
                   onChange={(e) => setAmountText(e.target.value.replace(/[^\d.,]/g, ''))}
@@ -171,6 +186,15 @@ export function MovementSheet({ movement, kind: initialKind = 'gasto', preset, o
                   aria-label={inUsd ? 'Monto en dólares' : 'Monto'}
                 />
               </label>
+              <button
+                type="button"
+                className={`flex min-h-tap min-w-tap shrink-0 items-center justify-center rounded-full ${calc ? 'bg-soft/40 text-primary' : 'text-muted'}`}
+                onClick={() => { amountRef.current?.blur(); setCalc((v) => !v); }}
+                aria-label="Calculadora"
+                aria-pressed={calc}
+              >
+                <CalcIcon size={22} />
+              </button>
               {canUsd && (
                 <div className="flex shrink-0 rounded-full bg-sunken p-1" role="group" aria-label="Moneda">
                   {([false, true] as const).map((usd) => (
@@ -187,6 +211,9 @@ export function MovementSheet({ movement, kind: initialKind = 'gasto', preset, o
                 </div>
               )}
             </div>
+            {calc && (
+              <Calculator start={parseAmount(amountText)} onUse={(t) => { setAmountText(t); setCalc(false); }} onClose={() => setCalc(false)} />
+            )}
             {inUsd && (
               <div className="mt-2 space-y-2 text-center text-[16px]" aria-live="polite">
                 <p className="text-muted">{usdLine}</p>
