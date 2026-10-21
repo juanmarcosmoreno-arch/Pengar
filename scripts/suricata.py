@@ -86,6 +86,13 @@ for i, name in enumerate(faces):
 # El principal (bienvenida, bloqueo): pensando con la calculadora. El de la moneda queda como otra pose
 main = unpaper(Image.open(IMG + 'suricata-principal.webp').crop((110, 50, 1170, 1195)))
 save(main, 'principal', 640)
+# La tapa del selector de apps en el iPhone (SceneDelegate, 180 pt de alto): el mismo, como la pantalla de bloqueo
+TAPA = os.path.join(ROOT, 'ios/App/App/Assets.xcassets/Tapa.imageset')
+tapa = Image.open(f'{OUT}/principal.webp')
+for scale in (2, 3):
+    h = 180 * scale
+    tapa.resize((round(tapa.width * h / tapa.height), h), Image.LANCZOS).save(f'{TAPA}/tapa@{scale}x.png', optimize=True)
+print('tapa', tapa.size)
 coin = unpaper(Image.open(IMG + 'suricata-moneda.webp').crop((230, 110, 980, 1160)))
 save(coin, 'moneda', 640)
 

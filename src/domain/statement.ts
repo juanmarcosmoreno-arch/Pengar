@@ -5,12 +5,12 @@
  * o en dólares. Los comercios se limpian (procesadores de pago, sucursales, ciudades) para que la misma tienda
  * tenga siempre la misma clave y lo aprendido sirva para los meses siguientes (y para las facturas).
  */
-import { monthOf, today as todayISO } from './dates';
+import { monthOf, shiftMonths, today as todayISO } from './dates';
 import { norm, sheetDate, type Cell } from './importSheet';
 import { splitUsdNote } from './fx';
 import { parseAmount, round2 } from './money';
 import { groupRows, type TextBox } from './ocrLines';
-import type { Movement } from './types';
+import type { Invoice, Movement } from './types';
 
 export interface StatementCell {
   text: string;
@@ -41,7 +41,17 @@ export interface StatementTx {
   currency: StatementCurrency;
   /** Cuota «2/6» */
   installment?: string;
+  /**
+   * Fecha de la compra, cuando la cuota vino con la de la compra original (de antes del período): entonces `date` es
+   * la del cierre (installmentsAtClosing)
+   */
+  purchaseDate?: string;
   kind: StatementKind;
+  /**
+   * No es un renglón del estado de cuenta: lo que cobra de más que los movimientos (el saldo contado contra el
+   * anterior y lo leído, balanceGaps). La revisión lo ofrece como cargo
+   */
+  balance?: true;
 }
 
 export interface StatementOptions {
@@ -63,6 +73,11 @@ export interface StatementInfo {
   usdRate?: number;
   /** «OCA», «Visa BROU», «Master Itaú»… */
   card?: string;
+  /** Límite de crédito y crédito disponible (en pesos), si los trae con su título */
+  limit?: number;
+  available?: number;
+  /** La fecha sola arriba de la página (Itaú, que no escribe «cierre»): el cierre, si cuadra con los movimientos */
+  pageDate?: string;
 }
 
 const pad = (n: number) => String(n).padStart(2, '0');
@@ -116,14 +131,21 @@ function dateToken(raw: string): DayParts | null {
 }
 
 /**
- * Fecha que empieza en el pedazo `i` (puede ocupar hasta tres: «12 SET 2025»). Con `ref`, un año de dos cifras
- * después del mes vale solo si es el del cierre o el anterior: en «19 NOV 24 HORAS» el 24 es del comercio.
+ * Fecha que empieza en el pedazo `i` (puede ocupar hasta tres: «12 SET 2025», «13 02 26»). Con `ref`, un año de dos
+ * cifras después del mes vale solo si es el del cierre o el anterior: en «19 NOV 24 HORAS» el 24 es del comercio.
  */
 function dateAt(words: string[], i: number, ref?: Ref): { parts: DayParts; next: number } | null {
   const t = words[i];
   if (!t) return null;
   const p = dateToken(t);
   if (p) return { parts: p, next: i + 1 };
+  // Día, mes y año en números separados por espacios (Itaú: «13 02 26»). Sin el año no es una fecha; con `ref`, el
+  // año va de hasta seis antes del cierre (la cuota de una compra vieja trae su fecha) a uno después
+  if (/^\d{1,2}$/.test(t) && /^\d{1,2}$/.test(words[i + 1] ?? '') && /^(\d{2}|\d{4})$/.test(words[i + 2] ?? '')) {
+    const year = fullYear(words[i + 2]);
+    const parts = !ref || (year >= ref.y - 6 && year <= ref.y + 1) ? valid({ d: +t, m: +words[i + 1], y: year }) : null;
+    if (parts) return { parts, next: i + 3 };
+  }
   const mo = /^\d{1,2}$/.test(t) ? monthWord(words[i + 1]) : null;
   if (!mo) return null;
   const y = words[i + 2]?.match(/^(\d{4}|\d{2})$/)?.[1];
@@ -197,16 +219,23 @@ function earliest(list: [string, RegExp][], text: string): string | undefined {
   return best?.name;
 }
 
-/** La tarjeta, si aparece en el encabezado: «OCA», «Visa BROU», «Master Scotiabank» */
+/** Un renglón que parece un movimiento (una fecha al comienzo y un importe): el comercio no dice de qué tarjeta es */
+function looksLikeMovement(line: string): boolean {
+  const words = splitGlued(line).split(/\s+/).filter(Boolean);
+  const dated = dateAt(words, 0) || (words.length > 2 && !/[a-z]/i.test(words[0]) && tokenAmount(words[0]) == null && dateAt(words, 1));
+  return !!dated && words.some((w) => tokenAmount(w) != null);
+}
+
+/**
+ * La tarjeta, si aparece en el encabezado: «OCA», «Visa BROU», «Master Scotiabank». Si no, el banco en el resto (Itaú
+ * lo dice solo en el pie). Nunca de los movimientos: «MASTER CLEAN» o «FARMACIA SANTANDER» son comercios
+ */
 export function detectCard(text: string): string | undefined {
-  const lines = text.split(/\r?\n/).map(norm);
-  for (const part of [lines.slice(0, 20).join('\n'), lines.join('\n')]) {
-    const brand = earliest(BRANDS, part);
-    if (brand === 'OCA') return brand;
-    const card = [brand, earliest(BANKS, part)].filter(Boolean).join(' ');
-    if (card) return card;
-  }
-  return undefined;
+  const lines = text.split(/\r?\n/).map(norm).filter((l) => !looksLikeMovement(l));
+  const brand = earliest(BRANDS, lines.slice(0, 20).join('\n'));
+  if (brand === 'OCA') return brand;
+  const card = [brand, earliest(BANKS, lines.slice(0, 20).join('\n'))].filter(Boolean).join(' ');
+  return card || earliest([BRANDS[0], ...BANKS], lines.join('\n'));
 }
 
 /** Fechas escritas en un renglón ya normalizado: 25/09/2025, 26/09, 25.09.2025, 2025-09-25, 25 de setiembre (de 2025) */
@@ -260,9 +289,71 @@ export function statementInfo(text: string): StatementInfo {
       break;
     }
   }
+  // Límite y disponible: el importe al lado del título (antes del título siguiente) o, si el renglón de los títulos no
+  // tiene importes, los del de abajo en el mismo orden: solo si son tantos como los títulos y ese renglón no tiene
+  // palabras (un párrafo que sigue no es la fila de valores)
+  lines.forEach((raw, i) => {
+    let masked = splitGlued(raw);
+    const labels: { key: MoneyLabel | null; index: number }[] = [];
+    for (const [key, re] of MONEY_LABELS) {
+      for (const m of [...masked.matchAll(re)]) {
+        labels.push({ key, index: m.index! });
+        masked = masked.slice(0, m.index) + ' '.repeat(m[0].length) + masked.slice(m.index! + m[0].length);
+      }
+    }
+    if (!labels.some((l) => l.key)) return;
+    labels.sort((a, b) => a.index - b.index);
+    const own = lineAmounts(raw);
+    const set = (key: MoneyLabel | null, v: number | undefined) => {
+      if (key && v != null && info[key] == null) info[key] = v;
+    };
+    if (own.length) {
+      labels.forEach((l, k) => {
+        const end = labels[k + 1]?.index ?? Infinity;
+        set(l.key, own.find((a) => a.index > l.index && a.index < end)?.v);
+      });
+    } else {
+      const next = lines[i + 1] ?? '';
+      const below = lineAmounts(next);
+      const values = splitGlued(next).split(/\s+/).every((w) => !/\p{L}/u.test(w) || markerOf(w));
+      if (values && below.length === labels.length) labels.forEach((l, k) => set(l.key, below[k].v));
+    }
+  });
   const card = detectCard(text);
   if (card) info.card = card;
+  if (!info.closing) {
+    // Itaú no escribe «cierre»: la fecha sola arriba de cada página lo es (statementPeriod la usa si cuadra)
+    const lone = lines.slice(0, 10).find((l) => /^\d{1,2}[/.-]\d{1,2}[/.-](\d{4}|\d{2})$/.test(l));
+    const page = lone ? fullDates(lone)[0]?.iso : undefined;
+    if (page) info.pageDate = page;
+  }
   return info;
+}
+
+type MoneyLabel = 'limit' | 'available';
+
+/**
+ * En orden: los que no interesan (lo disponible para adelantos, el límite en cuotas), lo disponible («límite de
+ * crédito disponible» es lo disponible), el límite y otros títulos con importe (el pago mínimo, el saldo, un cargo):
+ * los que no interesan igual cortan el tramo del título de antes
+ */
+const MONEY_LABELS: [MoneyLabel | null, RegExp][] = [
+  [null, /\b(?:(?:limite (?:de )?)?credito |saldo |limite )?disponible (?:para |de |en )?(?:adelantos?|efectivo|retiros?)\b|\blimite (?:de |para )?(?:compras? )?(?:en cuotas|adelantos?|efectivo|retiros?)\b/g],
+  ['available', /\b(?:(?:limite (?:de )?)?credito |saldo |limite )?disponible(?: (?:para|de) compras?)?\b/g],
+  ['limit', /\blimite (?:de )?(?:credito|compras?)\b/g],
+  [null, /\bpago minimo\b|\bminimo a pagar\b|\bsaldo\b|\btotal\b|\bdeuda\b|\bcargos?\b|\bcuotas?\b/g],
+];
+
+/** Importes de un renglón ya normalizado, con dónde empiezan (los en dólares no: el límite es en pesos) */
+function lineAmounts(line: string): { v: number; index: number }[] {
+  const out: { v: number; index: number }[] = [];
+  let prev = '';
+  for (const m of splitGlued(line).matchAll(/\S+/g)) {
+    const v = tokenAmount(m[0]);
+    if (v != null && markerOf(prev) !== 'usd') out.push({ v, index: m.index! });
+    prev = m[0];
+  }
+  return out;
 }
 
 /** El cierre (o el vencimiento, o la fecha completa más nueva del documento) da el año de las fechas sin año */
@@ -277,14 +368,55 @@ function refOf(info: StatementInfo, text: string, today: string): Ref {
   return { y: +iso.slice(0, 4), m: +iso.slice(5, 7) };
 }
 
-/** Período del estado de cuenta: del cierre anterior (o el primer renglón, el saldo anterior) al cierre (o el último movimiento) */
+/** La cuota que sigue de una compra anterior (2/6, 3/6…): su fecha puede ser la de la compra */
+const laterCuota = (t: StatementTx) => !!t.installment && Number(t.installment.split('/')[0]) >= 2;
+
+/** Movimientos de antes de un mes antes del cierre a partir de los cuales el archivo es una planilla de varios meses */
+const PLANILLA_EARLY = 3;
+
+/**
+ * Período del estado de cuenta: del cierre anterior al cierre (o a la fecha sola arriba de la página, si cuadra con el
+ * último movimiento; si no, al último movimiento). Si no dice desde cuándo, el primer renglón (el saldo anterior o la
+ * primera compra), sin las cuotas de compras anteriores (algunos bancos repiten la fecha de la compra original) y no
+ * antes de un mes antes del cierre: alguna compra que el comercio presentó tarde trae su fecha de antes. Si son muchas
+ * (más de un cuarto y por lo menos 3), el archivo trae más de un mes (una planilla exportada) y va desde el primer
+ * renglón.
+ */
 export function statementPeriod(txs: StatementTx[], info: StatementInfo): { from: string; to: string } | undefined {
   const all = txs.map((t) => t.date).sort();
   const moves = txs.filter((t) => t.kind !== 'saldo').map((t) => t.date).sort();
-  const from = info.from ?? (info.previous ? addDays(info.previous, 1) : all[0]);
-  const to = info.closing ?? moves[moves.length - 1] ?? all[all.length - 1];
-  if (!from || !to) return undefined;
+  const last = moves[moves.length - 1];
+  const page = info.pageDate && (!last || (info.pageDate >= last && dayNumber(info.pageDate) - dayNumber(last) <= 15)) ? info.pageDate : undefined;
+  const to = info.closing ?? page ?? last ?? all[all.length - 1];
+  if (!to) return undefined;
+  let from = info.from ?? (info.previous ? addDays(info.previous, 1) : undefined);
+  if (!from) {
+    const own = txs.filter((t) => !laterCuota(t)).map((t) => t.date).sort();
+    const floor = addDays(shiftMonths(to, -1), 1);
+    const early = own.filter((d) => d < floor).length;
+    from = !own.length ? floor : (early >= PLANILLA_EARLY && early > own.length / 4) || own[0] > floor ? own[0] : floor;
+  }
   return { from: from <= to ? from : to, to };
+}
+
+/**
+ * Las cuotas con fecha anterior al período (la de la compra original: «cuota 7/9» de marzo en el estado de cuenta
+ * de setiembre) van con la fecha de cierre, que es cuando se cobran; la de la compra queda en `purchaseDate`. Así el
+ * gasto cae en el mes del estado de cuenta, y los repetidos (findDuplicates) comparan con esa misma fecha. En un solo
+ * estado de cuenta de un banco que repite la fecha de la compra (alguna cuota que sigue es de antes del período), las
+ * que siguen (2/6, 3/6…) de los últimos 25 días tampoco son de este período: sin el cierre anterior escrito, el
+ * comienzo es una estimación y puede quedar unos días antes.
+ */
+export function installmentsAtClosing(txs: StatementTx[], period: { from: string; to: string } | undefined): StatementTx[] {
+  if (!period) return txs;
+  const { from, to } = period;
+  const single = dayNumber(to) - dayNumber(from) <= 35;
+  const purchaseDated = single && txs.some((t) => laterCuota(t) && t.kind !== 'saldo' && t.date < from);
+  const cut = addDays(to, -25);
+  return txs.map((t) => {
+    const before = t.installment && t.kind !== 'saldo' && (t.date < from || (purchaseDated && laterCuota(t) && t.date < cut));
+    return before ? { ...t, date: to, purchaseDate: t.date } : t;
+  });
 }
 
 // --- Tipo de movimiento y cuotas -------------------------------------------------------------------------
@@ -296,9 +428,10 @@ const CARGO = /\bcargos?\b|comision|^seguro|\bseguro de vida\b|\bintereses?\b|^i
 
 /** Qué es un renglón según su descripción: pago de la tarjeta, saldo o total, crédito, cargo del banco o compra */
 export function statementKind(description: string): StatementKind {
-  const p = norm(description).replace(/\./g, '');
-  // «SEGURO SALDO DEUDOR» o «IVA S/INTERESES» son cargos aunque digan «saldo»
-  if (/^(seguros?|iva|intereses?|comision(es)?)\b/.test(p) && !CREDITO.test(p)) return 'cargo';
+  // Sin los asteriscos o guiones del comienzo («** TOTAL Tarjeta»)
+  const p = norm(description).replace(/\./g, '').replace(/^[^a-z0-9]+/, '');
+  // «SEGURO SALDO DEUDOR», «SEG.VIDA S/SALDO» o «IVA S/INTERESES» son cargos aunque digan «saldo»
+  if (/^(seguros?|seg ?vida|iva|intereses?|comision(es)?)\b/.test(p) && !CREDITO.test(p)) return 'cargo';
   if (SALDO.test(p)) return 'saldo';
   if (PAGO.test(p)) return 'pago';
   if (CREDITO.test(p)) return 'credito';
@@ -306,29 +439,53 @@ export function statementKind(description: string): StatementKind {
   return 'compra';
 }
 
-/** «CUOTA 02/06», «CTA 2 DE 6», «C.2/6» o «02/06» suelto */
+/**
+ * «CUOTA 02/06», «CTA 2 DE 6», «C.2/6», «02/06» o «6/ 6» suelto (Itaú la pone en su columna y completa con un
+ * espacio el total de una cifra: «3/ 3», nunca «3/ 30»)
+ */
 const CUOTA_RES = [
   /\b(?:cuotas?|cta)\.?\s*:?\s*(\d{1,2})\s*(?:\/|de)\s*(\d{1,3})\b/gi,
   /\bc\.?\s?(\d{1,2})\/(\d{1,3})\b/gi,
-  /(^|\s)(\d{1,2})\/(\d{1,3})(?=\s|$)/g,
+  /(^|\s)(\d{1,2})\/(?: (?=\d(?:\s|$)))?(\d{1,3})(?=\s|$)/g,
 ];
+/** El «n/N» suelto (el último de CUOTA_RES) */
+const LOOSE = CUOTA_RES.length - 1;
+
+const validCuota = (n: number, total: number) => n >= 1 && total >= 2 && n <= total && total <= 72;
+
+/**
+ * Scotiabank pega la cuota al final, a veces sin espacio: «HELADERIA LA NUBEC01/02». Vale solo al final, con dos
+ * cifras de cada lado y si puede ser una cuota (01/02 sí, 12/09 no): si no, es parte del nombre
+ */
+function gluedCuota(text: string): { n: number; total: number; index: number } | null {
+  const m = text.trimEnd().match(/c(\d{2})\/(\d{2})$/i);
+  return m && validCuota(+m[1], +m[2]) ? { n: +m[1], total: +m[2], index: m.index! } : null;
+}
 
 /** La descripción sin el texto de la cuota («ZARA CUOTA 02/03» → «ZARA»): la cuota no dice de qué es la compra */
 export function withoutInstallment(text: string): string {
-  let s = text;
+  const glued = gluedCuota(text);
+  let s = glued ? text.trimEnd().slice(0, glued.index) : text;
   for (const re of CUOTA_RES) s = s.replace(re, ' ');
   return s.replace(/\s+/g, ' ').trim();
 }
 
-export function installmentOf(text: string): string | undefined {
-  for (const re of CUOTA_RES) {
+/**
+ * La cuota de una descripción. Con `year` (el del cierre), un «MM/AA» suelto con el año del cierre (o el de antes o
+ * después) es una fecha («CUOTA SOCIAL 09/26», «UTE FACTURA 08/26»), no la cuota 9 de 26; después de «cuota», «cta»
+ * o «C» sí es una cuota
+ */
+export function installmentOf(text: string, year?: number): string | undefined {
+  for (const [k, re] of CUOTA_RES.entries()) {
     for (const m of text.matchAll(re)) {
-      const n = Number(m[m.length - 2]);
-      const total = Number(m[m.length - 1]);
-      if (n >= 1 && total >= 2 && n <= total && total <= 72) return `${n}/${total}`;
+      const a = m[m.length - 2];
+      const b = m[m.length - 1];
+      if (k === LOOSE && year != null && a.length === 2 && b.length === 2 && Math.abs(Number(b) - (year % 100)) <= 1) continue;
+      if (validCuota(Number(a), Number(b))) return `${Number(a)}/${Number(b)}`;
     }
   }
-  return undefined;
+  const glued = gluedCuota(text);
+  return glued ? `${glued.n}/${glued.total}` : undefined;
 }
 
 // --- Comercios -------------------------------------------------------------------------------------------
@@ -401,8 +558,8 @@ function displayWord(w: string, i: number): string {
  * con la sucursal, el número de comprobante o la ciudad.
  */
 export function normalizeMerchant(description: string): { merchant: string; key: string } {
-  let s = description.replace(/\s+/g, ' ').trim();
-  for (const re of CUOTA_RES) s = s.replace(re, ' ');
+  // Un «?» entre mayúsculas es la Ñ que el PDF no supo escribir («ESPA?OLA»)
+  let s = withoutInstallment(description.replace(/\s+/g, ' ').trim().replace(/(?<=\p{Lu})\?(?=\p{Lu})/gu, 'Ñ'));
   for (let k = 0; k < 4; k++) {
     const next = s.trim().replace(PROCESSOR, '').replace(PREFIX, '');
     if (next === s) break;
@@ -414,12 +571,14 @@ export function normalizeMerchant(description: string): { merchant: string; key:
     .filter(Boolean);
   // Lo que sigue al número de sucursal es la ubicación («MC DONALDS 18 DE JULIO»), si antes ya está el nombre
   const distinctive = (list: string[]) => list.some((w) => word(w).length >= 3 && !STOP.has(word(w)) && !GENERIC.has(word(w)) && !DROP.has(word(w)));
-  const firstNumber = tokens.findIndex((w) => /\d/.test(w));
+  // Un nombre que empieza con cifras y letras pegadas las conserva («7K VIAJES», «3M»): no es un código
+  const lead = tokens.length > 1 && /^(?=\D*\d)(?=.*\p{L})[\p{L}\d]{2,3}$/u.test(tokens[0]);
+  const firstNumber = tokens.findIndex((w, i) => /\d/.test(w) && !(lead && i === 0));
   const named = firstNumber > 0 && distinctive(tokens.slice(0, firstNumber)) ? tokens.slice(0, firstNumber) : tokens;
   // Fuera números de comprobante, códigos y «SUC»
-  let kept = named.filter((w) => {
+  let kept = named.filter((w, i) => {
     const k = word(w);
-    return k && !/\d/.test(k) && !DROP.has(k);
+    return (lead && i === 0) || (k && !/\d/.test(k) && !DROP.has(k));
   });
   if (!kept.length) kept = tokens;
   // Ciudades y países al final, si lo que queda todavía distingue a la tienda («FARMACIA MERCEDES» queda entera)
@@ -495,6 +654,8 @@ interface Tok {
   t: string;
   x?: number;
   r?: number;
+  /** La celda de donde sale (con posiciones): la cuota de Itaú va en la suya */
+  cell?: number;
 }
 
 type Marker = StatementCurrency | 'foreign';
@@ -526,17 +687,17 @@ const splitGlued = (s: string) =>
 
 function rowTokens(row: StatementRow, positional: boolean): Tok[] {
   const out: Tok[] = [];
-  for (const c of row.cells) {
+  row.cells.forEach((c, cell) => {
     const text = splitGlued(c.text);
     const words = [...text.matchAll(/\S+/g)];
     for (const w of words) {
       const i = w.index!;
       if (positional && c.w != null && text.length) {
-        out.push({ t: w[0], x: c.x + (c.w * i) / text.length, r: c.x + (c.w * (i + w[0].length)) / text.length });
-      } else if (positional && words.length === 1) out.push({ t: w[0], x: c.x, r: c.x });
-      else out.push({ t: w[0] });
+        out.push({ t: w[0], x: c.x + (c.w * i) / text.length, r: c.x + (c.w * (i + w[0].length)) / text.length, cell });
+      } else if (positional && words.length === 1) out.push({ t: w[0], x: c.x, r: c.x, cell });
+      else out.push({ t: w[0], ...(positional ? { cell } : {}) });
     }
-  }
+  });
   return out;
 }
 
@@ -551,9 +712,16 @@ interface Column {
 const HEADER_LABEL = /^(fecha|descripcion|concepto|detalle|comercio|establecimiento|movimientos?|referencia|cuotas?|comprobante)$/;
 const GENERIC_AMOUNT = /^(importes?|montos?|valor)$/;
 
-/** Columnas de importe de un encabezado: «IMPORTE $», «IMPORTE U$S», «Importe origen», «Pesos», «Dólares» */
-function headerOf(toks: Tok[]): Column[] | null {
+/**
+ * Columnas de importe de un encabezado: «IMPORTE $», «IMPORTE U$S», «Importe origen», «Pesos», «Dólares». `label`: trae
+ * otro título («Fecha», «Descripción»…). Sin título, solo los nombres de las columnas: «Pagá en pesos o en dólares» o
+ * «PESOS URUGUAYOS DÓLARES» (la tabla de financiación) no son un encabezado
+ */
+function headerOf(toks: Tok[]): { cols: Column[]; label: boolean } | null {
   const words = toks.map((t) => norm(t.t).replace(/[:.]+$/, ''));
+  // Un párrafo que nombra las «cuotas» o el «importe» no es un encabezado: tiene muchas otras palabras
+  const other = words.filter((w, i) => /[a-z]{4}/.test(w) && !HEADER_LABEL.test(w) && !GENERIC_AMOUNT.test(w) && !markerOf(toks[i].t) && !/^(moneda|origen|original|tarjeta)$/.test(w));
+  if (other.length > 3) return null;
   const cols: Column[] = [];
   let label = false;
   for (let i = 0; i < toks.length; i++) {
@@ -578,8 +746,14 @@ function headerOf(toks: Tok[]): Column[] | null {
       i = j;
     } else if (generic) cols.push({ type: 'any', x: toks[i].x, r: toks[i].r });
   }
-  if (!cols.length || (!label && cols.length < 2)) return null;
-  return cols;
+  if (!cols.length || (!label && (cols.length < 2 || other.length > 0 || words.some((w) => /^(y|o|e|u)$/.test(w))))) return null;
+  return { cols, label };
+}
+
+/** Las columnas de un encabezado sin título caen sobre los importes de los movimientos que siguen (con posiciones) */
+function alignedWith(cols: Column[], rows: ParsedRow[]): boolean {
+  const amounts = rows.slice(0, 40).flatMap((r) => r.amounts).filter((a) => a.x != null && a.r != null);
+  return cols.every((c) => c.x == null || c.r == null || amounts.some((a) => a.x! <= c.r! + COLUMN_GAP && a.r! >= c.x! - COLUMN_GAP));
 }
 
 interface RowAmount {
@@ -595,6 +769,8 @@ interface ParsedRow {
   amounts: RowAmount[];
   /** Primera moneda que aparece en el renglón (la columna «Moneda» o el símbolo pegado a un importe) */
   marker?: Marker;
+  /** La cuota «n/N» en su propia celda, después de la descripción (la columna de Itaú) */
+  cuota?: string;
 }
 
 function parseRow(toks: Tok[], ref?: Ref): ParsedRow {
@@ -647,15 +823,26 @@ function parseRow(toks: Tok[], ref?: Ref): ParsedRow {
     amounts.push({ v, x: toks[k].x, r: toks[k].r, marker: mk });
   }
   const desc: string[] = [];
+  const cells = new Map<number, string[]>();
   for (let k = start; k < words.length; k++) {
     if (used.has(k)) continue;
     const mk = markerOf(words[k]);
     if (mk) marker ??= mk;
-    else desc.push(words[k]);
+    else {
+      desc.push(words[k]);
+      const c = toks[k].cell;
+      if (c != null) cells.set(c, [...(cells.get(c) ?? []), words[k]]);
+    }
   }
+  // La cuota en su celda, con la descripción antes («6/12», «2/ 3»): todas las palabras de la celda son la cuota
+  let cuota: string | undefined;
+  [...cells.entries()].forEach(([c, list], k) => {
+    const m = list.join(' ').match(/^(\d{1,2})\/ ?(\d{1,3})$/);
+    if (k > 0 && m && validCuota(+m[1], +m[2]) && toks.filter((t) => t.cell === c).every((t) => list.includes(t.t))) cuota ??= `${+m[1]}/${+m[2]}`;
+  });
   // Fuera el número de comprobante del comienzo
   const text = desc.join(' ').replace(/^[-|*·•]+\s*/, '').replace(/^(\d{3,}\s+)+(?=\S*[a-z])/i, '').trim();
-  return { date, desc: text, amounts, marker };
+  return { date, desc: text, amounts, marker, ...(cuota ? { cuota } : {}) };
 }
 
 /** Columna más cercana al importe: la que se superpone con él o, si ninguna, la de centro más cerca */
@@ -675,8 +862,12 @@ function nearest(cols: Column[], a: RowAmount): Column {
   return best;
 }
 
-/** A qué moneda va cada importe del renglón. Devuelve uno por moneda (el último distinto de cero) */
-function assignAmounts(amts: RowAmount[], cols: Column[] | null, rowMarker?: Marker): { currency: StatementCurrency; amount: number }[] {
+/**
+ * A qué moneda va cada importe del renglón. Devuelve uno por moneda (el último distinto de cero). Sin columnas, dos
+ * importes sin moneda en un pago, un cargo o un saldo son pesos y dólares (en ese orden: «PAGOS -50.000,00 -120,00»);
+ * en una compra, el segundo (el de origen va antes)
+ */
+function assignAmounts(amts: RowAmount[], cols: Column[] | null, rowMarker: Marker | undefined, kind: StatementKind): { currency: StatementCurrency; amount: number }[] {
   const typed: { type: ColType; v: number; marker?: Marker }[] = [];
   const positional = !!cols && cols.every((c) => c.x != null) && amts.every((a) => a.x != null);
   let fallback: Marker | undefined = rowMarker;
@@ -694,8 +885,8 @@ function assignAmounts(amts: RowAmount[], cols: Column[] | null, rowMarker?: Mar
     const sheetCols = cols?.filter((c) => c.type !== 'origin').map((c) => c.type);
     let order: ColType[] | null = null;
     if (sheetCols && unmarked.length === sheetCols.length) order = sheetCols;
-    // Dos importes sin encabezado y uno en cero: primero pesos, después dólares
-    else if (!cols && unmarked.length === 2 && unmarked.some((a) => a.v === 0)) order = ['local', 'usd'];
+    // Dos importes sin encabezado y uno en cero (o en un pago, un cargo o un saldo): primero pesos, después dólares
+    else if (!cols && unmarked.length === 2 && (unmarked.some((a) => a.v === 0) || kind !== 'compra')) order = ['local', 'usd'];
     let k = 0;
     for (const a of rest) {
       if (a.marker === 'local' || a.marker === 'usd') typed.push({ type: a.marker, v: a.v });
@@ -718,7 +909,7 @@ function assignAmounts(amts: RowAmount[], cols: Column[] | null, rowMarker?: Mar
   return [...out].map(([currency, amount]) => ({ currency, amount }));
 }
 
-function makeTx(date: string, description: string, amount: number, currency: StatementCurrency, installment = installmentOf(description)): StatementTx {
+function makeTx(date: string, description: string, amount: number, currency: StatementCurrency, installment?: string): StatementTx {
   let kind = statementKind(description);
   let value = amount;
   if (kind === 'pago' || kind === 'credito') value = -Math.abs(value);
@@ -732,37 +923,129 @@ function makeTx(date: string, description: string, amount: number, currency: Sta
 /** Renglones sin fecha que no son movimientos (aunque tengan un número) */
 const INFO_LINE = /cotizacion|tipo de cambio|\btasa\b|\bt ?e ?a\b|\bt ?n ?a\b/;
 
+/** Distancia máxima entre los bordes derechos de los importes de una misma columna (en anchos de página) */
+const COLUMN_GAP = 0.015;
+
+/** Un renglón que trae el pago o el saldo en pesos y en dólares, cada uno en su columna (Itaú: los pagos, el seguro y
+ * el saldo contado; el saldo anterior no, que va corrido) */
+const anchorRow = (row: ParsedRow) =>
+  row.amounts.length === 2 && (statementKind(row.desc) === 'pago' || statementKind(row.desc) === 'cargo' || /\bsaldo contado\b/.test(norm(row.desc)));
+
+interface Mark {
+  x: number;
+  r: number;
+  v: number;
+  row: number;
+}
+
+/**
+ * Columnas de importe sin encabezado (Itaú no lo trae como texto): salen de dónde terminan los importes de los
+ * renglones con fecha, que van alineados a la derecha.
+ * - Si hay renglones con el pago o el saldo en pesos y en dólares (anchorRow), esas son las dos columnas; a su
+ *   izquierda, la que nunca va sola es la del importe de origen. Sirve aunque haya una sola compra en dólares.
+ * - Si no, la de la izquierda que nunca tiene un importe solo (sin contar los ceros) es la del importe de origen:
+ *   siempre va con el convertido. De las otras, la de la izquierda es la de pesos y la de la derecha, la de dólares
+ *   (si no hay columna de origen, solo si también aparece sola: si no, puede ser otra cosa). Primero con todos los
+ *   importes (una sola compra en dólares también es una columna) y, si no se entiende, sin los sueltos.
+ * Con una sola columna o con más de tres, null: cada importe va por su símbolo, como antes.
+ */
+function inferColumns(rows: ParsedRow[]): Column[] | null {
+  const marks: Mark[] = [];
+  rows.forEach((row, k) => {
+    if (row.date || anchorRow(row)) for (const a of row.amounts) if (a.x != null && a.r != null) marks.push({ x: a.x, r: a.r, v: a.v, row: k });
+  });
+  marks.sort((a, b) => a.r - b.r);
+  const groups: Mark[][] = [];
+  for (const m of marks) {
+    const g = groups[groups.length - 1];
+    if (g && m.r - g[g.length - 1].r <= COLUMN_GAP) g.push(m);
+    else groups.push([m]);
+  }
+  const nonZero = new Map<number, number>();
+  for (const m of marks) if (m.v !== 0) nonZero.set(m.row, (nonZero.get(m.row) ?? 0) + 1);
+  const alone = (g: Mark[]) => g.some((m) => m.v !== 0 && nonZero.get(m.row) === 1);
+  const col = (g: Mark[], type: ColType): Column => ({ type, x: Math.min(...g.map((m) => m.x)), r: Math.max(...g.map((m) => m.r)) });
+
+  // Las dos columnas de los renglones con pesos y dólares (todos de acuerdo)
+  const pairs = new Set<string>();
+  rows.forEach((row, k) => {
+    if (!anchorRow(row)) return;
+    const own = groups.map((g, i) => (g.some((m) => m.row === k) ? i : -1)).filter((i) => i >= 0);
+    pairs.add(own.length === 2 ? own.join(',') : 'no');
+  });
+  if (pairs.size === 1 && !pairs.has('no')) {
+    const [local, usd] = [...pairs][0].split(',').map(Number);
+    const typed = groups.map((g, i): Column | null =>
+      i === local ? col(g, 'local') : i === usd ? col(g, 'usd') : i < local && !alone(g) ? col(g, 'origin') : null);
+    if (typed.every(Boolean)) return typed as Column[];
+  }
+
+  const infer = (found: Mark[][]): Column[] | null => {
+    if (found.length < 2 || found.length > 3) return null;
+    const origin = !alone(found[0]);
+    const rest = origin ? found.slice(1) : found;
+    if (rest.length === 1) return origin ? [col(found[0], 'origin'), col(rest[0], 'any')] : null;
+    if (rest.length !== 2 || (!origin && !alone(rest[1]))) return null;
+    return [...(origin ? [col(found[0], 'origin')] : []), col(rest[0], 'local'), col(rest[1], 'usd')];
+  };
+  // Un importe suelto en otro lado no es una columna (si con él no se entiende)
+  return infer(groups) ?? infer(groups.filter((g) => g.length >= 2));
+}
+
 function parseTokenRows(rows: Tok[][], text: string, opts: StatementOptions): StatementTx[] {
   const ref = refOf(statementInfo(text), text, opts.today ?? todayISO());
+  const parsed = rows.map((toks) => (toks.length ? parseRow(toks, ref) : null));
+  // Los encabezados que van antes de algún movimiento. Sin otro título («Fecha», «Descripción»), solo si sus columnas
+  // caen sobre los importes de los movimientos que siguen: una promoción que nombra «pesos» y «dólares» no lo es
+  const headers = new Map<number, Column[]>();
+  rows.forEach((toks, k) => {
+    const row = parsed[k];
+    if (!row || row.date || row.amounts.length) return;
+    const h = headerOf(toks);
+    const after = parsed.slice(k + 1).filter((r): r is ParsedRow => !!r?.date && r.amounts.length > 0);
+    if (h && after.length && (h.label || alignedWith(h.cols, after))) headers.set(k, h.cols);
+  });
+  // Antes del primer encabezado (o en todo el documento, si no tiene), las columnas que salen de los importes
+  const first = Math.min(...headers.keys());
+  const inferred = inferColumns(parsed.slice(0, first).filter((r): r is ParsedRow => !!r));
   let cols: Column[] | null = null;
+  // Hay un movimiento antes (los cargos sin fecha van pegados) y la fecha más nueva hasta ahí, sin las cuotas que siguen
+  // (pueden traer la fecha de la compra, de hace meses)
+  let chain = false;
   let lastDate: string | undefined;
+  let newest: string | undefined;
   const txs: StatementTx[] = [];
-  for (const toks of rows) {
-    if (!toks.length) continue;
-    const row = parseRow(toks, ref);
+  for (const k of rows.keys()) {
+    const row = parsed[k];
+    if (!row) continue;
     if (!row.date && !row.amounts.length) {
-      cols = headerOf(toks) ?? cols;
+      cols = headers.get(k) ?? cols;
       continue;
     }
     if (!row.amounts.length || !/[a-z]{2}/.test(norm(row.desc))) continue;
+    const installment = row.cuota ?? installmentOf(row.desc, ref.y);
     let date = row.date ? isoOf(row.date, ref) : null;
-    if (date) lastDate = date;
-    else if (row.date) continue;
+    if (date) {
+      chain = true;
+      lastDate = date;
+      if (!(installment && Number(installment.split('/')[0]) >= 2) && (!newest || date > newest)) newest = date;
+    } else if (row.date) continue;
     else {
       // Sin fecha: cargos y créditos del banco pegados al último movimiento (intereses, IVA, reintegros). Cualquier
       // otro renglón con importe (saldo, compra, cotización) corta la cadena: el cuadro de resumen del pie no cuenta
       const kind = statementKind(row.desc);
-      if (!lastDate || (kind !== 'cargo' && kind !== 'credito') || INFO_LINE.test(norm(row.desc))) {
-        lastDate = undefined;
+      if (!chain || (kind !== 'cargo' && kind !== 'credito') || INFO_LINE.test(norm(row.desc))) {
+        chain = false;
         continue;
       }
-      date = lastDate;
+      date = newest ?? lastDate!;
     }
-    for (const { currency, amount } of assignAmounts(row.amounts, cols, row.marker)) txs.push(makeTx(date, row.desc, amount, currency));
+    for (const { currency, amount } of assignAmounts(row.amounts, cols ?? inferred, row.marker, statementKind(row.desc))) {
+      txs.push(makeTx(date, row.desc, amount, currency, installment));
+    }
   }
   return txs;
 }
-
 const rowText = (rows: StatementRow[]) => rows.map((r) => r.cells.map((c) => c.text).join(' ')).join('\n');
 
 /** Estado de cuenta leído de un PDF o de una foto, con la posición de cada celda */
@@ -883,7 +1166,7 @@ export function parseStatementTable(rows: Cell[][], opts: StatementOptions = {})
   // Hay bancos que exportan las compras en negativo (como débitos de una cuenta): se dan vuelta los signos
   const buys = raw.filter((x) => statementKind(x.desc) === 'compra');
   const flip = buys.length >= 2 && buys.filter((x) => x.amount < 0).length > buys.length / 2;
-  return raw.map((x) => makeTx(x.date, x.desc, flip ? -x.amount : x.amount, x.currency, x.installment));
+  return raw.map((x) => makeTx(x.date, x.desc, flip ? -x.amount : x.amount, x.currency, x.installment ?? installmentOf(x.desc, ref.y)));
 }
 
 // --- Contra lo ya anotado --------------------------------------------------------------------------------
@@ -908,15 +1191,25 @@ function similarity(key: string, other: string | undefined): number {
  * Compras del estado de cuenta que ya están anotadas (a mano, con una factura o de otro estado de cuenta):
  * un gasto con el mismo monto (tolerancia de $ 1 o 1%) y a no más de 3 días. Cada movimiento se empareja con una
  * sola compra, prefiriendo el de comercio parecido. Las compras en dólares se comparan solo si hay cotización.
- * Devuelve índice de la compra → id del movimiento.
+ * Una cuota guardada no es una compra sin cuota (y al revés, la cuota de una compra vieja, que va con la fecha de
+ * cierre, solo es la misma cuota ya anotada). `statement`: el cierre del que se revisa y las facturas, para
+ * reconocer lo guardado de ese mismo estado de cuenta con una versión anterior. Devuelve índice de la compra → id del
+ * movimiento.
  */
-export function findDuplicates(txs: StatementTx[], movements: Movement[], usdRate?: number): Map<number, string> {
+export function findDuplicates(
+  txs: StatementTx[],
+  movements: Movement[],
+  usdRate?: number,
+  statement: { closing?: string; invoices?: Invoice[] } = {},
+): Map<number, string> {
   const pool = movements.filter((m) => m.kind === 'gasto' && !m.monthly);
+  // Los gastos de otro estado de cuenta guardado con el mismo cierre (el mismo, subido otra vez)
+  const same = new Set((statement.invoices ?? []).filter((i) => i.kind === 'estado' && !!statement.closing && i.date === statement.closing).map((i) => i.id));
   // Lo anotado en dólares lleva la cuenta en la nota («U$S 100 × 42,50»): se compara en dólares, sin cotización
   const usdOf = new Map(pool.map((m) => [m.id, splitUsdNote(m.note).usd]));
   const pairs: { i: number; id: string; sim: number; dAmount: number; dDays: number }[] = [];
   txs.forEach((tx, i) => {
-    if (!isSpend(tx)) return;
+    if (!isSpend(tx) || tx.balance) return;
     const usd = tx.currency === 'usd';
     // Sin cotización, en dólares solo se reconoce lo que tiene la cuenta en dólares en la nota
     const rate = usd ? (usdRate && usdRate > 0 ? usdRate : null) : 1;
@@ -927,7 +1220,17 @@ export function findDuplicates(txs: StatementTx[], movements: Movement[], usdRat
       // Otra cuota de la misma compra: hay bancos que repiten la fecha de la compra todos los meses
       const cuota = m.note?.match(/cuota (\d+\/\d+)/)?.[1];
       if (tx.installment && cuota && cuota !== tx.installment) continue;
-      const dDays = Math.abs(dayNumber(m.date) - dayNumber(tx.date));
+      // Una cuota guardada (quizá llevada al cierre) no es una compra nueva de esos días por el mismo monto
+      if (!tx.installment && cuota) continue;
+      const days = (iso: string) => Math.abs(dayNumber(m.date) - dayNumber(iso));
+      let dDays: number;
+      if (tx.purchaseDate) {
+        // La cuota de una compra vieja: la misma cuota (en el cierre o, guardada antes, con la fecha de la compra), o lo
+        // guardado de este mismo estado de cuenta con una versión anterior (con la fecha de la compra, sin la cuota)
+        if (cuota === tx.installment) dDays = Math.min(days(tx.date), days(tx.purchaseDate));
+        else if (!cuota && m.invoiceId && same.has(m.invoiceId)) dDays = days(tx.purchaseDate);
+        else continue;
+      } else dDays = days(tx.date);
       if (dDays > 3) continue;
       const mUsd = usd ? usdOf.get(m.id) : undefined;
       let dAmount: number;
@@ -951,6 +1254,58 @@ export function findDuplicates(txs: StatementTx[], movements: Movement[], usdRat
     used.add(p.id);
   }
   return out;
+}
+
+// --- Contra el saldo del estado de cuenta ----------------------------------------------------------------
+
+const PREVIOUS_BALANCE = /\bsaldo (?:del (?:estado de cuenta|resumen|mes) )?anterior\b/;
+const CLOSING_BALANCE = /\bsaldo (?:contado|actual|al cierre)\b|\bnuevo saldo\b/;
+
+type Balances = Partial<Record<StatementCurrency, number>>;
+
+/**
+ * El saldo anterior y el del cierre (el contado) de cada moneda, si los trae con su título. Por orden, no por columna
+ * (en Itaú el saldo anterior va corrido): el primer importe sin moneda es en pesos y el segundo en dólares
+ */
+export function statementBalances(text: string): { previous: Balances; closing: Balances } {
+  const out = { previous: {} as Balances, closing: {} as Balances };
+  for (const raw of text.split(/\r?\n/)) {
+    const line = norm(raw);
+    const which = PREVIOUS_BALANCE.test(line) ? out.previous : CLOSING_BALANCE.test(line) ? out.closing : null;
+    if (!which || Object.keys(which).length || line.includes('%')) continue;
+    const words = splitGlued(line).split(/\s+/);
+    const order: StatementCurrency[] = ['local', 'usd'];
+    words.forEach((w, k) => {
+      const v = tokenAmount(w);
+      if (v == null) return;
+      const mk = markerOf(words[k - 1] ?? '');
+      const cur = mk === 'usd' || mk === 'foreign' ? 'usd' : mk === 'local' ? 'local' : order.find((c) => which[c] == null);
+      if (cur && which[cur] == null) which[cur] = v;
+    });
+  }
+  return out;
+}
+
+/**
+ * Lo que el estado de cuenta cobra (o acredita) sin que aparezca como movimiento: en cada moneda con los dos saldos,
+ * el del cierre menos el anterior y todos los movimientos leídos (con los pagos). Positivo: cobra de más
+ */
+export function balanceGaps(txs: StatementTx[], text: string): { currency: StatementCurrency; amount: number }[] {
+  const { previous, closing } = statementBalances(text);
+  const out: { currency: StatementCurrency; amount: number }[] = [];
+  for (const currency of ['local', 'usd'] as const) {
+    if (previous[currency] == null || closing[currency] == null) continue;
+    const moved = txs.filter((t) => t.currency === currency && t.kind !== 'saldo' && !t.balance).reduce((s, t) => s + t.amount, 0);
+    const amount = round2(closing[currency]! - previous[currency]! - moved);
+    if (Math.abs(amount) >= 0.01) out.push({ currency, amount });
+  }
+  return out;
+}
+
+/** Lo que cobra de más que los movimientos, como un cargo para revisar (balanceGaps) */
+export function balanceCharge(date: string, currency: StatementCurrency, amount: number): StatementTx {
+  const description = 'Diferencia con el saldo del estado de cuenta';
+  return { date, description, merchant: 'Diferencia con el saldo', key: 'diferencia con el saldo', amount: round2(amount), currency, kind: 'cargo', balance: true };
 }
 
 /** Meses de las compras que ya tienen los totales mensuales de la planilla (sumarlas duplicaría el gasto) */

@@ -1,10 +1,12 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { merchantKey } from '../classify';
-import { exampleData, exampleStatementText } from '../example';
+import { splitUsdNote } from '../fx';
+import { exampleData, exampleStatements, exampleStatementText } from '../example';
 import { importMonthlySheet, type Cell } from '../importSheet';
-import { findDuplicates, isSpend, normalizeMerchant, parseStatementText, planillaMonths, statementInfo, statementPeriod, type StatementTx } from '../statement';
-import { applyCredits, creditTargets, dayMonth, groupSpends, knownRubro, NOT_SPEND, spendRubros, statementNote } from '../statementReview';
+import { statementCommitments } from '../installments';
+import { findDuplicates, installmentsAtClosing, isSpend, normalizeMerchant, parseStatementTable, parseStatementText, planillaMonths, statementInfo, statementPeriod, type StatementTx } from '../statement';
+import { applyCredits, creditTargets, dayMonth, dayMonthYear, groupSpends, knownRubro, NOT_SPEND, spendRubros, statementInstallments, statementNote } from '../statementReview';
 import { templateData } from '../template';
 
 function tx(date: string, amount: number, description: string, extra: Partial<StatementTx> = {}): StatementTx {
@@ -85,6 +87,66 @@ describe('nota del gasto', () => {
     expect(statementNote(tx('2026-10-01', 100, 'DISCO'), undefined, 40)).toBeUndefined();
     expect(dayMonth('2026-08-06')).toBe('6/8');
   });
+  it('la cuota que va con la fecha del cierre dice de cuándo es la compra (y los dólares siguen al final)', () => {
+    const cuota = tx('2026-09-25', 25, 'VIAJES ARCOIRIS', { installment: '6/12', purchaseDate: '2026-03-10', currency: 'usd' });
+    expect(statementNote(cuota, 'Itaú', 40.5)).toBe('Itaú · cuota 6/12 · compra del 10/3/2026 · U$S\u00a025,00 × 40,50');
+    expect(splitUsdNote(statementNote(cuota, 'Itaú', 40.5))).toEqual({ rest: 'Itaú · cuota 6/12 · compra del 10/3/2026', usd: 25, rate: 40.5 });
+    expect(dayMonthYear('2025-12-01')).toBe('1/12/2025');
+  });
+});
+
+describe('compras en cuotas para guardar con el estado de cuenta', () => {
+  const txs = [
+    tx('2026-09-25', 1250, 'COLCHONERIA DESCANSO', { installment: '7/9', purchaseDate: '2026-03-03' }),
+    tx('2026-09-02', 300, 'ALMACEN'),
+    tx('2026-09-25', 25, 'VIAJES ARCOIRIS', { installment: '6/12', purchaseDate: '2026-03-10', currency: 'usd' }),
+    tx('2026-09-10', 900, 'OPTICA VISION', { installment: '1/3' }),
+    tx('2026-09-12', 720, 'CARGO ANUAL', { installment: '1/3', kind: 'cargo' }),
+    tx('2026-09-14', -300, 'DEVOLUCION OPTICA VISION', { installment: '1/3', kind: 'credito' }),
+    tx('2026-09-15', 500, 'TRANSFERENCIA PEPE', { installment: '2/4' }),
+    tx('2026-09-25', 400, 'MUEBLERIA LOS PINOS', { installment: '6/6', purchaseDate: '2026-04-18' }),
+  ];
+  const rates = txs.map((t) => (t.currency === 'usd' ? 40 : 1));
+  it('compras y cargos en cuotas, en pesos, con la fecha de la compra; sin créditos ni los que no son gastos', () => {
+    expect(statementInstallments(txs, rates, (t) => t.description.startsWith('TRANSFERENCIA'))).toEqual([
+      { merchant: 'Colchoneria Descanso', key: 'colchoneria', amount: 1250, n: 7, of: 9, date: '2026-03-03' },
+      { merchant: 'Viajes Arcoiris', key: 'viajes', amount: 1000, n: 6, of: 12, date: '2026-03-10', usd: 25, rate: 40 },
+      { merchant: 'Optica Vision', key: 'optica vision', amount: 900, n: 1, of: 3, date: '2026-09-10' },
+      { merchant: 'Cargo Anual', key: 'cargo', amount: 720, n: 1, of: 3, date: '2026-09-12' },
+      { merchant: 'Muebleria los Pinos', key: 'muebleria', amount: 400, n: 6, of: 6, date: '2026-04-18' },
+    ]);
+  });
+  it('en dólares sin cotización no se guarda', () => {
+    expect(statementInstallments(txs, txs.map(() => 0)).map((i) => i.key)).not.toContain('viajes');
+  });
+  it('una planilla con varios meses trae la misma compra en cada uno (1/6, 2/6, 3/6): queda la última y se proyecta una vez', () => {
+    const rows: Cell[][] = [
+      ['Fecha', 'Descripción', 'Cuota', 'Importe $'],
+      ['10/07/2026', 'OPTICA VISION', '1/6', '1000,00'],
+      ['03/07/2026', 'SUPERMERCADO EL TREBOL', '', '500,00'],
+      ['10/08/2026', 'OPTICA VISION', '2/6', '1000,00'],
+      ['03/08/2026', 'SUPERMERCADO EL TREBOL', '', '500,00'],
+      ['10/09/2026', 'OPTICA VISION', '3/6', '1000,00'],
+      ['03/09/2026', 'SUPERMERCADO EL TREBOL', '', '500,00'],
+      ['20/09/2026', 'KIOSCO', '', '200,00'],
+    ];
+    const read = parseStatementTable(rows, { today: '2026-10-01' });
+    const period = statementPeriod(read, {});
+    expect(period).toEqual({ from: '2026-07-03', to: '2026-09-20' });
+    const moved = installmentsAtClosing(read, period);
+    const cuotas = statementInstallments(moved, moved.map(() => 1));
+    expect(cuotas.map((c) => `${c.n}/${c.of}`)).toEqual(['3/6']);
+    const ahead = statementCommitments(cuotas, period!.to, { today: '2026-10-21', months: 6 });
+    expect(ahead.total).toEqual([1000, 1000, 1000, 0, 0, 0]);
+    expect(ahead.left).toBe(3000);
+    // Dos compras iguales con la misma cuota son dos; la misma con la fecha de la compra repetida, una
+    const same = [
+      tx('2026-09-25', 600, 'ZAPATERIA', { installment: '2/6', purchaseDate: '2026-07-02' }),
+      tx('2026-09-25', 600, 'ZAPATERIA', { installment: '2/6', purchaseDate: '2026-07-09' }),
+      tx('2026-07-02', 600, 'ZAPATERIA', { installment: '1/6' }),
+    ];
+    expect(statementInstallments(same, same.map(() => 1)).map((c) => [c.n, c.date])).toEqual([[2, '2026-07-02'], [2, '2026-07-09']]);
+  });
 });
 
 describe('estado de cuenta de ejemplo', () => {
@@ -92,17 +154,36 @@ describe('estado de cuenta de ejemplo', () => {
   const res = importMonthlySheet(JSON.parse(readFileSync('public/ejemplo.json', 'utf8')) as Cell[][]);
   const data = exampleData(res, today);
   const text = exampleStatementText(today);
-  const txs = parseStatementText(text, { today });
+  const raw = parseStatementText(text, { today });
+  // Como en la app (readStatement): las cuotas de compras de antes del período, con la fecha de cierre
+  const txs = installmentsAtClosing(raw, statementPeriod(raw, statementInfo(text)));
 
-  it('se lee entero: período, tarjeta, cotización, pago, reintegro, dólares y cuota', () => {
+  it('se lee entero: período, tarjeta, cotización, pago, reintegro, dólares y cuotas', () => {
     const info = statementInfo(text);
     expect(info).toMatchObject({ closing: today, card: 'OCA', usdRate: 40.1 });
-    expect(statementPeriod(txs, info)).toEqual({ from: '2026-09-26', to: today });
+    expect(statementPeriod(raw, info)).toEqual({ from: '2026-09-26', to: today });
     expect(txs.filter((t) => t.kind === 'pago')).toHaveLength(1);
     expect(txs.find((t) => t.kind === 'credito')).toMatchObject({ key: 'reintegro', amount: -48.6 });
     expect(txs.filter((t) => t.currency === 'usd').map((t) => t.key)).toEqual(['netflix', 'spotify']);
-    expect(txs.find((t) => t.installment)).toMatchObject({ merchant: 'Farmashop', installment: '2/3' });
+    // Dos con la fecha de la compra (una pegada al comercio, como en Scotiabank), una que sigue y una nueva
+    expect(txs.filter((t) => t.installment).map((t) => [t.merchant, t.installment, t.date, t.purchaseDate ?? ''])).toEqual([
+      ['Muebleria los Alamos', '3/10', today, '2026-08-10'],
+      ['Bicicleteria la Rueda', '2/6', today, '2026-09-10'],
+      ['Farmashop', '2/3', '2026-10-09', ''],
+      ['Jugueteria el Tren', '1/3', '2026-10-17', ''],
+    ]);
     expect(txs.every((t) => t.date >= '2026-09-26' && t.date <= today)).toBe(true);
+  });
+
+  it('las cuotas siguen las del estado de cuenta anterior de OCA (con la misma fecha de compra)', () => {
+    const oca = exampleStatements(today).find((i) => i.card === 'OCA')!;
+    const now = statementInstallments(txs, txs.map(() => 40.1));
+    for (const before of oca.installments!) {
+      const next = now.find((i) => i.key === before.key)!;
+      expect([next.n, next.of, next.amount]).toEqual([before.n + 1, before.of, before.amount]);
+      // Las que vienen con la fecha de la compra guardan esa (Farmashop trae la de la cuota)
+      if (txs.find((t) => t.key === before.key)!.purchaseDate) expect(next.date).toBe(before.date);
+    }
   });
 
   it('con los rubros del ejemplo: algunos conocidos, otros nuevos', () => {
@@ -125,6 +206,10 @@ describe('estado de cuenta de ejemplo', () => {
       'Ferreteria el Tornillo': null,
       'Pedidosya Burger King': 'Comer afuera',
       Spotify: 'Spotify',
+      'Muebleria los Alamos': null,
+      'Bicicleteria la Rueda': null,
+      // Por las palabras del rubro
+      'Jugueteria el Tren': 'Regalos',
     });
   });
 

@@ -4,6 +4,7 @@ import { backupDue } from '../autoBackup';
 import { dataKey, demoData, demoOutdated, demoTicketLines, fileIdOf, fileKey, ticketAmount, ticketPdf, TICKET_MERCHANT } from '../demo';
 import { exampleStatementText } from '../example';
 import { importMonthlySheet, type Cell } from '../importSheet';
+import { commitments, nextMonthOutlook } from '../installments';
 import { percentLedger } from '../ledger';
 import { pendingRecurring } from '../recurring';
 import { pendingReport } from '../report';
@@ -79,8 +80,9 @@ describe('modo demo: los datos inventados', () => {
   });
 
   it('trae una factura del súper separada por rubro, con su ticket en PDF', () => {
-    expect(data.invoices).toHaveLength(1);
-    const inv = data.invoices[0];
+    const facturas = data.invoices.filter((i) => i.kind !== 'estado');
+    expect(facturas).toHaveLength(1);
+    const inv = facturas[0];
     expect(inv).toMatchObject({ merchant: TICKET_MERCHANT, mime: 'application/pdf', total: 1432 });
     const ms = data.movements.filter((m) => m.invoiceId === inv.id);
     expect(ms.map((m) => [name(m.rubroId), m.amount])).toEqual([['Supermercado', 1016], ['Limpieza', 416]]);
@@ -96,6 +98,17 @@ describe('modo demo: los datos inventados', () => {
     expect([...unknown]).toEqual(['Movie Center', 'Ferreteria el Tornillo']);
     // Lo aprendido de la factura del súper (el comercio va al rubro con más renglones)
     expect(Object.values(data.settings.learned).length).toBeGreaterThan(9);
+  });
+
+  it('trae estados de cuenta de tres tarjetas con cuotas por delante (sin gastos: esos meses están en la planilla)', () => {
+    const c = commitments(data, { today: TODAY });
+    expect(c.cards.map((x) => [x.card, x.stale, x.plans.length > 0])).toEqual([['Itaú', false, true], ['OCA', false, true], ['Scotiabank', true, true]]);
+    expect(data.movements.some((m) => data.invoices.some((i) => i.kind === 'estado' && i.id === m.invoiceId))).toBe(false);
+    const o = nextMonthOutlook(data, { today: TODAY });
+    expect(o.installments).toBeGreaterThan(0);
+    expect(o.income?.from).toBe('fijos');
+    expect(o.margin).toBeGreaterThan(0);
+    expect(o.staleCards).toEqual(['Scotiabank']);
   });
 
   it('se vuelve a armar si es de un mes que ya pasó', () => {

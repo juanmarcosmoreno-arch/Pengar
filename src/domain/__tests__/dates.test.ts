@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { sinceDay, timeAgo } from '../dates';
+import { shiftMonths, sinceDay, timeAgo } from '../dates';
 
 describe('cuánto pasó (hogar compartido)', () => {
   const now = new Date('2026-10-21T15:00:00').getTime();
@@ -19,5 +19,15 @@ describe('cuánto pasó (hogar compartido)', () => {
     expect(sinceDay('2026-10-20', '2026-10-21')).toBe('desde ayer');
     expect(sinceDay('2026-10-12', '2026-10-21')).toBe('desde el lunes 12 de octubre');
     expect(sinceDay('2025-12-01', '2026-10-21')).toBe('desde el lunes 1 de diciembre de 2025');
+  });
+});
+
+describe('el mismo día otro mes', () => {
+  it('sin pasarse del último día del mes', () => {
+    expect(shiftMonths('2026-03-31', -1)).toBe('2026-02-28');
+    expect(shiftMonths('2028-03-31', -1)).toBe('2028-02-29');
+    expect(shiftMonths('2026-01-31', 1)).toBe('2026-02-28');
+    expect(shiftMonths('2026-12-15', 1)).toBe('2027-01-15');
+    expect(shiftMonths('2026-01-10', -1)).toBe('2025-12-10');
   });
 });

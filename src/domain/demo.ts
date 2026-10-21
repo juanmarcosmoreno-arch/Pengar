@@ -67,9 +67,11 @@ const FIXED: DemoFixed[] = [
 
 /**
  * Comercios del estado de cuenta de ejemplo (domain/example, STATEMENT) que ya se conocen: al probar «Tarjeta» solo
- * quedan como nuevos Movie Center y la ferretería
+ * quedan como nuevos Movie Center y la ferretería (la juguetería sale por las palabras de Regalos)
  */
 const KNOWN_MERCHANTS: [string, string][] = [
+  ['MUEBLERIA LOS ALAMOS', 'Arreglos casa'],
+  ['BICICLETERIA LA RUEDA', 'Paseos'],
   ['TIENDA INGLESA 7', 'Supermercado'],
   ['MERCADOPAGO*LA PASIVA', 'Comer afuera'],
   ['NETFLIX.COM', 'Netflix'],
@@ -229,9 +231,9 @@ export function demoData(res: Pick<ImportResult, 'categories' | 'rubros' | 'move
     movements.push({ id: newId('m'), date, amount: 15000, kind: 'gasto', rubroId: tithe.id, origin: 'manual', createdAt: new Date(`${date}T12:30:00`).getTime() });
   }
 
-  // La factura del súper, separada por rubro, con su ticket en PDF
+  // La factura del súper, separada por rubro, con su ticket en PDF (los estados de cuenta de las tarjetas ya vienen del ejemplo)
   let learned: Settings['learned'] = { ...base.settings.learned };
-  const invoices: Invoice[] = [];
+  const invoices: Invoice[] = [...base.invoices];
   const files: DemoFile[] = [];
   const items: InvoiceItem[] = TICKET.map((t) => ({ description: t.description, amount: t.amount, rubroId: rubro(t.rubro)?.id }));
   if (items.every((it) => it.rubroId)) {

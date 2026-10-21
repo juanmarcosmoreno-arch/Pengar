@@ -6,6 +6,9 @@ import { today } from '../domain/dates';
 import { exampleStatementText } from '../domain/example';
 import type { Cell } from '../domain/importSheet';
 import {
+  balanceCharge,
+  balanceGaps,
+  installmentsAtClosing,
   isSpend,
   parseStatementRows,
   parseStatementTable,
@@ -29,6 +32,14 @@ export interface StatementDraft {
   period?: { from: string; to: string };
   /** «OCA», «Visa BROU»… si aparece */
   card?: string;
+  /** Límite de crédito y crédito disponible, si los trae */
+  limit?: number;
+  available?: number;
+  /**
+   * Lo que el estado de cuenta cobra (positivo) o acredita (negativo) sin que aparezca como movimiento, por moneda
+   * (balanceGaps). Lo que cobra de más va también en `txs`, como un cargo para revisar (balanceCharge)
+   */
+  balanceGaps?: { currency: StatementTx['currency']; amount: number }[];
   /** Cotización del dólar: la del estado de cuenta o, si no trae, la última que se escribió a mano */
   usdRate?: number;
   usdRateFrom?: 'estado' | 'ultima';
@@ -97,13 +108,26 @@ export async function readStatement(file: File, data: Data, onProgress: (msg: st
   return finish({ file: stored, fileName: fileName || (source === 'pdf' ? 'estado-de-cuenta.pdf' : 'estado-de-cuenta'), mime, txs, source }, text, data);
 }
 
-function finish(draft: Omit<StatementDraft, 'period' | 'card' | 'usdRate' | 'usdRateFrom'>, text: string, data: Data): StatementDraft {
+/**
+ * El período, la tarjeta, el límite y la cotización del encabezado. Las cuotas que vienen con la fecha de la compra
+ * original pasan a la del cierre (installmentsAtClosing): los repetidos y lo que se guarda usan esa. Si el saldo del
+ * cierre no da con el anterior y los movimientos, lo que cobra de más va como un cargo para revisar
+ */
+function finish(draft: Omit<StatementDraft, 'period' | 'card' | 'usdRate' | 'usdRateFrom' | 'limit' | 'available'>, text: string, data: Data): StatementDraft {
   const info = statementInfo(text);
   const usdRate = info.usdRate ?? data.settings.usdRate;
+  const period = statementPeriod(draft.txs, info);
+  const gaps = balanceGaps(draft.txs, text);
+  const end = period?.to ?? draft.txs.map((t) => t.date).sort().at(-1);
+  const extra = end ? gaps.filter((g) => g.amount > 0).map((g) => balanceCharge(end, g.currency, g.amount)) : [];
   return {
     ...draft,
-    period: statementPeriod(draft.txs, info),
+    txs: [...installmentsAtClosing(draft.txs, period), ...extra],
+    period,
+    ...(gaps.length ? { balanceGaps: gaps } : {}),
     card: info.card,
+    ...(info.limit != null ? { limit: info.limit } : {}),
+    ...(info.available != null ? { available: info.available } : {}),
     usdRate,
     ...(usdRate ? { usdRateFrom: info.usdRate ? 'estado' : 'ultima' } : {}),
   };

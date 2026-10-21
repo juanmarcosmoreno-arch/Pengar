@@ -5,9 +5,10 @@
  */
 import { merchantKey, suggestRubro, type Suggestion } from './classify';
 import { formatRate, rateOn, usd, type UsdRate } from './fx';
+import { latestCuotas } from './installments';
 import { round2 } from './money';
-import { isSpend, withoutInstallment, type StatementTx } from './statement';
-import type { Category, Rubro, Settings } from './types';
+import { isSpend, toLocal, withoutInstallment, type StatementTx } from './statement';
+import type { Category, InvoiceInstallment, Rubro, Settings } from './types';
 
 /** Valor de settings.learned para un comercio que no es un gasto: la próxima vez va directo a «No son gastos» */
 export const NOT_SPEND = '__no_gasto';
@@ -98,11 +99,15 @@ export function applyCredits(amounts: number[], items: CreditTarget[], credits: 
 
 export { usd };
 
-/** Nota del gasto: la tarjeta, la cuota y la cuenta en dólares («OCA · cuota 2/3 · U$S 12,99 × 40,15») */
+/**
+ * Nota del gasto: la tarjeta, la cuota (con la fecha de la compra, si la cuota va con la del cierre) y la cuenta en
+ * dólares, siempre al final («OCA · cuota 2/3 · compra del 3/3/2026 · U$S 12,99 × 40,15»: ver splitUsdNote)
+ */
 export function statementNote(tx: StatementTx, card: string | undefined, usdRate: number): string | undefined {
   const parts = [
     card,
     tx.installment && `cuota ${tx.installment}`,
+    tx.installment && tx.purchaseDate && `compra del ${dayMonthYear(tx.purchaseDate)}`,
     tx.currency === 'usd' && `${usd(tx.amount)} × ${formatRate(usdRate)}`,
   ].filter(Boolean);
   return parts.length ? parts.join(' · ') : undefined;
@@ -110,6 +115,29 @@ export function statementNote(tx: StatementTx, card: string | undefined, usdRate
 
 /** «13/10» */
 export const dayMonth = (iso: string) => `${Number(iso.slice(8, 10))}/${Number(iso.slice(5, 7))}`;
+
+/** «3/3/2026» */
+export const dayMonthYear = (iso: string) => `${dayMonth(iso)}/${iso.slice(0, 4)}`;
+
+/**
+ * Las compras en cuotas del estado de cuenta, para guardarlas con él (domain/installments proyecta las que siguen):
+ * cada compra o cargo con cuota, en pesos con su cotización (`rates`, en el orden de `txs`), salvo los de
+ * comercios que no son gastos (`skip`). Los repetidos y los de meses de la planilla sí van: igual se pagan. Una
+ * planilla con varios meses trae la misma compra en cada mes (1/6, 2/6, 3/6): va la última (latestCuotas).
+ */
+export function statementInstallments(txs: StatementTx[], rates: number[], skip: (tx: StatementTx) => boolean = () => false): InvoiceInstallment[] {
+  const out: InvoiceInstallment[] = [];
+  txs.forEach((tx, i) => {
+    const m = tx.installment?.match(/^(\d+)\/(\d+)$/);
+    if (!m || !isSpend(tx) || skip(tx)) return;
+    const rate = rates[i];
+    // En dólares sin cotización no se sabe cuánto es en pesos
+    if (tx.currency === 'usd' && !(rate > 0)) return;
+    const usdPart = tx.currency === 'usd' ? { usd: tx.amount, rate } : {};
+    out.push({ merchant: tx.merchant, key: tx.key, amount: toLocal(tx, rate), n: +m[1], of: +m[2], date: tx.purchaseDate ?? tx.date, ...usdPart });
+  });
+  return latestCuotas(out);
+}
 
 /** Lo que en dólares se pasa a pesos: las compras y los créditos (los pagos y el saldo, no) */
 const usdToConvert = (t: StatementTx) => t.currency === 'usd' && (isSpend(t) || t.kind === 'credito');

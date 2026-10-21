@@ -31,10 +31,11 @@ await mockFx(ctx);
 await mockNative(ctx);
 
 /** Un teléfono: una pestaña con su ?telefono= */
-async function phone(name) {
+/** `query`: más parámetros de la dirección («&intro»: con la entrada, que el navegador automatizado no muestra) */
+async function phone(name, query = '') {
   const page = await ctx.newPage();
   page.on('pageerror', (e) => problems.push(`pageerror (${name}) ${e.message}`));
-  await page.goto(`${url}?telefono=${name}`);
+  await page.goto(`${url}?telefono=${name}${query}`);
   return page;
 }
 const nav = (page, tab) => page.getByRole('navigation').getByRole('button', { name: tab }).click();
@@ -106,7 +107,7 @@ await ana.getByText(/Sincronizado (hace un momento|hace 1 min)/).waitFor();
 check(true, 'Ana: «Sincronizado hace un momento»');
 
 // --- Bruno entra desde la bienvenida con el código (escrito como sea) ---
-const bruno = await phone('bruno');
+let bruno = await phone('bruno');
 await bruno.getByRole('button', { name: 'Tengo un código de hogar' }).click();
 await joinWith(bruno, 'Bruno', `${code.slice(0, 4).toLowerCase()}-${code.slice(4)}`);
 await bruno.getByRole('navigation').waitFor({ timeout: 10000 });
@@ -161,6 +162,23 @@ await bruno.waitForFunction(() => window.__lock.pending);
 check(await calls(bruno, 'pull') === pullsLocked, 'tampoco con Face ID esperando');
 await bruno.evaluate(() => window.__lock.answer('ok'));
 await row(bruno, 333).first().waitFor({ timeout: 6000 }).then(() => check(true, 'al desbloquear le llega lo de Ana'), () => check(false, 'al desbloquear le llega lo de Ana'));
+
+// Reabrir la app bloqueada, sin la entrada y con ella: nada al servidor hasta contestar Face ID (el motor arranca en
+// pausa aunque la pantalla de bloqueo se arme después)
+for (const [query, amount] of [['', 334], ['&intro', 445]]) {
+  const what = query ? 'con la entrada' : 'sin la entrada';
+  await addExpense(ana, amount, 'Supermercado');
+  await ana.waitForTimeout(1500);
+  await bruno.close();
+  bruno = await phone('bruno', query);
+  await bruno.waitForTimeout(query ? 2500 : 1500);
+  if (query) check(await bruno.getByRole('button', { name: 'Saltar la presentación' }).count() === 1, 'la entrada está en pantalla');
+  check(await calls(bruno, 'pull') === 0 && await calls(bruno, 'session') === 0, `reabrir bloqueada ${what}: nada al servidor`);
+  await bruno.waitForFunction(() => window.__lock.pending, null, { timeout: 15000 });
+  check(await calls(bruno, 'pull') === 0, `${what}, tampoco con Face ID esperando`);
+  await bruno.evaluate(() => window.__lock.answer('ok'));
+  check(await hasRow(bruno, amount, 8000), `${what}, al desbloquear le llega lo de Ana`);
+}
 
 // --- Otro teléfono: entrar con el código trae todo de vuelta ---
 const ana2 = await phone('ana2');

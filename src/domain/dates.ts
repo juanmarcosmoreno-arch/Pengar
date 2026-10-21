@@ -27,6 +27,13 @@ export function addMonths(month: string, n: number): string {
   return `${Math.floor(total / 12)}-${pad((total % 12) + 1)}`;
 }
 
+/** El mismo día `n` meses después (o antes): el 31 de enero + 1 → el 28 o 29 de febrero */
+export function shiftMonths(date: string, n: number): string {
+  const month = addMonths(monthOf(date), n);
+  const last = new Date(Date.UTC(+month.slice(0, 4), +month.slice(5, 7), 0)).getUTCDate();
+  return `${month}-${pad(Math.min(+date.slice(8, 10), last))}`;
+}
+
 /** Meses entre `from` y `to`, inclusive */
 export function monthRange(from: string, to: string): string[] {
   const out: string[] = [];

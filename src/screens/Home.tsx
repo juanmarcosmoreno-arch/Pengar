@@ -1,5 +1,5 @@
 import { ArrowDown, ArrowUp, Camera, ChevronRight, CreditCard, Minus, Plus } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { BudgetRows } from '../components/charts/BudgetRows';
 import { Columns } from '../components/charts/Columns';
 import { DemoChip } from '../components/Demo';
@@ -9,6 +9,7 @@ import { Suricata, type Pose } from '../components/Suricata';
 import { MovementRow } from '../components/MovementRow';
 import { useToast } from '../components/Toast';
 import { addMonths, currentMonth, monthLabel, monthName, today } from '../domain/dates';
+import { commitments, nextMonthOutlook } from '../domain/installments';
 import { formatPct } from '../domain/money';
 import { pendingRecurring, type PendingRecurring } from '../domain/recurring';
 import { pendingReport } from '../domain/report';
@@ -21,7 +22,7 @@ import { useStore } from '../store/store';
 // El suricata saluda solo la primera vez que se abre Inicio en la sesión
 let greeted = false;
 
-export function Home({ onAdd, onScan, onStatement, onEdit, onRecord, onGo, onReport }: {
+export function Home({ onAdd, onScan, onStatement, onEdit, onRecord, onGo, onReport, onInstallments }: {
   onAdd: (kind: Kind) => void;
   onScan: () => void;
   /** Estado de cuenta de la tarjeta */
@@ -32,6 +33,8 @@ export function Home({ onAdd, onScan, onStatement, onEdit, onRecord, onGo, onRep
   onGo: (where: 'movimientos' | 'mes') => void;
   /** Abrir el resumen de un mes */
   onReport: (month: string) => void;
+  /** Abrir «Tarjetas y cuotas» */
+  onInstallments: () => void;
 }) {
   const { data, ix } = useStore();
   const { money } = useMoney();
@@ -118,6 +121,8 @@ export function Home({ onAdd, onScan, onStatement, onEdit, onRecord, onGo, onRep
 
       <DueRecurring onRecord={onRecord} />
 
+      <NextMonthCard onOpen={onInstallments} />
+
       <section className="card p-5">
         <div className="flex items-baseline justify-between">
           <h2 className="section-title">Gastos por mes</h2>
@@ -162,6 +167,32 @@ export function Home({ onAdd, onScan, onStatement, onEdit, onRecord, onGo, onRep
       </section>
       <div className="h-4" />
     </div>
+  );
+}
+
+/**
+ * El mes que viene, en un renglón: las cuotas ya comprometidas y el margen estimado. Solo si hay compras en cuotas por
+ * delante; tocarla abre «Tarjetas y cuotas»
+ */
+function NextMonthCard({ onOpen }: { onOpen: () => void }) {
+  const { data } = useStore();
+  const { money } = useMoney();
+  const now = today();
+  const ahead = useMemo(() => (data.invoices.some((i) => i.kind === 'estado') ? commitments(data, { today: now, months: 2 }) : null), [data, now]);
+  const outlook = useMemo(() => (ahead?.cards.some((c) => c.plans.length) ? nextMonthOutlook(data, { today: now }) : null), [ahead, data, now]);
+  if (!outlook) return null;
+  return (
+    <button className="card flex w-full items-center gap-3 py-3 pl-4 pr-2 text-left" onClick={onOpen}>
+      <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-primary/40 bg-soft/25 text-primary"><CreditCard size={22} /></span>
+      <span className="min-w-0 flex-1">
+        <span className="block text-xl leading-tight">El mes que viene</span>
+        <span className="block text-[15px] leading-snug text-muted">
+          Cuotas {money(outlook.installments)}
+          {outlook.margin != null && <> · <span className={outlook.margin < 0 ? 'text-danger' : ''}>margen ≈ {money(outlook.margin)}</span></>}
+        </span>
+      </span>
+      <ChevronRight className="shrink-0 text-muted" size={22} />
+    </button>
   );
 }
 

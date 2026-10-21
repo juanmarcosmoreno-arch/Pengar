@@ -7,8 +7,9 @@ import { Suricata } from '../components/Suricata';
 import { useToast } from '../components/Toast';
 import { Toggle } from '../components/Toggle';
 import { suggestRubro } from '../domain/classify';
-import { MONTHS, monthOf } from '../domain/dates';
+import { addMonths, MONTHS, monthName, monthOf, monthRange, today } from '../domain/dates';
 import { formatRate, validUsdRate, type UsdRate } from '../domain/fx';
+import { CARD_NAME_MAX, cardName, chosenCard, closingOf, hasUnnamedStatement, knownCards, sameCard, sameNameOtherCard, statementCommitments } from '../domain/installments';
 import { NBSP, parseDecimal, round2 } from '../domain/money';
 import { findDuplicates, isSpend, planillaMonths, toLocal, withoutInstallment, type StatementTx } from '../domain/statement';
 import {
@@ -20,6 +21,7 @@ import {
   learnedKeyOf,
   NOT_SPEND,
   spendRubros,
+  statementInstallments,
   statementNote,
   txRates,
   usd,
@@ -27,6 +29,7 @@ import {
   type MerchantGroup,
 } from '../domain/statementReview';
 import { capital, joinAnd, plural } from '../domain/text';
+import type { InvoiceInstallment } from '../domain/types';
 import { usdRates } from '../lib/fx';
 import { PdfPasswordError } from '../lib/pdf';
 import { isNative, isPreview } from '../lib/platform';
@@ -160,7 +163,7 @@ export function ScanStatement({ onClose }: { onClose: () => void }) {
       {leaving && (
         <ConfirmSheet
           title="¿Salir sin guardar?"
-          message="Se pierden los rubros que elegiste en esta revisión."
+          message="Se pierde lo que elegiste en esta revisión."
           confirmLabel="Salir"
           danger
           onConfirm={() => doLeave(leaving)}
@@ -179,6 +182,9 @@ interface Choice {
 }
 
 const KIND_LABEL: Partial<Record<StatementTx['kind'], string>> = { pago: 'Pago de la tarjeta', saldo: 'Saldo', credito: 'Devolución o reintegro' };
+
+/** Para elegir la tarjeta la primera vez (después se ofrecen las ya usadas) */
+const COMMON_CARDS = ['OCA', 'Itaú', 'BROU', 'Scotiabank', 'Santander'];
 
 function Review({ draft, onDone, onRetry, onDirty }: { draft: StatementDraft; onDone: () => void; onRetry: () => void; onDirty: (dirty: boolean) => void }) {
   const { data, ix, saveStatement } = useStore();
@@ -215,15 +221,50 @@ function Review({ draft, onDone, onRetry, onDirty }: { draft: StatementDraft; on
   const [touched, setTouched] = useState(false);
   useEffect(() => onDirty(touched), [touched]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // El cierre: el mes de los gastos que van con su fecha y de las cuotas que siguen
+  const closing = draft.period?.to ?? txs.map((t) => t.date).sort().at(-1);
+  // La tarjeta: la que se leyó (o el nombre que se le puso la última vez a esa) o, si no se reconoció (o está mal),
+  // la que se elija o se escriba. Va en el estado de cuenta y en la nota de cada gasto; con el mismo nombre todos los
+  // meses se juntan sus cuotas. Se pregunta si no se leyó, si no es una de las ya usadas, si ya hay otra con ese
+  // nombre que cierra otro día del mismo mes (otra tarjeta) o si ya hay un estado de cuenta sin nombre
+  const [read] = useState(() => {
+    const known = knownCards(data.invoices);
+    const remembered = chosenCard(data.invoices, draft.card);
+    const initial = remembered ?? draft.card ?? '';
+    const list = [...known, ...(draft.card ? [draft.card] : []), ...(known.length ? [] : COMMON_CARDS)];
+    return {
+      known,
+      remembered: remembered && !sameCard(remembered, draft.card) ? remembered : undefined,
+      initial,
+      unknown: !!initial && known.length > 0 && !known.some((k) => sameCard(k, initial)),
+      options: list.filter((c, i) => list.findIndex((x) => sameCard(x, c)) === i),
+    };
+  });
+  const [card, setCard] = useState(read.initial);
+  const cardLabel = card.trim() || undefined;
+  const conflict = closing ? sameNameOtherCard(data.invoices, cardLabel, closing) : undefined;
+  const unnamedTaken = !cardLabel && hasUnnamedStatement(data.invoices);
+  const [choosingCard, setChoosingCard] = useState(() => !read.initial || read.unknown || !!conflict || unnamedTaken);
+  const cardOptions = read.options;
+  const cardQuestionId = useId();
+  const cardInputId = useId();
+  const otherListId = useId();
+  const [showCuotas, setShowCuotas] = useState(false);
+
   // Lo que no cambia mientras se revisa: repetidos, meses de la planilla y en qué sección va cada comercio
   const [fixed] = useState(() => {
-    const dups = findDuplicates(txs, data.movements, firstRate);
+    const dups = findDuplicates(txs, data.movements, firstRate, { closing, invoices: data.invoices });
     const groups = groupSpends(txs, (i) => dups.has(i));
     const rubros = spendRubros(data.rubros, data.categories);
     const section: Record<string, Section> = {};
     const choice: Record<string, Choice> = {};
     for (const g of groups) {
-      const known = knownRubro(txs[g.idx[0]], rubros, data.settings.learned);
+      const first = txs[g.idx[0]];
+      // Lo que el estado de cuenta cobra sin que aparezca como movimiento: aparte, salvo que ya se haya guardado como gasto
+      const learned = data.settings.learned[learnedKeyOf(first)];
+      const known = first.balance
+        ? (learned && learned !== NOT_SPEND && rubros.some((r) => r.id === learned) ? { rubroId: learned, reason: 'aprendido' as const } : NOT_SPEND)
+        : knownRubro(first, rubros, data.settings.learned);
       section[g.key] = known === NOT_SPEND ? 'excluido' : known ? 'conocido' : 'nuevo';
       if (known && known !== NOT_SPEND) choice[g.key] = known;
     }
@@ -284,14 +325,24 @@ function Review({ draft, onDone, onRetry, onDirty }: { draft: StatementDraft; on
   const targets = rows.map((r) => txs[r.i]);
   const amounts = applyCredits(rows.map((r) => local(r.i)), targets, [...subtract].map((i) => ({ ...txs[i], amount: local(i) })));
   const movements = rows
-    .map((r, k) => ({ date: txs[r.i].date, amount: amounts[k], rubroId: r.rubroId, merchant: r.merchant, note: statementNote(txs[r.i], draft.card, rateOf(r.i)) }))
+    .map((r, k) => ({ date: txs[r.i].date, amount: amounts[k], rubroId: r.rubroId, merchant: r.merchant, note: statementNote(txs[r.i], cardLabel, rateOf(r.i)) }))
     .filter((m) => m.amount > 0);
   const total = round2(movements.reduce((s, m) => s + m.amount, 0));
+
+  // Las compras en cuotas (salvo las de los comercios que no son gastos) y lo que dejan fijo para los meses que vienen,
+  // hasta la última cuota (aunque pase de un año)
+  const cuotas = statementInstallments(txs, rates ?? [], (t) => excluded.has(t.key));
+  const now = today();
+  const lastCuota = closing ? cuotas.reduce((m, c) => { const e = addMonths(monthOf(closing), c.of - c.n); return e > m ? e : m; }, monthOf(now)) : monthOf(now);
+  const ahead = closing ? statementCommitments(cuotas, closing, { today: now, months: Math.max(12, monthRange(monthOf(now), lastCuota).length) }) : null;
+  // Sin la cotización todavía, las cuotas en dólares no se pueden pasar a pesos: cuántas faltan
+  const usdCuotasLeft = rates ? 0 : txs.filter((t) => t.installment && t.currency === 'usd' && isSpend(t) && !excluded.has(t.key)).length;
 
   const pending = (g: MerchantGroup) => !excluded.has(g.key) && !choice[g.key]?.rubroId && g.idx.some((i) => !skipMonth(i));
   const missing = fixed.groups.filter(pending).length;
 
-  const spends = txs.map((t, i) => [t, i] as const).filter(([t]) => isSpend(t));
+  // Los movimientos del estado de cuenta (sin lo que cobra aparte de ellos)
+  const spends = txs.map((t, i) => [t, i] as const).filter(([t]) => isSpend(t) && !t.balance);
   const spendTotal = round2(spends.reduce((s, [, i]) => s + local(i), 0));
   const usdSpends = spends.filter(([t]) => t.currency === 'usd');
   const usdTotal = round2(usdSpends.reduce((s, [t]) => s + t.amount, 0));
@@ -300,6 +351,15 @@ function Review({ draft, onDone, onRetry, onDirty }: { draft: StatementDraft; on
   const usdWeight = usdConverted.reduce((s, [t]) => s + Math.abs(t.amount), 0);
   const avgRate = usdWeight ? usdConverted.reduce((s, [t, i]) => s + Math.abs(t.amount) * rateOf(i), 0) / usdWeight : 0;
   const period = draft.period && `del ${dayMonth(draft.period.from)} al ${dayMonth(draft.period.to)}`;
+  // El saldo del cierre contra el anterior y los movimientos: lo que cobra sin que aparezca como movimiento va aparte
+  const balanceGroup = fixed.groups.find((g) => txs[g.idx[0]].balance);
+  const balanceNotes = (draft.balanceGaps ?? []).map((g) => {
+    const amount = g.currency === 'usd' ? usd(Math.abs(g.amount)) : money(Math.abs(g.amount));
+    if (g.amount < 0) return `El saldo del estado de cuenta da ${amount} menos que lo que leí: puede faltar una devolución o un pago que no se leyó.`;
+    return balanceGroup && section[balanceGroup.key] === 'excluido'
+      ? `Hay ${amount} del estado de cuenta que no aparecen como movimiento: los dejé aparte, como «Diferencia con el saldo», en «No son gastos». Si es un cargo del banco, tocá «Es un gasto».`
+      : `Hay ${amount} del estado de cuenta que no aparecen como movimiento: van como «Diferencia con el saldo», con los demás gastos.`;
+  });
 
   const nuevos = fixed.groups.filter((g) => section[g.key] === 'nuevo');
   const conocidos = fixed.groups.filter((g) => section[g.key] === 'conocido');
@@ -349,11 +409,16 @@ function Review({ draft, onDone, onRetry, onDirty }: { draft: StatementDraft; on
         file: draft.file,
         fileName: draft.fileName,
         mime: draft.mime,
-        card: draft.card,
-        date: draft.period?.to ?? txs.map((t) => t.date).sort().at(-1),
+        card: cardLabel,
+        date: closing,
         movements,
         learned,
         usdRate: single ?? undefined,
+        // Todas las compras en cuotas, salvo las de los comercios que no son gastos
+        installments: cuotas,
+        limit: draft.limit,
+        available: draft.available,
+        readCard: draft.card,
       });
       const saved = count ? plural(count, 'gasto guardado', 'gastos guardados') : 'Estado de cuenta guardado';
       toast(fileKept ? saved : `${saved}; el archivo no se pudo guardar en este navegador`, { label: 'Deshacer', run: undo });
@@ -434,7 +499,7 @@ function Review({ draft, onDone, onRetry, onDirty }: { draft: StatementDraft; on
         <div className="flex items-center gap-3">
           <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full border border-primary/40 bg-soft/25 text-primary"><CreditCard size={24} /></span>
           <div className="min-w-0 flex-1">
-            <div className="truncate text-xl">{draft.card ?? 'Tarjeta'}</div>
+            <div className="truncate text-xl">{cardLabel ?? 'Tarjeta sin nombre'}</div>
             <div className="truncate text-[15px] text-muted">{draft.source === 'ejemplo' ? 'De ejemplo (inventado)' : draft.fileName}</div>
           </div>
           <button className="min-h-tap min-w-tap shrink-0 px-2 text-primary" onClick={onRetry} aria-label="Elegir otro estado de cuenta">Elegir otro</button>
@@ -443,6 +508,66 @@ function Review({ draft, onDone, onRetry, onDirty }: { draft: StatementDraft; on
           {plural(spends.length, 'movimiento', 'movimientos')} de {plural(new Set(spends.map(([t]) => t.key)).size, 'comercio', 'comercios')} · {money(spendTotal)}
           {period && <> · <span className="whitespace-nowrap">{period}</span></>}
         </p>
+        {choosingCard ? (
+          <div className="mt-3 space-y-2 border-t border-line pt-3" role="group" aria-labelledby={cardQuestionId}>
+            <div>
+              <p id={cardQuestionId} className="text-lg">¿De qué tarjeta es?</p>
+              <p className="text-[15px] leading-snug text-muted">
+                {!draft.card ? 'No la reconocí en el estado de cuenta. '
+                  : read.remembered ? `Leí «${draft.card}»; la última vez le pusiste «${read.remembered}». `
+                  : read.unknown ? `Leí «${draft.card}», que no es ninguna de las que ya usaste. `
+                  : `Leí «${draft.card}». `}
+                Con el mismo nombre todos los meses, se juntan sus cuotas.
+              </p>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {cardOptions.map((c) => (
+                <button
+                  key={c}
+                  className={`max-w-full ${sameCard(card, c) && cardLabel ? 'chip-on' : 'chip'}`}
+                  aria-pressed={!!cardLabel && sameCard(card, c)}
+                  onClick={() => { setTouched(true); setCard(c); }}
+                >
+                  <span className="truncate">{c}</span>
+                </button>
+              ))}
+            </div>
+            <div>
+              <label className="label" htmlFor={cardInputId}>Nombre de la tarjeta</label>
+              <input
+                id={cardInputId}
+                className="field"
+                autoComplete="off"
+                maxLength={CARD_NAME_MAX}
+                placeholder="Itaú, OCA, BROU, Scotiabank…"
+                value={card}
+                onChange={(e) => { setTouched(true); setCard(e.target.value); }}
+              />
+            </div>
+            {conflict && closing && (
+              <p className="flex gap-2 text-[15px] leading-snug" role="status">
+                <TriangleAlert size={18} className="mt-0.5 shrink-0 text-danger" />
+                <span>
+                  Ya guardaste un estado de cuenta de {cardName(conflict)} que cierra el {dayMonth(closingOf(conflict))}. Si es otra tarjeta (la Visa y la
+                  Master del mismo banco, por ejemplo), ponele otro nombre: con el mismo, las cuotas de una tapan las de la otra.
+                </span>
+              </p>
+            )}
+            {unnamedTaken && (
+              <p className="flex gap-2 text-[15px] leading-snug" role="status">
+                <TriangleAlert size={18} className="mt-0.5 shrink-0 text-danger" />
+                <span>Ya tenés un estado de cuenta sin nombre de tarjeta: ponele un nombre a este, así no se mezclan sus cuotas (al otro se lo ponés en Más → Facturas y estados de cuenta).</span>
+              </p>
+            )}
+          </div>
+        ) : (
+          <>
+            {read.remembered && draft.card && (
+              <p className="mt-2 text-[15px] leading-snug text-muted">Leí «{draft.card}»: va como la última vez, «{read.remembered}».</p>
+            )}
+            <button className="-mb-2 min-h-tap text-[16px] text-primary" onClick={() => setChoosingCard(true)}>Cambiar la tarjeta</button>
+          </>
+        )}
       </div>
 
       {hasUsd && (
@@ -501,6 +626,21 @@ function Review({ draft, onDone, onRetry, onDirty }: { draft: StatementDraft; on
           </p>
           <Toggle checked={skipPlanilla} onChange={(v) => { setTouched(true); setSkipPlanilla(v); }} label={`No guardar las compras de ${monthsText}`} />
         </div>
+      )}
+
+      {balanceNotes.length > 0 && (
+        <div className="card space-y-2 p-4">
+          {balanceNotes.map((text) => (
+            <p key={text} className="flex gap-2 text-[16px] leading-snug">
+              <TriangleAlert size={18} className="mt-0.5 shrink-0 text-danger" />
+              <span>{text}</span>
+            </p>
+          ))}
+        </div>
+      )}
+
+      {(cuotas.length > 0 || usdCuotasLeft > 0) && ahead && (
+        <CuotasBlock cuotas={cuotas} ahead={ahead} now={now} open={showCuotas} onToggle={() => setShowCuotas((v) => !v)} usdLeft={usdCuotasLeft} />
       )}
 
       {nuevos.length > 0 ? (
@@ -568,13 +708,19 @@ function Review({ draft, onDone, onRetry, onDirty }: { draft: StatementDraft; on
         <section>
           <div className="flex items-baseline justify-between px-1">
             <h2 className="section-title">No son gastos</h2>
-            <button className="min-h-tap min-w-tap px-2 text-primary" aria-expanded={showOther} onClick={() => setShowOther((v) => !v)}>
+            <button
+              className="min-h-tap min-w-tap px-2 text-primary"
+              aria-expanded={showOther}
+              aria-controls={otherListId}
+              aria-label={showOther ? 'Ocultar lo que no son gastos' : 'Ver lo que no son gastos'}
+              onClick={() => setShowOther((v) => !v)}
+            >
               {showOther ? 'Ocultar' : 'Ver'}
             </button>
           </div>
           <p className="px-1 text-[15px] text-muted">{capital(joinAnd(otherSummary))}: no se guardan.</p>
           {showOther && (
-            <div className="card mt-2 divide-y divide-line px-4">
+            <div id={otherListId} className="card mt-2 divide-y divide-line px-4">
               {noGasto.map(groupRow)}
               {others.map(([t, i]) => {
                 const first = targets[creditTargets(targets, t)[0]];
@@ -602,15 +748,16 @@ function Review({ draft, onDone, onRetry, onDirty }: { draft: StatementDraft; on
       )}
 
       <div className="fixed inset-x-0 bottom-0 z-10 border-t border-line bg-bg/95 px-4 pt-3 pb-[max(1rem,env(safe-area-inset-bottom))] backdrop-blur">
-        {(missing > 0 || !validRate) && (
-          <p className={`pb-2 text-center text-[16px] ${missing === 0 && !badRate && bcu === undefined ? 'text-muted' : 'text-danger'}`}>
-            {missing > 0 ? `Faltan ${plural(missing, 'comercio', 'comercios')}`
+        {(missing > 0 || !validRate || unnamedTaken) && (
+          <p className={`pb-2 text-center text-[16px] ${missing === 0 && !badRate && !unnamedTaken && bcu === undefined ? 'text-muted' : 'text-danger'}`}>
+            {unnamedTaken ? 'Ponele un nombre a la tarjeta'
+              : missing > 0 ? `Faltan ${plural(missing, 'comercio', 'comercios')}`
               : badRate ? 'Revisá la cotización del dólar (por ejemplo, 40,10)'
               : bcu === undefined ? 'Buscando la cotización del dólar…'
               : 'Falta la cotización del dólar'}
           </p>
         )}
-        <button className="btn-primary w-full" disabled={missing > 0 || !validRate || saving} onClick={save}>
+        <button className="btn-primary w-full" disabled={missing > 0 || !validRate || unnamedTaken || saving} onClick={save}>
           {saving ? 'Guardando…' : movements.length ? `Guardar ${plural(movements.length, 'gasto', 'gastos')} (${money(total)})` : 'Guardar el estado de cuenta'}
         </button>
       </div>
@@ -630,5 +777,92 @@ function Review({ draft, onDone, onRetry, onDirty }: { draft: StatementDraft; on
         </Sheet>
       )}
     </div>
+  );
+}
+
+/**
+ * Las compras en cuotas del estado de cuenta: cuántas, la lista (plegada) y lo que ya queda fijo para los meses que
+ * vienen («este mes» es el estado de cuenta que todavía no cerró). `ahead` llega hasta la última cuota
+ */
+function CuotasBlock({ cuotas, ahead, now, open, onToggle, usdLeft }: {
+  cuotas: InvoiceInstallment[];
+  ahead: ReturnType<typeof statementCommitments>;
+  now: string;
+  open: boolean;
+  onToggle: () => void;
+  /** Cuántas cuotas en dólares todavía no se pasaron a pesos (falta la cotización): no están en `cuotas` */
+  usdLeft: number;
+}) {
+  const { money } = useMoney();
+  const titleId = useId();
+  const listId = useId();
+  const thisMonth = monthOf(now);
+  const next = addMonths(thisMonth, 1);
+  const at = (m: string) => ahead.total[ahead.months.indexOf(m)] ?? 0;
+  const soon = [
+    at(thisMonth) > 0 && `este mes ${money(at(thisMonth))}`,
+    at(next) > 0 && `el mes que viene ${money(at(next))}`,
+  ].filter(Boolean) as string[];
+  let later = ahead.months.map((m, k) => [m, ahead.total[k]] as const).filter(([m, v]) => m > next && v > 0);
+  let first: string;
+  if (soon.length) first = `Ya queda fijo: ${joinAnd(soon)}`;
+  else if (later.length) {
+    first = `Ya queda fijo: ${money(later[0][1])} en ${monthName(later[0][0], monthOf(now))}`;
+    later = later.slice(1);
+  } else first = 'No queda nada fijo para adelante: son las últimas cuotas.';
+  const ends = ahead.plans.reduce((m, p) => (p.ends > m ? p.ends : m), '');
+  const name = (m: string) => monthName(m, monthOf(now));
+  const shown = later.slice(0, 2).map(([m, v]) => `${name(m)} ${money(v)}`);
+  const after = later.length > 2
+    ? `${shown.join(', ')} y ${plural(later.length - 2, 'mes', 'meses')} más, hasta ${name(ends)}`
+    : joinAnd(shown);
+  const thisOne = round2(cuotas.reduce((s, c) => s + c.amount, 0));
+  // Las en dólares sin la cotización todavía: se cuentan, pero no están en los montos
+  const withoutUsd = usdLeft === 1 ? 'sin la de dólares' : 'sin las de dólares';
+  return (
+    <section className="card p-4" aria-labelledby={titleId}>
+      <div className="flex items-baseline justify-between gap-3">
+        <h2 id={titleId} className="section-title">Compras en cuotas</h2>
+        {cuotas.length > 0 && (
+          <button
+            className="-my-3 min-h-tap min-w-tap px-2 text-primary"
+            aria-expanded={open}
+            aria-controls={listId}
+            aria-label={open ? 'Ocultar las compras en cuotas' : 'Ver las compras en cuotas'}
+            onClick={onToggle}
+          >
+            {open ? 'Ocultar' : 'Ver'}
+          </button>
+        )}
+      </div>
+      <p className="text-[15px] text-muted">
+        {plural(cuotas.length + usdLeft, 'compra', 'compras')}
+        {cuotas.length > 0 && ` · ${money(thisOne)} en este estado de cuenta`}
+        {usdLeft > 0 && (cuotas.length
+          ? `, ${withoutUsd} (${usdLeft === 1 ? 'la sumo' : 'las sumo'} cuando esté la cotización)`
+          : ` en dólares: ${usdLeft === 1 ? 'la sumo' : 'las sumo'} cuando esté la cotización`)}
+      </p>
+      {cuotas.length > 0 && <p className="mt-2 text-lg leading-snug">{first}{usdLeft > 0 && soon.length ? `, ${withoutUsd}` : ''}</p>}
+      {ahead.left > 0 && (
+        <p className="text-[15px] leading-snug text-muted">
+          {after && `Después: ${after}. `}En total faltan {money(ahead.left)}{usdLeft > 0 ? `, ${withoutUsd}` : ''}.
+        </p>
+      )}
+      {open && cuotas.length > 0 && (
+        <ul id={listId} className="mt-2 divide-y divide-line border-t border-line">
+          {cuotas.map((c, i) => (
+            <li key={i} className="flex items-baseline gap-3 py-2">
+              <div className="min-w-0 flex-1">
+                <div className="truncate">{c.merchant}</div>
+                <div className="text-[14px] text-muted">
+                  cuota {c.n} de {c.of} · {c.n === c.of ? 'la última' : c.of - c.n === 1 ? 'queda 1' : `quedan ${c.of - c.n}`}{c.usd ? ` · ${usd(c.usd)}` : ''}
+                </div>
+              </div>
+              <span className="shrink-0 tabular">{money(c.amount)}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
   );
 }

@@ -9,20 +9,22 @@ import { demoOutdated, type Dataset } from '../domain/demo';
 import { exampleOutdated } from '../domain/example';
 import { distributeTotal } from '../domain/invoice';
 import { mergeImport, replaceImport, type ImportResult } from '../domain/importSheet';
+import { renameCardOf } from '../domain/installments';
 import { ledgerAfterChange } from '../domain/ledger';
 import { round2 } from '../domain/money';
 import { dueMovements, skipRecurring as skipRecurringIn } from '../domain/recurring';
 import { NOT_SPEND } from '../domain/statementReview';
 import { buildIndex, type Index } from '../domain/stats';
 import { emptyData, newId, normalizeData, templateData } from '../domain/template';
-import type { Category, Data, Goal, Invoice, InvoiceItem, Movement, Recurring, Rubro, Settings } from '../domain/types';
+import type { Category, Data, Goal, Invoice, InvoiceInstallment, InvoiceItem, Movement, Recurring, Rubro, Settings } from '../domain/types';
 import { canAutoBackup, maybeAutoBackup, onBackground, type AutoBackupRun } from '../lib/autoBackup';
 import { restoreFiles, type ReadBackup } from '../lib/backup';
 import { deleteFile, loadData, pruneFiles, saveData, saveFile, setActiveDataset } from '../lib/db';
 import { defaultDevice, loadDevice, saveDevice, type Device } from '../lib/device';
 import { loadDemo, loadExample } from '../lib/example';
+import { canLock } from '../lib/lock';
 import { isPreview } from '../lib/platform';
-import { notifyDataChanged, setSyncDemo, startSync } from '../lib/sync';
+import { holdSync, notifyDataChanged, setSyncDemo, startSync } from '../lib/sync';
 
 export interface InvoiceToSave {
   file: Blob;
@@ -50,6 +52,13 @@ export interface StatementToSave {
   /** Clave del comercio → rubro (o NOT_SPEND) */
   learned: Settings['learned'];
   usdRate?: number;
+  /** Las compras en cuotas (statementInstallments) */
+  installments: InvoiceInstallment[];
+  /** Límite de crédito y crédito disponible, si los trae */
+  limit?: number;
+  available?: number;
+  /** La tarjeta que se leyó en el estado de cuenta (para proponer el mismo nombre el mes que viene) */
+  readCard?: string;
 }
 
 interface Store {
@@ -91,6 +100,8 @@ interface Store {
   /** Guarda el archivo y los gastos, y aprende los comercios. Devuelve cuántos gastos y cómo deshacerlo */
   saveStatement: (st: StatementToSave) => Promise<{ count: number; undo: () => void; fileKept: boolean }>;
   deleteInvoice: (id: string) => void;
+  /** Otro nombre para la tarjeta de un estado de cuenta guardado (también en la nota de sus gastos) */
+  renameStatementCard: (id: string, name: string) => void;
   upsertCategory: (c: Category) => void;
   deleteCategory: (id: string, moveRubrosTo?: string) => void;
   upsertRubro: (r: Rubro) => void;
@@ -309,8 +320,16 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   // Hogar compartido (lib/sync): con los datos ya leídos, manda lo que cambia y trae lo de los demás. Sin Supabase
   // configurado (y en la vista previa) no hace nada. En el modo demo no arranca: ve solo los datos de verdad
   const demo = device.demo;
+  // Al abrir con el bloqueo prendido, el motor arranca en pausa: la pantalla de bloqueo (LockGate) se arma después (la
+  // entrada va antes) y es la que la saca al desbloquear. Solo al abrir: después la maneja LockGate
+  const opening = useRef(true);
   useEffect(() => {
-    if (!ready || loadError || demo) return;
+    if (!ready || loadError) return;
+    if (opening.current) {
+      opening.current = false;
+      if (canLock && deviceNow.current.lock.enabled && !demo) holdSync(true);
+    }
+    if (demo) return;
     return startSync({
       // El motor se congela antes de pasar al demo (setSyncDemo); si algo se escapara, falla en vez de ver lo inventado
       getData: () => {
@@ -497,11 +516,15 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         id,
         kind: 'estado',
         card: st.card,
+        ...(st.readCard ? { readCard: st.readCard } : {}),
         fileName: st.fileName,
         mime: st.mime,
         date: st.date,
         total: round2(movements.reduce((s, m) => s + m.amount, 0)),
         items: movements.map((m) => ({ description: m.merchant ?? '', amount: m.amount, rubroId: m.rubroId, date: m.date })),
+        installments: st.installments,
+        ...(st.limit != null ? { limit: st.limit } : {}),
+        ...(st.available != null ? { available: st.available } : {}),
         createdAt: now,
       };
       update((d) => ({
@@ -527,6 +550,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       }));
       whenSaved(() => deleteFile(id, set));
     },
+    renameStatementCard: (id, name) => update((d) => renameCardOf(d, id, name)),
     upsertCategory: (c) => update((d) => {
       const prev = d.categories.find((x) => x.id === c.id);
       if (!prev) return { ...d, categories: [...d.categories, c] };

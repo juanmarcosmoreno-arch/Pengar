@@ -40,7 +40,7 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
             image.centerXAnchor.constraint(equalTo: view.centerXAnchor),
             image.centerYAnchor.constraint(equalTo: view.centerYAnchor),
             image.heightAnchor.constraint(equalToConstant: 180),
-            image.widthAnchor.constraint(equalTo: image.heightAnchor, multiplier: 457.0 / 640.0),
+            image.widthAnchor.constraint(equalTo: image.heightAnchor, multiplier: 592.0 / 640.0),
         ])
         window.addSubview(view)
         cover = view

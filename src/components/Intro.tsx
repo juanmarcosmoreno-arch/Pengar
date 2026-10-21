@@ -4,7 +4,7 @@ import timing from '../assets/intro/timing.json';
 /**
  * La entrada de la app: el suricata sale del pozo, mira para los dos lados y se vuelve a meter. Son los 15 cuadros
  * dibujados a mano de docs/marca/suricata-intro.webp (scripts/intro.py los recorta y los alinea sobre el pozo) con
- * los tiempos de assets/intro/timing.json; cada cuadro entra con un fundido cortito sobre el anterior. Un toque la
+ * los tiempos de assets/intro/timing.json; cada cuadro entra con un fundido cortito mientras el anterior se va. Un toque la
  * saltea. Empieza recién con los cuadros ya decodificados: si tardan, no se muestra.
  */
 const files = import.meta.glob<string>('../assets/intro/f*.webp', { eager: true, query: '?url', import: 'default' });
@@ -88,8 +88,9 @@ export function Intro({ onLeaving, onDone }: { onLeaving: () => void; onDone: ()
               src={src}
               alt=""
               draggable={false}
-              className={`absolute inset-0 h-full w-full ${i === cur && prev >= 0 ? 'intro-frame-in' : ''}`}
-              // El cuadro nuevo entra sobre el anterior, que sigue entero debajo hasta el cambio siguiente
+              className={`absolute inset-0 h-full w-full ${i === cur ? (prev >= 0 && prev !== cur ? 'intro-frame-in' : '') : i === prev ? 'intro-frame-out' : ''}`}
+              // El cuadro nuevo entra sobre el anterior, que se va en el mismo fundido: los cuadros son transparentes
+              // fuera del dibujo, y si el anterior quedara debajo se verían los dos suricatas (como en el video)
               style={{ opacity: i === cur || i === prev ? 1 : 0, zIndex: i === cur ? 2 : i === prev ? 1 : 0 }}
             />
           ))}

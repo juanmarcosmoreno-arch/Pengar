@@ -150,7 +150,7 @@ function IntroSetting() {
     <Section title="Al abrir">
       <Toggle checked={device.intro} onChange={(intro) => updateDevice({ intro })} label="El suricata sale del pozo" />
       <p className="text-[14px] text-muted">
-        Una animación cortita cada vez que abrís Pengar (con un toque la salteás). Con «Reducir movimiento» del iPhone no se muestra.
+        Una animación cortita cada vez que abrís Pengar de cero (no al volver de otra app; con un toque la salteás). Con «Reducir movimiento» del iPhone no se muestra.
       </p>
     </Section>
   );
@@ -743,8 +743,9 @@ export function Settings({ onBack }: { onBack: () => void }) {
             void guard(() => {
               replaceAll(emptyData());
               // Como recién instalada: sin bloqueo ni aviso del día 1. El respaldo automático queda como está (con
-              // cuándo fue el último: así no pisa el de hoy, que tiene los datos de antes)
-              const { autoBackup: _same, demo: _real, ...factory } = defaultDevice();
+              // cuándo fue el último: así no pisa el de hoy, que tiene los datos de antes), y la entrada también (es
+              // solo cómo se ve al abrir)
+              const { autoBackup: _same, demo: _real, intro: _keep, ...factory } = defaultDevice();
               updateDevice(factory);
             });
           }}
