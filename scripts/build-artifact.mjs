@@ -114,6 +114,7 @@ for (const f of files.filter((x) => /\.(m?js|css)$/.test(x.path))) {
   const text = readFileSync(abs, 'utf8');
   const clean = text.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, (ch) => `\\x${ch.charCodeAt(0).toString(16).padStart(2, '0')}`);
   if (clean !== text) writeFileSync(abs, clean);
+  if (clean.includes('\uFFFD')) throw new Error(`${f.path} tiene el carácter de reemplazo U+FFFD (la publicación no lo acepta)`);
 }
 
 // pdf.js arranca su worker con una ruta relativa al módulo que lo pide (new URL(…, import.meta.url))

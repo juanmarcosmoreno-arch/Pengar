@@ -11,8 +11,12 @@ export interface Sheet {
 
 /** CSV en UTF-8 o, si no lo es (los que exportan algunos bancos), en Windows-1252 */
 function decodeText(buf: ArrayBuffer): string {
-  const utf8 = new TextDecoder().decode(buf);
-  return utf8.includes('\uFFFD') ? new TextDecoder('windows-1252').decode(buf) : utf8;
+  try {
+    // fatal: si no es UTF-8 válido, tira en vez de poner caracteres de reemplazo
+    return new TextDecoder('utf-8', { fatal: true }).decode(buf);
+  } catch {
+    return new TextDecoder('windows-1252').decode(buf);
+  }
 }
 
 /**
