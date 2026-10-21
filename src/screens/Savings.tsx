@@ -99,7 +99,7 @@ function withTransferRubro(d: Data): { data: Data; rubroId: string } {
 }
 
 function MoveToMonth({ onClose }: { onClose: () => void }) {
-  const { data, update } = useStore();
+  const { update } = useStore();
   const { money } = useMoney();
   const toast = useToast();
   const id = useId();

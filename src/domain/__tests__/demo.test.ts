@@ -5,7 +5,6 @@ import { dataKey, demoData, demoOutdated, demoTicketLines, fileIdOf, fileKey, is
 import { exampleStatementText } from '../example';
 import { importMonthlySheet, type Cell } from '../importSheet';
 import { commitments, nextMonthOutlook } from '../installments';
-import { percentLedger } from '../ledger';
 import { pendingRecurring } from '../recurring';
 import { pendingReport } from '../report';
 import { isSpend, parseStatementText } from '../statement';
