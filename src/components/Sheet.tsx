@@ -20,7 +20,8 @@ export function Sheet({ title, onClose, children, footer, tall = false }: {
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose]);
   return (
-    <div ref={ref} className="fixed inset-0 z-40 flex flex-col justify-end" role="dialog" aria-modal="true" aria-labelledby={title ? titleId : undefined}>
+    // !m-0: dentro de un space-y-* el margen de arriba dejaba una franja sin tapar
+    <div ref={ref} className="fixed inset-0 z-40 !m-0 flex flex-col justify-end" role="dialog" aria-modal="true" aria-labelledby={title ? titleId : undefined}>
       <button className="absolute inset-0 bg-black/30 animate-fade" aria-label="Cerrar" onClick={onClose} />
       <div className={`relative flex max-h-[92%] flex-col rounded-t-[28px] bg-bg shadow-2xl animate-sheet ${tall ? 'h-[92%]' : ''}`}>
         <div className="flex items-center gap-2 px-5 pt-4 pb-2">
