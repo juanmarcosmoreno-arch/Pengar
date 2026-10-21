@@ -1,12 +1,13 @@
-import { ChevronLeft, ChevronRight, Plus, Search } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Plus, Search, Trash2 } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { MovementRow } from '../components/MovementRow';
 import { DemoChip } from '../components/Demo';
-import { PageHeader } from '../components/Sheet';
+import { PageHeader, Sheet } from '../components/Sheet';
+import { useToast } from '../components/Toast';
 import { EmptyState } from '../components/Suricata';
 import { addMonths, currentMonth, dayLabel, monthLabel, monthOf } from '../domain/dates';
 import { norm } from '../domain/importSheet';
-import type { Movement } from '../domain/types';
+import type { Movement, Origin } from '../domain/types';
 import { useMoney } from '../lib/useMoney';
 import { useStore } from '../store/store';
 
@@ -22,6 +23,7 @@ export function Movements({ onAdd, onEdit, month, setMonth }: {
   const { money } = useMoney();
   const [q, setQ] = useState('');
   const [kind, setKind] = useState<KindFilter>('todos');
+  const [clearing, setClearing] = useState(false);
 
   const list = useMemo(() => {
     const nq = norm(q);
@@ -76,9 +78,14 @@ export function Movements({ onAdd, onEdit, month, setMonth }: {
             </button>
           ))}
         </div>
-        <div className="flex gap-4 text-[15px] text-muted">
+        <div className="flex items-center gap-4 text-[15px] text-muted">
           <span>Gastos {money(spent)}</span>
           <span>Ingresos {money(earned)}</span>
+          {!q && list.length > 0 && (
+            <button className="-my-2 ml-auto flex min-h-tap items-center gap-1 px-1 text-danger" onClick={() => setClearing(true)}>
+              <Trash2 size={16} /> Borrar este mes
+            </button>
+          )}
         </div>
 
         {groups.map((g) => (
@@ -94,6 +101,7 @@ export function Movements({ onAdd, onEdit, month, setMonth }: {
         )}
         <div className="h-20" />
       </div>
+      {clearing && <ClearMonth month={month} onClose={() => setClearing(false)} />}
       <button
         className="fixed right-5 bottom-[calc(env(safe-area-inset-bottom)+80px)] z-20 flex h-16 w-16 items-center justify-center rounded-full bg-primary text-on-primary shadow-lg active:scale-95"
         onClick={onAdd}
@@ -102,5 +110,51 @@ export function Movements({ onAdd, onEdit, month, setMonth }: {
         <Plus size={30} />
       </button>
     </div>
+  );
+}
+
+const FROM: { id: 'todo' | Origin; label: string }[] = [
+  { id: 'todo', label: 'Todo' },
+  { id: 'tarjeta', label: 'Estado de cuenta' },
+  { id: 'planilla', label: 'Planilla' },
+  { id: 'factura', label: 'Facturas' },
+  { id: 'manual', label: 'Anotados a mano' },
+];
+
+/** Borrar lo de un mes para volver a cargarlo: todo o solo lo que vino de un lado, con «Deshacer» */
+function ClearMonth({ month, onClose }: { month: string; onClose: () => void }) {
+  const { data, update } = useStore();
+  const { money } = useMoney();
+  const toast = useToast();
+  const [from, setFrom] = useState<'todo' | Origin>('todo');
+  const doomed = data.movements.filter((m) => monthOf(m.date) === month && (from === 'todo' || m.origin === from));
+  const total = doomed.filter((m) => m.kind === 'gasto').reduce((s, m) => s + m.amount, 0);
+  const run = () => {
+    const ids = new Set(doomed.map((m) => m.id));
+    const removed = doomed;
+    update((d) => ({ ...d, movements: d.movements.filter((m) => !ids.has(m.id)) }));
+    toast(`${removed.length === 1 ? 'Se borró 1 movimiento' : `Se borraron ${removed.length} movimientos`} de ${monthLabel(month).toLowerCase()}`, {
+      label: 'Deshacer',
+      run: () => update((d) => ({ ...d, movements: [...d.movements, ...removed.filter((m) => !d.movements.some((x) => x.id === m.id))] })),
+    });
+    onClose();
+  };
+  return (
+    <Sheet
+      title={`Borrar ${monthLabel(month).toLowerCase()}`}
+      onClose={onClose}
+      footer={<button className="btn-primary w-full bg-danger" disabled={!doomed.length} onClick={run}>{doomed.length ? `Borrar ${doomed.length === 1 ? '1 movimiento' : `${doomed.length} movimientos`}` : 'No hay nada para borrar'}</button>}
+    >
+      <p className="mb-3 text-muted">¿Qué querés borrar? Después lo podés volver a cargar.</p>
+      <div className="flex flex-wrap gap-2" role="group" aria-label="De dónde">
+        {FROM.map((o) => (
+          <button key={o.id} className={from === o.id ? 'chip-on' : 'chip'} aria-pressed={from === o.id} onClick={() => setFrom(o.id)}>{o.label}</button>
+        ))}
+      </div>
+      <p className="mt-4 text-lg">
+        {doomed.length ? `${doomed.length === 1 ? '1 movimiento' : `${doomed.length} movimientos`}${total ? ` · gastos por ${money(total)}` : ''}` : 'No hay movimientos de ese tipo este mes.'}
+      </p>
+      <p className="mt-1 text-[15px] text-muted">Los estados de cuenta y las facturas guardadas quedan (los borrás en Más → Facturas y estados de cuenta).</p>
+    </Sheet>
   );
 }

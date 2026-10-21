@@ -25,7 +25,8 @@ export function RubroPicker({ kind, value, onChange }: { kind: Kind; value?: str
     return rubros.filter((r) => counts.has(r.id)).sort((a, b) => counts.get(b.id)! - counts.get(a.id)!).slice(0, 8);
   }, [data.movements, rubros]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const filtered = q ? rubros.filter((r) => norm(r.name).includes(norm(q))) : null;
+  // También por el nombre de la categoría («ofrenda» encuentra el diezmo)
+  const filtered = q ? rubros.filter((r) => norm(`${r.name} ${data.categories.find((c) => c.id === r.categoryId)?.name ?? ''}`).includes(norm(q))) : null;
 
   const chip = (r: Rubro) => (
     <button key={r.id} type="button" className={value === r.id ? 'chip-on' : 'chip'} aria-pressed={value === r.id} onClick={() => onChange(r.id)}>

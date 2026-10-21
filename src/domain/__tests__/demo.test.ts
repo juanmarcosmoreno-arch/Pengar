@@ -89,7 +89,8 @@ describe('modo demo: los datos inventados', () => {
     expect(ledger.rows.some((r) => r.diff > 0)).toBe(true);
     expect(ledger.pending).toBeGreaterThan(0);
     // Este mes ya se dio una parte
-    expect(ledger.rows.at(-1)!.given).toBe(15000);
+    // (más una ofrenda, que va en la misma categoría)
+    expect(ledger.rows.at(-1)!.given).toBe(15500);
   });
 
   it('trae una factura del súper separada por rubro, con su ticket en PDF', () => {

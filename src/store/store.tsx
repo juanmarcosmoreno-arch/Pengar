@@ -59,6 +59,8 @@ export interface StatementToSave {
   available?: number;
   /** La tarjeta que se leyó en el estado de cuenta (para proponer el mismo nombre el mes que viene) */
   readCard?: string;
+  /** Vencimiento (el leído o el estimado) */
+  due?: string;
 }
 
 /** No se pudo cambiar de juego (o empezar algo largo): se está cambiando, o algo largo trabaja con los datos de ahora */
@@ -602,6 +604,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         installments: st.installments,
         ...(st.limit != null ? { limit: st.limit } : {}),
         ...(st.available != null ? { available: st.available } : {}),
+        ...(st.due ? { due: st.due } : {}),
         createdAt: now,
       };
       update((d) => ({

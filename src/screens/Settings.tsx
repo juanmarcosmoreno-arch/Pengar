@@ -171,6 +171,10 @@ function IntroSetting() {
       <p className="text-[14px] text-muted">
         Una animación cortita cada vez que abrís Pengar de cero (no al volver de otra app; con un toque la salteás). Con «Reducir movimiento» del iPhone no se muestra.
       </p>
+      <Toggle checked={device.forecast} onChange={(forecast) => updateDevice({ forecast })} label="Avisarme si no llego a fin de mes" />
+      <p className="text-[14px] text-muted">
+        Desde el día 8, Inicio te avisa si al ritmo de este mes (con los fijos que faltan) no te alcanza.
+      </p>
     </Section>
   );
 }

@@ -1,5 +1,6 @@
 /** Gastos fijos: lo que se repite todos los meses. Cuáles faltan anotar en un mes y cuáles sugerir según el historial. */
 import { addMonths, monthOf } from './dates';
+import { estimateRecurring } from './alerts';
 import { round2 } from './money';
 import { newId } from './template';
 import type { Data, Kind, Movement, Recurring } from './types';
@@ -37,7 +38,8 @@ export function pendingRecurring(data: Data, month: string, todayISO: string): P
   const recorded = new Set(data.movements.filter((m) => monthOf(m.date) === month).map((m) => `${m.rubroId}|${m.kind}`));
   return data.recurring
     .filter((r) => !r.paused && (!r.doneThrough || r.doneThrough < month) && rubros.has(r.rubroId) && !recorded.has(`${r.rubroId}|${r.kind}`))
-    .map((r) => ({ ...r, due: month < current || (month === current && r.day <= dayOf(todayISO)) }))
+    // Un fijo que varía (UTE, OSE) va con el promedio de los últimos meses
+    .map((r) => ({ ...r, amount: estimateRecurring(data, r, month), due: month < current || (month === current && r.day <= dayOf(todayISO)) }))
     .sort((a, b) => a.day - b.day || b.amount - a.amount);
 }
 

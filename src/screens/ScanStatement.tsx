@@ -36,6 +36,7 @@ import { isNative, isPreview } from '../lib/platform';
 import { exampleStatement, readStatement, type StatementDraft } from '../lib/readStatement';
 import { suggestRubros, type SuggestReason } from '../lib/suggest';
 import { useMoney } from '../lib/useMoney';
+import { askDuePermission } from '../lib/dueReminders';
 import { useStore } from '../store/store';
 
 const AI_NAME: Partial<Record<SuggestReason, string>> = { apple: 'Apple Intelligence', claude: 'Claude' };
@@ -310,6 +311,10 @@ function Review({ draft, onDone, onRetry, onDirty }: { draft: StatementDraft; on
   const [showKnown, setShowKnown] = useState(false);
   const [showOther, setShowOther] = useState(false);
   const [picking, setPicking] = useState<MerchantGroup | null>(null);
+  // «Revisar de a uno»: los comercios nuevos, uno por vez
+  const [queue, setQueue] = useState<string[] | null>(null);
+  const [pos, setPos] = useState(0);
+  const [otherRubro, setOtherRubro] = useState(false);
   // Cuántos pedidos de sugerencias hay en curso
   const [suggesting, setSuggesting] = useState(0);
   const [saving, setSaving] = useState(false);
@@ -464,7 +469,10 @@ function Review({ draft, onDone, onRetry, onDirty }: { draft: StatementDraft; on
         limit: draft.limit,
         available: draft.available,
         readCard: draft.card,
+        due: closing ? paymentDate(closing, draft.due) : undefined,
       });
+      // Para avisar el día del vencimiento (la primera vez, iOS pregunta)
+      void askDuePermission();
       const saved = count ? plural(count, 'gasto guardado', 'gastos guardados') : 'Estado de cuenta guardado';
       toast(fileKept ? saved : `${saved}; el archivo no se pudo guardar en este navegador`, { label: 'Deshacer', run: undo });
       onDone();
@@ -705,7 +713,10 @@ function Review({ draft, onDone, onRetry, onDirty }: { draft: StatementDraft; on
 
       {nuevos.length > 0 ? (
         <section>
-          <h2 className="section-title px-1">Nuevos: decime de qué rubro son</h2>
+          <div className="flex items-baseline justify-between gap-2 px-1">
+            <h2 className="section-title">Nuevos: decime de qué rubro son</h2>
+            {nuevos.length > 1 && <button className="chip shrink-0 text-primary" onClick={() => { setQueue(nuevos.map((g) => g.key)); setPos(0); setOtherRubro(false); }}>Revisar de a uno</button>}
+          </div>
           <p className="px-1 text-[15px] text-muted">Lo que elijas queda aprendido para los próximos meses.</p>
           {suggesting > 0 && (
             <p className="mt-1 flex items-center gap-2 px-1 text-[15px] text-muted">
@@ -821,6 +832,52 @@ function Review({ draft, onDone, onRetry, onDirty }: { draft: StatementDraft; on
           {saving ? 'Guardando…' : movements.length ? `Guardar ${plural(movements.length, 'gasto', 'gastos')} (${money(total)})` : 'Guardar el estado de cuenta'}
         </button>
       </div>
+
+      {queue && (() => {
+        const g = groups.find((x) => x.key === queue[pos]);
+        const close = () => { setQueue(null); setOtherRubro(false); };
+        const next = () => { setOtherRubro(false); if (pos + 1 >= queue.length) close(); else setPos(pos + 1); };
+        if (!g) return null;
+        const pick = (rubroId: string) => {
+          setTouched(true);
+          if (excluded.has(g.key)) include(g);
+          setChoice((c) => ({ ...c, [g.key]: { rubroId } }));
+          next();
+        };
+        const c = choice[g.key];
+        const ai = c?.reason ? AI_NAME[c.reason] : undefined;
+        // Los rubros más usados (y el sugerido, si hay), para elegir con un toque
+        const spend = spendRubros(data.rubros, data.categories);
+        const uses = new Map<string, number>();
+        for (const m of data.movements) if (m.kind === 'gasto') uses.set(m.rubroId, (uses.get(m.rubroId) ?? 0) + 1);
+        const top = spend.filter((r) => r.id !== c?.rubroId).sort((a, b) => (uses.get(b.id) ?? 0) - (uses.get(a.id) ?? 0)).slice(0, 6);
+        const list = g.idx.map((i) => txs[i]);
+        return (
+          <Sheet title={`${pos + 1} de ${queue.length}`} onClose={close}>
+            <div className="space-y-4">
+              <div>
+                <div className="text-2xl leading-tight">{g.merchant}</div>
+                <div className="text-lg">{money(groupTotal(g))} <span className="text-[15px] text-muted">· {plural(list.length, 'compra', 'compras')}{list.some((t) => t.installment) ? ` · cuota ${[...new Set(list.map((t) => t.installment).filter(Boolean))].join(', ')}` : ''}</span></div>
+              </div>
+              {c?.rubroId && (
+                <button className="chip-on" onClick={() => pick(c.rubroId!)}>
+                  {ai ? <Sparkles size={15} /> : null} {ix.rubro.get(c.rubroId)?.name}{ai ? ` (sugerido por ${ai})` : ''}
+                </button>
+              )}
+              <div className="flex flex-wrap gap-2">
+                {top.map((r) => <button key={r.id} className="chip" onClick={() => pick(r.id)}>{r.name}</button>)}
+                <button className="chip text-primary" onClick={() => setOtherRubro((v) => !v)}>Otro rubro…</button>
+              </div>
+              {otherRubro && <RubroPicker kind="gasto" value={c?.rubroId} onChange={pick} />}
+              <div className="flex flex-wrap gap-2 border-t border-line pt-3">
+                <button className="chip text-muted" onClick={() => { exclude(g.key); next(); }}>No es un gasto</button>
+                <button className="chip text-muted" onClick={next}>Saltar por ahora</button>
+                {pos > 0 && <button className="chip text-muted" onClick={() => { setOtherRubro(false); setPos(pos - 1); }}>Atrás</button>}
+              </div>
+            </div>
+          </Sheet>
+        );
+      })()}
 
       {picking && (
         <Sheet title={picking.merchant} onClose={() => setPicking(null)}>

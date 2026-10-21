@@ -119,6 +119,9 @@ export interface Invoice {
   /** Estado de cuenta: límite de crédito y crédito disponible, si los trae */
   limit?: number;
   available?: number;
+  /** Estado de cuenta: el vencimiento (cuándo se paga) y si ya se marcó pagado */
+  due?: string;
+  paid?: boolean;
   createdAt: number;
 }
 

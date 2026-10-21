@@ -1,5 +1,6 @@
 import { Calculator as CalcIcon, CreditCard, Paperclip, Trash2, Users } from 'lucide-react';
 import { useEffect, useId, useRef, useState } from 'react';
+import { aboveAverage } from '../domain/alerts';
 import { monthOf, today } from '../domain/dates';
 import { formatRate, isUsdSymbol, splitUsdNote, validUsdRate, withUsdNote } from '../domain/fx';
 import { formatMoney, parseAmount, parseDecimal, round2 } from '../domain/money';
@@ -129,7 +130,12 @@ export function MovementSheet({ movement, kind: initialKind = 'gasto', preset, o
         // Sin la cuenta en dólares: el mes que viene la cotización es otra
         : newRecurring({ rubroId: rubroId!, kind, amount: amount!, day, note: splitUsdNote(fields.note).rest || undefined, doneThrough: monthOf(date) }, today()));
     }
-    toast(movement ? 'Cambios guardados' : `${kind === 'gasto' ? 'Gasto' : 'Ingreso'} anotado: ${formatMoney(amount!, c)}`);
+    // Un fijo que vino bastante más alto que otros meses (UTE, OSE): se avisa
+    const above = kind === 'gasto' && !movement ? aboveAverage(data, rubroId!, amount!, date) : null;
+    const rubroName = data.rubros.find((r) => r.id === rubroId)?.name ?? 'Este gasto';
+    toast(above
+      ? `${rubroName} vino ${Math.round(above.pct * 100)} % más alto que el promedio (${formatMoney(above.average, c)})`
+      : movement ? 'Cambios guardados' : `${kind === 'gasto' ? 'Gasto' : 'Ingreso'} anotado: ${formatMoney(amount!, c)}`);
     onSaved?.();
     onClose();
   };

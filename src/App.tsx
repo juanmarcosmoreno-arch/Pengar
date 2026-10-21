@@ -20,6 +20,7 @@ import { Home } from './screens/Home';
 import { Household } from './screens/Household';
 import { InstallmentsScreen } from './screens/Installments';
 import { Invoices } from './screens/Invoices';
+import { syncDueReminders } from './lib/dueReminders';
 import { More, type MorePage } from './screens/More';
 import { Savings } from './screens/Savings';
 import { MonthReport } from './screens/MonthReport';
@@ -92,6 +93,8 @@ function AppContent() {
   const [report, setReport] = useState<string | null>(null);
 
   useEffect(scrollToTop, [tab, page]);
+  // Los avisos del vencimiento de las tarjetas, al día con los estados de cuenta (y con «Ya pagué»)
+  useEffect(() => { if (!data.settings.demo) void syncDueReminders(data.invoices); }, [data.invoices, data.settings.demo]);
   // Tocar el aviso del día 1 abre el resumen del mes que cerró
   useEffect(() => onReminderTap(() => setReport(addMonths(currentMonth(), -1))), []);
   // El aviso programado en el iPhone sigue al ajuste de este teléfono (también después de borrar todo)
@@ -129,7 +132,7 @@ function AppContent() {
 
   let content: React.ReactNode;
   // «Tarjetas y cuotas» también se abre desde Inicio: «volver» lleva a donde estaba
-  if (page && (tab === 'mas' || page === 'cuotas')) {
+  if (page && (tab === 'mas' || page === 'cuotas' || page === 'ahorro')) {
     content = {
       ahorro: <Savings onBack={back} />,
       presupuesto: <Budget onBack={back} />,
@@ -161,6 +164,7 @@ function AppContent() {
         onGo={(where) => (where === 'movimientos' ? go('movimientos') : statsMonthView(currentMonth()))}
         onReport={setReport}
         onInstallments={() => setPage('cuotas')}
+        onSavings={() => setPage('ahorro')}
       />
     );
   } else if (tab === 'movimientos') {

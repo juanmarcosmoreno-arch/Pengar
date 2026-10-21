@@ -225,6 +225,7 @@ export function demoData(res: Pick<ImportResult, 'categories' | 'rubros' | 'move
   // El diezmo: unos meses se dio de menos y otro de más, se cuenta desde hace un año con un saldo de antes, y este mes
   // ya se dio una parte
   const tithe = rubro('Diezmo');
+  const OFRENDAS_ID = 'r-demo-ofrendas';
   const titheCategory = tithe && base.categories.find((c) => c.id === tithe.categoryId);
   const categories = base.categories.map((c) =>
     c.id === titheCategory?.id && c.budget.type === 'percentIncome' ? { ...c, ledger: { from: addMonths(month, -12), opening: 4500 } } : c);
@@ -237,6 +238,11 @@ export function demoData(res: Pick<ImportResult, 'categories' | 'rubros' | 'move
     }
     const date = day(scaled(3, todayDay));
     movements.push({ id: newId('m'), date, amount: 15000, kind: 'gasto', rubroId: tithe.id, origin: 'manual', createdAt: new Date(`${date}T12:30:00`).getTime() });
+    // Las ofrendas, aparte del diezmo (en la misma categoría)
+    for (const [k, amount] of [[-2, 800], [-1, 1200], [0, 500]] as const) {
+      const d = k === 0 ? day(scaled(5, todayDay)) : `${addMonths(month, k)}-14`;
+      movements.push({ id: newId('m'), date: d, amount, kind: 'gasto', rubroId: OFRENDAS_ID, origin: 'manual', createdAt: new Date(`${d}T11:00:00`).getTime() });
+    }
   }
 
   // La factura del súper, separada por rubro, con su ticket en PDF (los estados de cuenta de las tarjetas ya vienen del ejemplo)
@@ -269,6 +275,8 @@ export function demoData(res: Pick<ImportResult, 'categories' | 'rubros' | 'move
     ...base,
     datasetId: newId('d'),
     categories,
+    // El rubro «Ofrendas», en la categoría del diezmo
+    rubros: tithe ? [...base.rubros, { id: OFRENDAS_ID, name: 'Ofrendas', categoryId: tithe.categoryId, keywords: ['ofrenda'] }] : base.rubros,
     movements,
     invoices,
     recurring,

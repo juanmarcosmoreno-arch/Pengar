@@ -8,7 +8,9 @@ import { CategoryBubble } from '../components/Icon';
 import { Suricata, type Pose } from '../components/Suricata';
 import { MovementRow } from '../components/MovementRow';
 import { useToast } from '../components/Toast';
+import { cardReminders, monthForecast } from '../domain/alerts';
 import { addMonths, currentMonth, monthLabel, monthName, today } from '../domain/dates';
+import { dayMonth } from '../domain/statementReview';
 import { commitments, nextMonthOutlook } from '../domain/installments';
 import { formatPct } from '../domain/money';
 import { pendingRecurring, type PendingRecurring } from '../domain/recurring';
@@ -22,7 +24,7 @@ import { useStore } from '../store/store';
 // El suricata saluda solo la primera vez que se abre Inicio en la sesión
 let greeted = false;
 
-export function Home({ onAdd, onScan, onStatement, onEdit, onRecord, onGo, onReport, onInstallments }: {
+export function Home({ onAdd, onScan, onStatement, onEdit, onRecord, onGo, onReport, onInstallments, onSavings }: {
   onAdd: (kind: Kind) => void;
   onScan: () => void;
   /** Estado de cuenta de la tarjeta */
@@ -35,6 +37,8 @@ export function Home({ onAdd, onScan, onStatement, onEdit, onRecord, onGo, onRep
   onReport: (month: string) => void;
   /** Abrir «Tarjetas y cuotas» */
   onInstallments: () => void;
+  /** Abrir «Ahorro» */
+  onSavings: () => void;
 }) {
   const { data, ix } = useStore();
   const { money } = useMoney();
@@ -118,6 +122,10 @@ export function Home({ onAdd, onScan, onStatement, onEdit, onRecord, onGo, onRep
           </button>
         ))}
       </section>
+
+      <CardReminders onStatement={onStatement} />
+
+      <ForecastCard onSavings={onSavings} />
 
       <DueRecurring onRecord={onRecord} />
 
@@ -249,7 +257,7 @@ function DueRecurring({ onRecord }: { onRecord: (r: Recurring) => void }) {
               </div>
               <div className="ml-auto flex shrink-0 items-center gap-3">
                 <button className="min-h-tap px-1 text-[16px] text-muted" onClick={() => skip(r)} aria-label={`Saltar ${name(r)}`}>Saltar</button>
-                <button className="chip text-primary" onClick={() => onRecord(original(r))} aria-label={`Anotar ${name(r)}`}>Anotar</button>
+                <button className="chip text-primary" onClick={() => onRecord({ ...original(r), amount: r.amount })} aria-label={`Anotar ${name(r)}`}>Anotar</button>
               </div>
             </div>
           );
@@ -259,5 +267,53 @@ function DueRecurring({ onRecord }: { onRecord: (r: Recurring) => void }) {
         <p className="border-t border-line py-2 text-[15px] text-muted">Más adelante: {laterText(later, name)}</p>
       )}
     </section>
+  );
+}
+
+/** «Al ritmo de este mes no llegás»: desde el día 8 y hasta el anteúltimo, si se puede apagar en Ajustes */
+function ForecastCard({ onSavings }: { onSavings: () => void }) {
+  const { data, ix, device } = useStore();
+  const { money } = useMoney();
+  const now = today();
+  const day = Number(now.slice(8, 10));
+  const f = useMemo(() => monthForecast(data, ix, now), [data, ix, now]);
+  if (!device.forecast || data.settings.example || day < 8 || f.end >= 0) return null;
+  return (
+    <section className="card flex items-start gap-3 border-danger/40 p-4">
+      <Suricata pose="cara-preocupado" size={56} className="shrink-0" />
+      <div className="min-w-0 flex-1">
+        <div className="text-xl leading-tight">Al ritmo de este mes te faltarían {money(-f.end)}</div>
+        <div className="mt-1 text-[15px] leading-snug text-muted">
+          En el día a día llevás {money(f.daily)}; si seguís así, a fin de mes serían {money(f.dailyEnd)}
+          {f.pendingFixed > 0 ? `, más ${money(f.pendingFixed)} de fijos que faltan` : ''}.
+        </div>
+        <button className="chip mt-2 text-primary" onClick={onSavings}>Pasar del ahorro</button>
+      </div>
+    </section>
+  );
+}
+
+/** Tarjetas: subir el estado de cuenta cuando ya cerró, y no olvidarse de pagarlo cuando vence */
+function CardReminders({ onStatement }: { onStatement: () => void }) {
+  const { data, update } = useStore();
+  const list = cardReminders(data.invoices, today());
+  if (!list.length) return null;
+  const paid = (id: string) => update((d) => ({ ...d, invoices: d.invoices.map((i) => (i.id === id ? { ...i, paid: true } : i)) }));
+  return (
+    <>
+      {list.map((r) => (
+        <section key={`${r.kind}-${r.invoice.id}`} className={`card flex items-center gap-3 p-4 ${r.kind === 'pagar' ? 'border-danger/40' : ''}`}>
+          <CreditCard size={26} className={`shrink-0 ${r.kind === 'pagar' ? 'text-danger' : 'text-primary'}`} />
+          <div className="min-w-0 flex-1">
+            <div className="text-lg leading-tight">
+              {r.kind === 'subir' ? `Ya cerró ${r.card}: subí el estado de cuenta` : `${r.date === today() ? 'Hoy vence' : `Vence el ${dayMonth(r.date)}`} ${r.card}: no te olvides de pagar`}
+            </div>
+          </div>
+          {r.kind === 'subir'
+            ? <button className="chip shrink-0 text-primary" onClick={onStatement}>Subir</button>
+            : <button className="chip shrink-0 text-primary" onClick={() => paid(r.invoice.id)}>Ya pagué</button>}
+        </section>
+      ))}
+    </>
   );
 }
