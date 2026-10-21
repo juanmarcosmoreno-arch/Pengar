@@ -81,16 +81,9 @@ describe('modo demo: los datos inventados', () => {
     }
   });
 
-  it('el diezmo tiene historial: se cuenta desde hace un año, con saldo inicial, meses de menos y de más', () => {
-    const tithe = data.categories.find((c) => c.budget.type === 'percentIncome')!;
-    expect(tithe.ledger).toEqual({ from: '2025-10', opening: 4500 });
-    const ledger = percentLedger(data, ix, tithe.id, '2026-10');
-    expect(ledger.rows.some((r) => r.diff < 0)).toBe(true);
-    expect(ledger.rows.some((r) => r.diff > 0)).toBe(true);
-    expect(ledger.pending).toBeGreaterThan(0);
-    // Este mes ya se dio una parte
-    // (más una ofrenda, que va en la misma categoría)
-    expect(ledger.rows.at(-1)!.given).toBe(15500);
+  it('no trae diezmo ni ofrendas', () => {
+    expect(data.categories.some((c) => c.budget.type === 'percentIncome' || /diezmo|ofrenda/i.test(c.name))).toBe(false);
+    expect(data.rubros.some((r) => /diezmo|ofrenda/i.test(r.name))).toBe(false);
   });
 
   it('trae una factura del súper separada por rubro, con su ticket en PDF', () => {

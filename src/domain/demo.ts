@@ -1,7 +1,7 @@
 /**
  * Modo demo: datos inventados para mostrarle la app a otra persona sin que vea los tuyos. Van guardados aparte de los de
  * verdad (otra clave y otro prefijo para los archivos: lib/db) y el ajuste de este teléfono dice cuál se ve (lib/device).
- * Son los datos de ejemplo más lo que hace lucir la app: gastos fijos para anotar, el diezmo con historial, una factura
+ * Son los datos de ejemplo (sin diezmo ni ofrendas) más lo que hace lucir la app: gastos fijos para anotar, una factura
  * guardada (un ticket en PDF hecho acá) y los comercios del estado de cuenta de ejemplo ya aprendidos.
  */
 import { learnFrom } from './classify';
@@ -185,11 +185,25 @@ export interface DemoSet {
 
 /**
  * Arma el demo: los datos de ejemplo (la planilla hasta el mes pasado, lo anotado este mes, la meta y «Ana») con
- * gastos fijos, el diezmo con historial, una factura con su ticket en PDF y lo aprendido de los comercios. El resumen
+ * gastos fijos, una factura con su ticket en PDF y lo aprendido de los comercios. El resumen
  * del mes pasado queda sin abrir (la tarjeta de Inicio). No es el ejemplo de la bienvenida: lleva `settings.demo`
  */
+function withoutTithe(d: Data): Data {
+  const cats = new Set(d.categories.filter((c) => c.budget.type === 'percentIncome' || /diezmo|ofrenda/i.test(norm(c.name))).map((c) => c.id));
+  const rubros = new Set(d.rubros.filter((r) => cats.has(r.categoryId) || /diezmo|ofrenda/i.test(norm(r.name))).map((r) => r.id));
+  return {
+    ...d,
+    categories: d.categories.filter((c) => !cats.has(c.id)),
+    rubros: d.rubros.filter((r) => !rubros.has(r.id)),
+    movements: d.movements.filter((m) => !rubros.has(m.rubroId)),
+    recurring: d.recurring.filter((r) => !rubros.has(r.rubroId)),
+    settings: { ...d.settings, learned: Object.fromEntries(Object.entries(d.settings.learned).filter(([, v]) => !rubros.has(v))) },
+  };
+}
+
 export function demoData(res: Pick<ImportResult, 'categories' | 'rubros' | 'movements'>, todayISO: string): DemoSet {
-  const base = exampleData(res, todayISO);
+  // Sin diezmo ni ofrendas: la demo es para mostrarle la app a cualquiera
+  const base = withoutTithe(exampleData(res, todayISO));
   const month = monthOf(todayISO);
   const todayDay = Number(todayISO.slice(8, 10));
   const rubro = (name: string): Rubro | undefined => base.rubros.find((r) => !r.archived && norm(r.name) === norm(name));
@@ -222,29 +236,6 @@ export function demoData(res: Pick<ImportResult, 'categories' | 'rubros' | 'move
     }
   }
 
-  // El diezmo: unos meses se dio de menos y otro de más, se cuenta desde hace un año con un saldo de antes, y este mes
-  // ya se dio una parte
-  const tithe = rubro('Diezmo');
-  const OFRENDAS_ID = 'r-demo-ofrendas';
-  const titheCategory = tithe && base.categories.find((c) => c.id === tithe.categoryId);
-  const categories = base.categories.map((c) =>
-    c.id === titheCategory?.id && c.budget.type === 'percentIncome' ? { ...c, ledger: { from: addMonths(month, -12), opening: 4500 } } : c);
-  if (tithe) {
-    const factor: Record<string, number> = { [addMonths(month, -4)]: 0.8, [addMonths(month, -3)]: 0.75, [addMonths(month, -2)]: 1.2 };
-    for (let i = 0; i < movements.length; i++) {
-      const m = movements[i];
-      const f = m.rubroId === tithe.id ? factor[monthOf(m.date)] : undefined;
-      if (f) movements[i] = { ...m, amount: Math.round(m.amount * f) };
-    }
-    const date = day(scaled(3, todayDay));
-    movements.push({ id: newId('m'), date, amount: 15000, kind: 'gasto', rubroId: tithe.id, origin: 'manual', createdAt: new Date(`${date}T12:30:00`).getTime() });
-    // Las ofrendas, aparte del diezmo (en la misma categoría)
-    for (const [k, amount] of [[-2, 800], [-1, 1200], [0, 500]] as const) {
-      const d = k === 0 ? day(scaled(5, todayDay)) : `${addMonths(month, k)}-14`;
-      movements.push({ id: newId('m'), date: d, amount, kind: 'gasto', rubroId: OFRENDAS_ID, origin: 'manual', createdAt: new Date(`${d}T11:00:00`).getTime() });
-    }
-  }
-
   // La factura del súper, separada por rubro, con su ticket en PDF (los estados de cuenta de las tarjetas ya vienen del ejemplo)
   let learned: Settings['learned'] = { ...base.settings.learned };
   const invoices: Invoice[] = [...base.invoices];
@@ -274,9 +265,6 @@ export function demoData(res: Pick<ImportResult, 'categories' | 'rubros' | 'move
   const data = normalizeData({
     ...base,
     datasetId: newId('d'),
-    categories,
-    // El rubro «Ofrendas», en la categoría del diezmo
-    rubros: tithe ? [...base.rubros, { id: OFRENDAS_ID, name: 'Ofrendas', categoryId: tithe.categoryId, keywords: ['ofrenda'] }] : base.rubros,
     movements,
     invoices,
     recurring,
