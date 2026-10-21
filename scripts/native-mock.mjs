@@ -5,7 +5,8 @@
 //   window.__lock.calls  los pedidos (su `reason`), window.__lock.cover  cada setPrivacyCover({ enabled })
 //   window.__app.emit('appStateChange', { isActive }) / emit('pause')  lo que avisa el iPhone al salir y volver
 //   window.__backup.files  Map nombre → { data, modified }; .iCloud  si van a iCloud Drive; .writes  lo escrito;
-//   .fail = 'write' | 'list' | 'read'  ese método falla (hasta volverlo a null). Queda entre recargas (sessionStorage)
+//   .fail = 'write' | 'list' | 'read'  ese método falla (hasta volverlo a null); .slow = ms  cada write tarda eso (iCloud
+//   lento). Los archivos quedan entre recargas (sessionStorage)
 export async function mockNative(ctx, { biometry = 'faceID', available = true, iCloud = false } = {}) {
   await ctx.addInitScript(({ biometry, available, iCloud }) => {
     const listeners = new Map();
@@ -33,6 +34,7 @@ export async function mockNative(ctx, { biometry = 'faceID', available = true, i
       iCloud: saved?.iCloud ?? iCloud,
       writes: saved?.writes ?? [],
       fail: null,
+      slow: 0,
       save() {
         sessionStorage.setItem(KEY, JSON.stringify({ files: [...backup.files], iCloud: backup.iCloud, writes: backup.writes }));
       },
@@ -43,10 +45,13 @@ export async function mockNative(ctx, { biometry = 'faceID', available = true, i
       if (backup.fail === method) return Promise.reject(Object.assign(new Error(`No se pudo ${method === 'write' ? 'guardar' : 'leer'} el respaldo: no hay lugar.`), { code: method }));
       if (method === 'status') return Promise.resolve({ iCloud: backup.iCloud, location: backup.iCloud ? 'icloud' : 'local', folder: backupFolder() });
       if (method === 'write') {
-        backup.files.set(options.name, { data: options.data, modified: Date.now() });
-        backup.writes.push(options.name);
-        backup.save();
-        return Promise.resolve({ location: backup.iCloud ? 'icloud' : 'local' });
+        const done = () => {
+          backup.files.set(options.name, { data: options.data, modified: Date.now() });
+          backup.writes.push(options.name);
+          backup.save();
+          return { location: backup.iCloud ? 'icloud' : 'local' };
+        };
+        return backup.slow ? new Promise((r) => setTimeout(() => r(done()), backup.slow)) : Promise.resolve(done());
       }
       if (method === 'list') {
         const files = [...backup.files].map(([name, f]) => ({ name, size: f.data.length, modified: f.modified })).sort((a, b) => b.modified - a.modified);

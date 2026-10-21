@@ -94,6 +94,10 @@ select {
   .tap-area::after {
     inset: -5px 0;
   }
+  /* Algo de 30 px de alto (el chip «Demo»): 7 px arriba y abajo para llegar a 44 */
+  .tap-area-44::after {
+    inset: -7px 0;
+  }
   .section-title {
     @apply text-xl text-ink;
   }

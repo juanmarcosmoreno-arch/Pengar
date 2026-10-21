@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { DemoRepair } from './components/Demo';
 import { Intro, introAllowed } from './components/Intro';
 import { LockGate } from './components/LockScreen';
 import { MovementSheet, type MovementPreset } from './components/MovementSheet';
@@ -6,6 +7,7 @@ import { Suricata } from './components/Suricata';
 import { TabBar, type Tab } from './components/TabBar';
 import { ToastProvider } from './components/Toast';
 import { addMonths, currentMonth, monthOf, today } from './domain/dates';
+import { isDemoData } from './domain/demo';
 import { recurringDate, recurringMovementId } from './domain/recurring';
 import type { Kind, Movement } from './domain/types';
 import { onReminderTap, syncReminder } from './lib/reportReminder';
@@ -74,7 +76,7 @@ export default function App() {
 }
 
 function AppContent() {
-  const { data, device, ready, loadError, retryLoad, saveError, saveNow, markRecurring } = useStore();
+  const { data, device, demo, ready, loadError, retryLoad, saveError, saveNow, markRecurring } = useStore();
   const [tab, setTab] = useState<Tab>('inicio');
   const [page, setPage] = useState<MorePage | null>(null);
   const [editing, setEditing] = useState<Editing>(null);
@@ -106,6 +108,8 @@ function AppContent() {
 
   if (!ready) return null;
   if (loadError) return <LoadError onRetry={retryLoad} />;
+  // En el modo demo nunca la bienvenida (ofrece restaurar un respaldo de verdad) ni datos sin la marca del demo: se rehacen
+  if (demo && !isDemoData(data)) return <LockGate><ToastProvider><DemoRepair /></ToastProvider></LockGate>;
   // El mismo LockGate en la bienvenida y en la app: al terminar la bienvenida no se vuelve a bloquear
   if (!data.settings.onboarded) return <LockGate><ToastProvider>{saveError && <SaveError onRetry={saveNow} />}<Welcome /></ToastProvider></LockGate>;
 

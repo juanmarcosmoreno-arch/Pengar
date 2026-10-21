@@ -1,7 +1,7 @@
 import { ChevronRight, Cloud, CloudUpload, Download, HardDrive, LockKeyhole, Presentation, RefreshCw, Smartphone, Sparkles, Upload } from 'lucide-react';
 import { useEffect, useId, useRef, useState } from 'react';
 import { ConfirmSheet, NoticeSheet } from '../components/ConfirmSheet';
-import { DEMO_EXPLAINED, useExitDemo } from '../components/Demo';
+import { DEMO_EXPLAINED, exitWith, NO_PASSCODE, useExitDemo, useExitLock } from '../components/Demo';
 import { ImportFlow, ImportFormatHelp } from '../components/ImportFlow';
 import { PageHeader, Sheet } from '../components/Sheet';
 import { useToast } from '../components/Toast';
@@ -23,29 +23,48 @@ import { cachedUsdRateToday, refreshUsdRate, usdRateToday, type UsdQuote } from 
 import { authenticate, canLock, lockAvailability, unlockName, type LockAvailability } from '../lib/lock';
 import { isNative, isPreview } from '../lib/platform';
 import { household as hogar, loadInvoiceFile, useSync } from '../lib/sync';
-import { useStore } from '../store/store';
+import { DatasetBusy, DatasetChanged, useStore } from '../store/store';
 import { activeHousehold, sharedNote } from './Household';
+
+/** Lo confirmado era para tus datos y mientras tanto se pasó al modo demo */
+const CHANGED = 'Pasaste al modo demo mientras tanto: no se tocó nada';
+/** Se está entrando o saliendo del modo demo */
+const SWITCHING = 'Se están cambiando los datos que se ven: probá de nuevo en un momento';
 
 /**
  * Antes de reemplazar todos los datos (borrar o restaurar): en un hogar, lo que falta mandar se manda; con el
- * respaldo automático, se guarda uno con lo de ahora (el de hoy puede ser de la mañana). Si no se pudo, pregunta
+ * respaldo automático, se guarda uno con lo de ahora (el de hoy puede ser de la mañana). Si no se pudo, pregunta.
+ * `run` recibe los datos de cuando se confirmó (store: epoch) y no corre si ya se ven otros; mientras se espera, no se
+ * puede pasar al modo demo (hold)
  */
 function useBeforeReplace() {
-  const { data, device, backupNow } = useStore();
+  const { data, device, backupNow, epochNow, hold } = useStore();
   const hh = activeHousehold(useSync());
   const toast = useToast();
   const [risky, setRisky] = useState<{ error: string; run: () => void } | null>(null);
-  const guard = async (run: () => void) => {
-    if (hh) await hogar.syncNow();
-    if (canAutoBackup && device.autoBackup.enabled && data.settings.onboarded && !data.settings.example) {
-      toast('Guardando un respaldo antes…');
-      const res = await backupNow();
-      if (!res.saved && res.error) {
-        setRisky({ error: res.error, run });
-        return;
-      }
+  const guard = async (run: (epoch: number) => void) => {
+    const epoch = epochNow();
+    const go = () => {
+      if (epochNow() !== epoch) toast(CHANGED);
+      else run(epoch);
+    };
+    try {
+      await hold(async () => {
+        if (hh) await hogar.syncNow();
+        if (canAutoBackup && device.autoBackup.enabled && data.settings.onboarded && !data.settings.example) {
+          toast('Guardando un respaldo antes…');
+          const res = await backupNow();
+          if (!res.saved && res.error) {
+            setRisky({ error: res.error, run: go });
+            return;
+          }
+        }
+        go();
+      });
+    } catch (e) {
+      if (!(e instanceof DatasetBusy)) throw e;
+      toast(SWITCHING);
     }
-    run();
   };
   const sheet = risky && (
     <ConfirmSheet
@@ -339,7 +358,7 @@ function AutoBackup() {
         <WhereIcon size={18} className="mt-0.5 shrink-0 text-primary" />
         <span>
           {ab.last != null ? `Último: ${backupWhen(ab.last)} · en ${status.folder}` : `Todavía no hay ninguno. Van a ${status.folder}`}
-          {!icloud && <span className="text-muted"> (para guardarlos en iCloud Drive, ver Ayuda: si borrás la app, los de «En mi iPhone» se borran con ella)</span>}
+          {!icloud && <span className="text-muted"> (para guardarlos en iCloud Drive, ver Más → Cómo se usa → Respaldo automático: si borrás la app, los de «En mi iPhone» se borran con ella)</span>}
         </span>
       </p>
       {failed && (
@@ -373,13 +392,13 @@ function AutoBackup() {
           onConfirm={() => {
             setListing(null);
             const backup = chosen.backup;
-            void guard(() => {
+            void guard((epoch) => {
               if (hh) hogar.allowBigDelete();
-              restoreBackup(backup, { ai: data.settings.ai, onboarded: true }).then(
+              restoreBackup(backup, { ai: data.settings.ai, onboarded: true }, epoch).then(
                 () => toast('Respaldo restaurado'),
                 (e) => {
                   console.error(e);
-                  toast('No se pudo restaurar el respaldo');
+                  toast(e instanceof DatasetChanged ? CHANGED : e instanceof DatasetBusy ? SWITCHING : 'No se pudo restaurar el respaldo');
                 },
               );
             });
@@ -405,10 +424,13 @@ function Section({ title, children }: { title: string; children: React.ReactNode
  * iPhone, Face ID o el código. No está en la vista previa (ya son datos de ejemplo) ni con el ejemplo de la bienvenida
  */
 function DemoMode() {
-  const { demo, enterDemo } = useStore();
+  const { demo, enterDemo, held } = useStore();
   const hh = activeHousehold(useSync());
   const toast = useToast();
   const exit = useExitDemo();
+  // Con qué se sale: en un iPhone sin código, cualquiera (se dice antes de prestarlo)
+  const lock = useExitLock();
+  const noPasscode = canLock && lock != null && !lock.available;
   const [asking, setAsking] = useState(false);
   // Mientras se guardan tus datos y se arma el demo (si el hogar estaba mandando algo, espera que termine)
   const [entering, setEntering] = useState(false);
@@ -420,7 +442,11 @@ function DemoMode() {
           <span>Estás en el modo demo: los datos son inventados. Lo que anotes o cambies queda en el demo; tus datos no se tocan.</span>
         </p>
         <button className="btn-primary w-full" disabled={exit.busy} onClick={exit.start}>Salir del modo demo</button>
-        {canLock && <p className="text-[14px] text-muted">Para volver a tus datos te pide Face ID o el código del iPhone.</p>}
+        {canLock && lock && (
+          <p className="text-[14px] text-muted">
+            {lock.available ? `Para volver a tus datos te pide ${exitWith(lock)}.` : `${NO_PASSCODE} Para que pida Face ID o el código, ponele un código en los Ajustes del iPhone.`}
+          </p>
+        )}
         {exit.sheet}
       </Section>
     );
@@ -431,15 +457,19 @@ function DemoMode() {
         <Presentation size={18} className="mt-0.5 shrink-0 text-primary" />
         <span>{DEMO_EXPLAINED}</span>
       </p>
-      <button className="btn-outline w-full" disabled={entering} onClick={() => setAsking(true)}>{entering ? 'Preparando el demo…' : 'Pasar al modo demo'}</button>
+      {/* Mientras se restaura, se borra todo (con su respaldo antes) o se arma el respaldo completo, no: terminaría en el demo */}
+      <button className="btn-outline w-full" disabled={entering || held} onClick={() => setAsking(true)}>
+        {entering ? 'Preparando el demo…' : held ? 'Esperá a que termine…' : 'Pasar al modo demo'}
+      </button>
       <p className="text-[14px] text-muted">
-        {canLock ? 'Para volver te pide Face ID o el código del iPhone, aunque no tengas el bloqueo prendido: quien mira la app no puede ver tus datos. ' : ''}
+        {canLock && lock?.available ? `Para volver te pide ${exitWith(lock)}, aunque no tengas el bloqueo prendido: quien mira la app no puede ver tus datos. ` : ''}
+        {noPasscode && <span className="text-danger">Este iPhone no tiene código: cualquiera puede salir del demo y ver tus datos. Ponele un código en los Ajustes del iPhone (Face ID y código) y te lo va a pedir. </span>}
         Mientras tanto no se sincroniza el hogar compartido ni se hacen respaldos.
       </p>
       {asking && (
         <ConfirmSheet
           title="¿Pasar al modo demo?"
-          message={`Vas a ver datos inventados para mostrar la app. Tus datos quedan guardados como están y vuelven al salir.${hh ? ` Mientras tanto no se sincroniza el hogar «${hh.name}»: lo que falte mandar se manda al salir.` : ''}`}
+          message={`Vas a ver datos inventados para mostrar la app. Tus datos quedan guardados como están y vuelven al salir.${noPasscode ? ' Ojo: este iPhone no tiene código, así que para salir del demo alcanza con confirmar.' : ''}${hh ? ` Mientras tanto no se sincroniza el hogar «${hh.name}»: lo que falte mandar se manda al salir.` : ''}`}
           confirmLabel="Pasar al modo demo"
           onConfirm={() => {
             setEntering(true);
@@ -448,7 +478,7 @@ function DemoMode() {
               (e) => {
                 console.error(e);
                 setEntering(false);
-                toast('No se pudo pasar al modo demo: probá de nuevo');
+                toast(e instanceof DatasetBusy ? 'Esperá a que termine lo que se está guardando y probá de nuevo' : 'No se pudo pasar al modo demo: probá de nuevo');
               },
             );
           }}
@@ -460,7 +490,7 @@ function DemoMode() {
 }
 
 export function Settings({ onBack }: { onBack: () => void }) {
-  const { data, device, demo, update, updateSettings, updateDevice, replaceAll, restoreBackup, resetDemo } = useStore();
+  const { data, device, demo, update, updateSettings, updateDevice, replaceAll, restoreBackup, resetDemo, hold } = useStore();
   const sync = useSync();
   const hh = activeHousehold(sync);
   // Con el ejemplo puesto en un hogar, lo que se restaure o importe se reemplazaría por los datos del hogar
@@ -491,16 +521,19 @@ export function Settings({ onBack }: { onBack: () => void }) {
   const share = async (blob: () => Blob | Promise<Blob | { blob: Blob; missing: number }>, fileName: string) => {
     setBusy(true);
     try {
-      const made = await blob();
-      const file = made instanceof Blob ? made : made.blob;
-      if (!(await saveOrShare(file, fileName))) toast(NO_DOWNLOADS);
-      // En un hogar, los archivos que este teléfono no tenía se bajan para el respaldo: los que no se pudieron, se dicen
-      else if (!(made instanceof Blob) && made.missing > 0) {
-        toast(`El respaldo no tiene ${made.missing === 1 ? 'el archivo de una factura' : `los archivos de ${made.missing} facturas`}: no se pudieron bajar`);
-      }
+      // Mientras se arma (lee los archivos de las facturas) y se comparte, no se pasa al modo demo (hold)
+      await hold(async () => {
+        const made = await blob();
+        const file = made instanceof Blob ? made : made.blob;
+        if (!(await saveOrShare(file, fileName))) toast(NO_DOWNLOADS);
+        // En un hogar, los archivos que este teléfono no tenía se bajan para el respaldo: los que no se pudieron, se dicen
+        else if (!(made instanceof Blob) && made.missing > 0) {
+          toast(`El respaldo no tiene ${made.missing === 1 ? 'el archivo de una factura' : `los archivos de ${made.missing} facturas`}: no se pudieron bajar`);
+        }
+      });
     } catch (e) {
       console.error(e);
-      toast('No se pudo exportar el archivo');
+      toast(e instanceof DatasetBusy ? SWITCHING : 'No se pudo exportar el archivo');
     } finally {
       setBusy(false);
     }
@@ -695,15 +728,15 @@ export function Settings({ onBack }: { onBack: () => void }) {
           message={`Se reemplazan todos los datos de este teléfono por los del respaldo (${plural(backup.data.movements.length, 'movimiento', 'movimientos')}, ${plural(backup.data.invoices.length, 'factura', 'facturas')}).${sharedNote(hh)}`}
           confirmLabel="Restaurar"
           onConfirm={() => {
-            void guard(() => {
+            void guard((epoch) => {
               // Ya confirmado: en un hogar, la tanda que borra lo de antes no se frena (lib/sync)
               if (hh) hogar.allowBigDelete();
               // Los archivos del respaldo se guardan recién ahora (si se cancela, no queda nada)
-              restoreBackup(backup, { ai: s.ai, onboarded: true }).then(
+              restoreBackup(backup, { ai: s.ai, onboarded: true }, epoch).then(
                 () => toast('Respaldo restaurado'),
                 (e) => {
                   console.error(e);
-                  toast('No se pudo restaurar el respaldo');
+                  toast(e instanceof DatasetChanged ? CHANGED : e instanceof DatasetBusy ? SWITCHING : 'No se pudo restaurar el respaldo');
                 },
               );
             });
@@ -745,8 +778,9 @@ export function Settings({ onBack }: { onBack: () => void }) {
           confirmLabel="Borrar todo"
           danger
           onConfirm={() => {
-            void guard(() => {
-              replaceAll(emptyData());
+            void guard((epoch) => {
+              // Solo los de verdad (los de cuando se confirmó): si no, tira y no se apaga nada
+              replaceAll(emptyData(), epoch);
               // Como recién instalada: sin bloqueo ni aviso del día 1. El respaldo automático queda como está (con
               // cuándo fue el último: así no pisa el de hoy, que tiene los datos de antes)
               const { autoBackup: _same, demo: _real, ...factory } = defaultDevice();

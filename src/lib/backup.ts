@@ -1,4 +1,5 @@
 /** Respaldo completo (datos + archivos de facturas) en un solo .json, para guardar en Archivos/iCloud o pasar a otro teléfono. */
+import type { Dataset } from '../domain/demo';
 import { normalizeData } from '../domain/template';
 import type { Data } from '../domain/types';
 import { loadFile, saveFile } from './db';
@@ -92,11 +93,11 @@ export async function readBackup(file: Blob): Promise<ReadBackup> {
   return { data: normalizeData(d as Partial<Data>), files, ...(fileRefs ? { fileRefs } : {}) };
 }
 
-/** Guarda en el teléfono los archivos de un respaldo (antes de reemplazar los datos) */
-export async function restoreFiles(files: BackupFiles): Promise<void> {
+/** Guarda en el teléfono los archivos de un respaldo (antes de reemplazar los datos), en el juego `set` */
+export async function restoreFiles(files: BackupFiles, set: Dataset): Promise<void> {
   for (const [id, f] of Object.entries(files)) {
     if (!f || typeof f.base64 !== 'string') continue;
     const bytes = Uint8Array.from(atob(f.base64), (ch) => ch.charCodeAt(0));
-    await saveFile(id, new Blob([bytes], { type: typeof f.mime === 'string' ? f.mime : 'application/octet-stream' }));
+    await saveFile(id, new Blob([bytes], { type: typeof f.mime === 'string' ? f.mime : 'application/octet-stream' }), set);
   }
 }

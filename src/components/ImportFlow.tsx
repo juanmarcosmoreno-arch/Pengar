@@ -17,11 +17,12 @@ import { ConfirmSheet } from './ConfirmSheet';
  * `mode`: 'replace' cambia todo por lo de la planilla (al empezar); 'ask' deja elegir si sumar o reemplazar.
  */
 export function ImportFlow({ mode, name, onDone, compact = false }: { mode: 'replace' | 'ask'; name?: string; onDone: () => void; compact?: boolean }) {
-  const { data, applyImport } = useStore();
+  const { data, applyImport, epochNow } = useStore();
   const { money } = useMoney();
   const input = useRef<HTMLInputElement>(null);
   const [sheets, setSheets] = useState<Sheet[] | null>(null);
-  const [result, setResult] = useState<{ res: ImportResult; sheet: string } | null>(null);
+  // Con los datos que se veían al leerla (store: epoch): si después se pasó al demo, no se aplica ahí
+  const [result, setResult] = useState<{ res: ImportResult; sheet: string; epoch: number } | null>(null);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   // «Reemplazar todo» con datos propios pregunta antes (en un hogar, cambia para todos)
@@ -32,8 +33,8 @@ export function ImportFlow({ mode, name, onDone, compact = false }: { mode: 'rep
     try {
       // Primero la de movimientos: «Fecha» y «Monto» en la primera fila no dejan dudas (un monto de 45.000 en un CSV
       // de movimientos no es una fecha de Excel)
-      if (isMovementSheet(s.rows)) setResult({ res: importMovementSheet(s.rows, data), sheet: s.name });
-      else if (isMonthlySheet(s.rows)) setResult({ res: importMonthlySheet(s.rows), sheet: s.name });
+      if (isMovementSheet(s.rows)) setResult({ res: importMovementSheet(s.rows, data), sheet: s.name, epoch: epochNow() });
+      else if (isMonthlySheet(s.rows)) setResult({ res: importMonthlySheet(s.rows), sheet: s.name, epoch: epochNow() });
       else setError(`No reconozco el formato de la hoja «${s.name}». Mirá el formato esperado más abajo.`);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'No se pudo leer la planilla.');
@@ -60,8 +61,12 @@ export function ImportFlow({ mode, name, onDone, compact = false }: { mode: 'rep
   const confirm = (how: 'replace' | 'merge') => {
     if (!result) return;
     // Ya confirmado: en un hogar, la tanda que borra lo de antes no se frena (lib/sync)
+    if (epochNow() !== result.epoch) {
+      setResult(null);
+      return;
+    }
     if (how === 'replace' && hh) household.allowBigDelete();
-    applyImport(result.res, how, name);
+    applyImport(result.res, how, name, result.epoch);
     onDone();
   };
 

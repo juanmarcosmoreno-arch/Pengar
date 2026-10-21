@@ -52,6 +52,15 @@ export interface StatementToSave {
   usdRate?: number;
 }
 
+/** No se pudo cambiar de juego (o empezar algo largo): se está cambiando, o algo largo trabaja con los datos de ahora */
+export class DatasetBusy extends Error {}
+/** Lo pedido era para los datos de antes (se entró o se salió del demo mientras tanto): no se hizo nada */
+export class DatasetChanged extends Error {
+  constructor() {
+    super('Cambiaron los datos que se ven: no se hizo nada');
+  }
+}
+
 interface Store {
   data: Data;
   ix: Index;
@@ -78,6 +87,16 @@ interface Store {
   exitDemo: () => Promise<void>;
   /** «Rehacer los datos de demo»: los arma de nuevo (lo anotado en el demo se va). Tira si no se pudo */
   resetDemo: () => Promise<void>;
+  /**
+   * Sube cada vez que cambian los datos que se ven (entrar o salir del demo, rehacerlo). Lo armado con los de antes (un
+   * aviso con «Deshacer», un borrado que esperaba un respaldo) no se aplica a los de ahora. `epochNow`, al instante
+   */
+  epoch: number;
+  epochNow: () => number;
+  /** Algo largo trabaja con los datos de ahora (restaurar, borrar todo, el respaldo completo): no se cambia de juego */
+  held: boolean;
+  /** Corre `fn` sin dejar cambiar de juego mientras tanto. Tira DatasetBusy si se está cambiando */
+  hold: <T>(fn: () => Promise<T>) => Promise<T>;
   update: (fn: (d: Data) => Data) => void;
   /** Con `id`, ese (el de un gasto fijo del mes); si ya existe, uno nuevo */
   addMovement: (m: Omit<Movement, 'id' | 'createdAt'> & { id?: string }) => void;
@@ -110,11 +129,15 @@ interface Store {
   startWithTemplate: (name: string) => void;
   /** Cambia todo por los datos de ejemplo (inventados), con settings.example */
   startWithExample: () => Promise<void>;
-  applyImport: (res: ImportResult, mode: 'replace' | 'merge', name?: string) => void;
-  /** Cambia todo por `d` (y, ya guardado, borra los archivos de facturas que quedaron sin usar) */
-  replaceAll: (d: Data) => void;
-  /** Restaurar un respaldo: primero sus archivos, después los datos (con `settings` encima) */
-  restoreBackup: (b: ReadBackup, settings: Partial<Settings>) => Promise<void>;
+  /** Con `epoch` (el de cuando se pidió), tira DatasetChanged sin tocar nada si ya se ven otros datos */
+  applyImport: (res: ImportResult, mode: 'replace' | 'merge', name?: string, epoch?: number) => void;
+  /** Cambia todo por `d` (y, ya guardado, borra los archivos de facturas que quedaron sin usar). `epoch`: ver applyImport */
+  replaceAll: (d: Data, epoch?: number) => void;
+  /**
+   * Restaurar un respaldo: primero sus archivos, después los datos (con `settings` encima). Solo los de verdad (en el
+   * demo, tira). `epoch`: ver applyImport
+   */
+  restoreBackup: (b: ReadBackup, settings: Partial<Settings>, epoch?: number) => Promise<void>;
 }
 
 /** Los ids de rubro que apuntan a `id` pasan a `to` (o se borran si no hay `to`) */
@@ -148,6 +171,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const dataset = useRef<Dataset>('real');
   const lastSaved = useRef<Partial<Record<Dataset, Data>>>({});
   const switching = useRef(false);
+  // Cuántas veces cambiaron los datos que se ven, y cuántas cosas largas trabajan con los de ahora (hold)
+  const epochRef = useRef(0);
+  const [epoch, setEpoch] = useState(0);
+  const holds = useRef(0);
+  const [held, setHeld] = useState(false);
   // Los ajustes del teléfono al día, y los que falta guardar
   const deviceNow = useRef<Device>(device);
   const pendingDevice = useRef<Device>();
@@ -378,7 +406,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
    * demo (si no quedara, al reabrir se verían los de verdad). Al salir, el hogar vuelve a andar con los de verdad
    */
   const switchTo = useCallback(async (to: Dataset, rebuild = false) => {
-    if (switching.current) throw new Error('Ya se está cambiando de datos');
+    if (switching.current) throw new DatasetBusy('Ya se está cambiando de datos');
+    // Restaurar o borrar todo (con su respaldo antes) terminaría sobre el otro juego
+    if (holds.current > 0) throw new DatasetBusy('Algo se está guardando con los datos de ahora');
     switching.current = true;
     const from = dataset.current;
     const entering = to === 'demo' && from === 'real';
@@ -402,6 +432,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       setActiveDataset(to);
       current.current = next;
       setData(next);
+      epochRef.current += 1;
+      setEpoch(epochRef.current);
       if (to === 'real' && from === 'demo') void setSyncDemo(false);
       setDevice(dev);
       // Al salir, el ajuste se guarda después de mostrar los de verdad (si no quedara, al reabrir sigue el demo)
@@ -421,6 +453,33 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     }
   }, [flush, buildDemo]);
 
+  const epochNow = useCallback(() => epochRef.current, []);
+
+  const hold = useCallback(async <T,>(fn: () => Promise<T>): Promise<T> => {
+    if (switching.current) throw new DatasetBusy('Se están cambiando los datos que se ven');
+    holds.current += 1;
+    setHeld(true);
+    try {
+      return await fn();
+    } finally {
+      holds.current -= 1;
+      if (!holds.current) setHeld(false);
+    }
+  }, []);
+
+  /** Lo pedido con los datos de `epoch` (si se dice) sigue siendo para los de ahora */
+  const sameEpoch = (epoch?: number) => {
+    if (epoch != null && epoch !== epochRef.current) throw new DatasetChanged();
+  };
+
+  /** Un «Deshacer» de los datos de ahora: si después se cambió de juego, no hace nada (sería sobre los otros) */
+  const undoHere = (fn: () => void) => {
+    const at = epochRef.current;
+    return () => {
+      if (epochRef.current === at) fn();
+    };
+  };
+
   const ix = useMemo(() => buildIndex(data), [data.rubros, data.categories]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const store = useMemo<Store>(() => ({
@@ -438,6 +497,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     enterDemo: () => switchTo('demo'),
     exitDemo: () => switchTo('real'),
     resetDemo: () => switchTo('demo', true),
+    epoch,
+    epochNow,
+    held,
+    hold,
     update,
     addMovement: ({ id, ...m }) => update((d) => ({
       ...d,
@@ -447,7 +510,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     deleteMovement: (id) => update((d) => ({ ...d, movements: d.movements.filter((m) => m.id !== id) })),
     saveInvoice: async (inv) => {
       const id = newId('f');
+      const at = epochRef.current;
       const fileKept = await saveFile(id, inv.file, dataset.current);
+      // El archivo quedó en el juego de antes: la factura no va a los otros datos
+      sameEpoch(at);
       const invoice: Invoice = {
         id,
         fileName: inv.fileName,
@@ -490,7 +556,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     saveStatement: async (st) => {
       const id = newId('f');
       const set = dataset.current;
+      const at = epochRef.current;
       const fileKept = await saveFile(id, st.file, set);
+      sameEpoch(at);
       const now = Date.now();
       const movements: Movement[] = st.movements.map((m, i) => ({
         ...m,
@@ -519,11 +587,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         settings: { ...d.settings, learned: { ...d.settings.learned, ...st.learned }, ...(st.usdRate ? { usdRate: st.usdRate } : {}) },
       }));
       const ids = new Set(movements.map((m) => m.id));
-      // Deshacer borra lo creado; lo aprendido queda
-      const undo = () => {
+      // Deshacer borra lo creado; lo aprendido queda. Si mientras tanto se cambió de juego, nada (ni el archivo)
+      const undo = undoHere(() => {
         update((d) => ({ ...d, invoices: d.invoices.filter((i) => i.id !== id), movements: d.movements.filter((m) => !ids.has(m.id)) }));
         whenSaved(() => deleteFile(id, set));
-      };
+      });
       return { count: movements.length, undo, fileKept };
     },
     deleteInvoice: (id) => {
@@ -589,10 +657,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     skipRecurring: (id, month) => {
       const before = data.recurring.find((r) => r.id === id);
       update((d) => ({ ...d, recurring: d.recurring.map((r) => (r.id === id ? skipRecurringIn(r, month) : r)) }));
-      return () => update((d) => ({
+      return undoHere(() => update((d) => ({
         ...d,
         recurring: d.recurring.map((r) => (r.id === id && before ? { ...r, doneThrough: before.doneThrough, skipped: before.skipped } : r)),
-      }));
+      })));
     },
     recordAllDue: (month, todayISO) => {
       // Se arman afuera del update para que los ids sean los mismos al deshacer
@@ -608,11 +676,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           recurring: d.recurring.map((r) => (before.has(r.id) ? { ...r, doneThrough: month } : r)),
         }));
       }
-      const undo = () => update((d) => ({
+      const undo = undoHere(() => update((d) => ({
         ...d,
         movements: d.movements.filter((m) => !ids.has(m.id)),
         recurring: d.recurring.map((r) => (before.has(r.id) ? { ...r, doneThrough: before.get(r.id) } : r)),
-      }));
+      })));
       return { count: created.length, undo };
     },
     updateSettings: (patch) => update((d) => ({ ...d, settings: { ...d.settings, ...patch } })),
@@ -621,7 +689,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       const ex = await loadExample();
       update((d) => ({ ...ex, settings: { ...ex.settings, ai: d.settings.ai } }));
     },
-    applyImport: (res, mode, name) => {
+    applyImport: (res, mode, name, epoch) => {
+      sameEpoch(epoch);
+      // Una planilla es de los datos de verdad
+      if (dataset.current === 'demo') throw new Error('En el modo demo no se importa');
       if (mode === 'replace' && data.settings.example) pruneAfterSave();
       update((d) => {
         const settings = { ...d.settings, onboarded: true, ...(name != null ? { name } : {}) };
@@ -650,18 +721,24 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         };
       });
     },
-    replaceAll: (next) => {
+    replaceAll: (next, epoch) => {
+      sameEpoch(epoch);
       update(() => normalizeData(next));
       pruneAfterSave();
     },
-    restoreBackup: async (b, settings) => {
-      await restoreFiles(b.files);
+    restoreBackup: (b, settings, epoch = epochRef.current) => hold(async () => {
+      sameEpoch(epoch);
+      // Un respaldo es de los datos de verdad: en el demo quedaría a la vista (y con la clave de Claude de acá)
+      if (dataset.current === 'demo') throw new Error('En el modo demo no se restaura');
+      // Mientras tanto no se cambia de juego (hold): los archivos y los datos van a los mismos
+      await restoreFiles(b.files, dataset.current);
+      sameEpoch(epoch);
       // Los ajustes de este teléfono (el bloqueo, el aviso del día 1) no vienen en el respaldo: quedan como estaban. El
       // id de los datos sigue siendo el de acá: en un hogar, lo restaurado es un cambio de estos datos
       update((d) => normalizeData({ ...b.data, datasetId: d.datasetId, settings: { ...b.data.settings, ...settings } }));
       pruneAfterSave();
-    },
-  }), [data, ix, ready, loadError, saveError, device, demo, updateDevice, runBackup, switchTo, update, load, flush, whenSaved, pruneAfterSave]);
+    }),
+  }), [data, ix, ready, loadError, saveError, device, demo, epoch, epochNow, held, hold, updateDevice, runBackup, switchTo, update, load, flush, whenSaved, pruneAfterSave]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return <Ctx.Provider value={store}>{children}</Ctx.Provider>;
 }

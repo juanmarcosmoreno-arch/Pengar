@@ -152,7 +152,8 @@ export function ScanStatement({ onClose }: { onClose: () => void }) {
           {option(<FileText size={30} className="shrink-0 text-primary" />, 'Subir el PDF del banco', 'El que te llega por mail o bajás de la web (OCA, BROU, Itaú, Santander…)', () => pdf.current?.click())}
           {option(<FileSpreadsheet size={30} className="shrink-0 text-primary" />, 'Subir CSV o Excel', 'Si tu banco te deja exportar los movimientos', () => sheet.current?.click())}
           {isNative && option(<Camera size={30} className="shrink-0 text-primary" />, 'Sacar una foto', 'Del resumen en papel, bien derecho y con luz', () => camera.current?.click())}
-          {data.settings.example && (
+          {/* Con los datos de ejemplo y en el modo demo (ahí casi todos sus comercios ya se conocen) */}
+          {(data.settings.example || data.settings.demo) && (
             <button className="btn-outline w-full" onClick={() => { setError(''); open(exampleStatement(data)); }}>
               Probar con un estado de cuenta de ejemplo
             </button>

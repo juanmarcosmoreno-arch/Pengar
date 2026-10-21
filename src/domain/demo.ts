@@ -268,12 +268,17 @@ export function demoData(res: Pick<ImportResult, 'categories' | 'rubros' | 'move
   return { data, files };
 }
 
+/** Son datos armados por demoData: con la marca del demo, ya empezados y sin el ejemplo de la bienvenida */
+export const isDemoData = (d: Pick<Data, 'settings'>): boolean =>
+  d.settings.demo === true && d.settings.onboarded === true && !d.settings.example;
+
 /**
- * El demo guardado se armó otro mes (lo último anotado a mano es de un mes que ya pasó): Inicio quedaría vacío y el
- * resumen sería de otro mes. Al entrar se arma de nuevo
+ * El demo guardado hay que armarlo de nuevo (al entrar o al abrir): se armó otro mes (lo último anotado a mano es de un
+ * mes que ya pasó: Inicio quedaría vacío y el resumen sería de otro mes) o no es del demo (un respaldo o una planilla
+ * que se colaron: se verían cada vez que se muestra la app)
  */
 export function demoOutdated(d: Pick<Data, 'movements' | 'settings'>, todayISO: string): boolean {
-  if (!d.settings.demo) return false;
+  if (!isDemoData(d)) return true;
   const daily = d.movements.filter((m) => !m.monthly);
   if (!daily.length) return true;
   return daily.reduce((m, x) => (monthOf(x.date) > m ? monthOf(x.date) : m), '') < monthOf(todayISO);

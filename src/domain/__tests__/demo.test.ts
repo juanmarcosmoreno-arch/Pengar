@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { backupDue } from '../autoBackup';
-import { dataKey, demoData, demoOutdated, demoTicketLines, fileIdOf, fileKey, ticketAmount, ticketPdf, TICKET_MERCHANT } from '../demo';
+import { dataKey, demoData, demoOutdated, demoTicketLines, fileIdOf, fileKey, isDemoData, ticketAmount, ticketPdf, TICKET_MERCHANT } from '../demo';
 import { exampleStatementText } from '../example';
 import { importMonthlySheet, type Cell } from '../importSheet';
 import { percentLedger } from '../ledger';
@@ -101,8 +101,12 @@ describe('modo demo: los datos inventados', () => {
   it('se vuelve a armar si es de un mes que ya pasó', () => {
     expect(demoOutdated(data, TODAY)).toBe(false);
     expect(demoOutdated(data, '2026-11-02')).toBe(true);
-    // Lo que no es del demo, nunca
-    expect(demoOutdated({ ...data, settings: { ...data.settings, demo: undefined } }, '2027-01-01')).toBe(false);
+    // Lo que no es del demo (un respaldo de verdad que se coló) también: si no, se mostraría cada vez
+    expect(demoOutdated({ ...data, settings: { ...data.settings, demo: undefined } }, TODAY)).toBe(true);
+    expect(demoOutdated({ ...data, settings: { ...data.settings, onboarded: false } }, TODAY)).toBe(true);
+    expect(demoOutdated({ ...data, settings: { ...data.settings, example: true } }, TODAY)).toBe(true);
+    expect(isDemoData(data)).toBe(true);
+    expect(isDemoData({ settings: { ...data.settings, demo: undefined } })).toBe(false);
     expect(demoOutdated({ ...data, movements: data.movements.filter((m) => m.monthly) }, TODAY)).toBe(true);
   });
 });

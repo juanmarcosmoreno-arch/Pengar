@@ -1,8 +1,9 @@
 // Recorrido del modo demo con el iPhone simulado (scripts/native-mock.mjs) y el hogar compartido contra el servidor de
 // mentira (scripts/fake-remote.mjs): entrar desde Ajustes, los datos inventados (fijos para anotar, el resumen, la
 // factura en PDF), lo que se oculta, anotar algo, que el hogar no reciba ni mande nada, que el bloqueo no salte al
-// volver ni al reabrir, salir con Face ID (cancelar deja en el demo), los datos de verdad intactos, volver a entrar
-// con lo anotado, rehacer el demo, salir sin código en el iPhone y la web (sale con una confirmación).
+// volver ni al reabrir, salir con Face ID (cancelar deja en el demo), los datos de verdad intactos, que un «Deshacer»
+// no pase de un juego al otro, volver a entrar con lo anotado, rehacer el demo, salir sin código en el iPhone y la web
+// (sale con una confirmación) y que mientras se guarda el respaldo de antes de «Borrar todo» no se pueda entrar.
 // Uso: node scripts/e2e-demo.mjs  (arma dist-fake; con --sin-build usa la que hay). Sale con código 1 si algo no da.
 // SHOTS_DIR=carpeta guarda capturas de cada paso.
 import { chromium } from 'playwright';
@@ -164,6 +165,16 @@ check(true, 'la factura de ejemplo se ve (el ticket en PDF)');
 await shot(marcos, 'factura');
 await marcos.getByRole('dialog').last().getByLabel('Cerrar').last().click();
 await marcos.getByLabel('Volver').click();
+// «Tarjeta»: el estado de cuenta de ejemplo, casi todo conocido (solo dos comercios nuevos)
+await nav(marcos, 'Inicio');
+await marcos.getByRole('button', { name: 'Tarjeta', exact: true }).click();
+await marcos.getByRole('button', { name: 'Probar con un estado de cuenta de ejemplo' }).click();
+await marcos.getByRole('heading', { name: 'Revisar compras' }).waitFor();
+const nuevos = await marcos.locator('section', { has: marcos.getByRole('heading', { name: /^Nuevos/ }) }).getByRole('group').evaluateAll((els) => els.map((e) => e.getAttribute('aria-label')));
+check(JSON.stringify(nuevos) === JSON.stringify(['Movie Center', 'Ferreteria el Tornillo']), `«Tarjeta» ofrece el estado de cuenta de ejemplo, con solo dos comercios nuevos (${nuevos.join(', ')})`);
+await shot(marcos, 'tarjeta');
+await marcos.getByLabel('Volver').click();
+await marcos.getByRole('dialog').last().getByRole('button', { name: 'Salir' }).click({ timeout: 3000 }).catch(() => {});
 
 // --- Anotar en el demo: queda en el demo y el hogar no se entera ---
 await addExpense(marcos, 777, 'Comer afuera');
@@ -194,7 +205,13 @@ await marcos.waitForTimeout(2000);
 // Ni se arma la conexión con el servidor (window.__pengarFake aparece al arrancar el motor)
 check(await marcos.evaluate(() => !window.__pengarFake || Object.keys(window.__pengarFake.calls).length === 0), 'y sin hablarle al servidor del hogar');
 
-// --- Salir: con Face ID; si se cancela, sigue en el demo ---
+// --- Salir: con Face ID; si se cancela, sigue en el demo. Antes se borra algo del demo: su «Deshacer» no sobrevive ---
+await nav(marcos, 'Movimientos');
+await row(marcos, 1016).first().click();
+await marcos.getByRole('dialog').last().getByRole('button', { name: 'Borrar' }).click();
+const undoBtn = marcos.getByRole('button', { name: 'Deshacer' });
+await undoBtn.waitFor();
+const deletedAt = Date.now();
 await chip(marcos).click();
 await marcos.getByRole('dialog', { name: 'Modo demo' }).waitFor();
 await shot(marcos, 'salir');
@@ -208,6 +225,9 @@ await marcos.getByRole('dialog', { name: 'Modo demo' }).getByRole('button', { na
 await waitLock(marcos);
 await marcos.evaluate(() => window.__lock.answer('ok'));
 await marcos.getByText('Volviste a tus datos').waitFor();
+// Los avisos con «Deshacer» duran 8 s: si siguiera, tocarlo pondría lo inventado en tus datos (y en el hogar)
+const leftAfter = Date.now() - deletedAt;
+check(await undoBtn.count() === 0 && await marcos.getByText('Movimiento borrado').count() === 0 && leftAfter < 7500, `al salir no queda el «Deshacer» de lo borrado en el demo (sí «Volviste a tus datos»; ${leftAfter} ms después de borrar)`);
 await nav(marcos, 'Inicio');
 await hello(marcos, 'Marcos');
 check(true, 'con Face ID: vuelven los datos de verdad («Hola, Marcos»)');
@@ -218,7 +238,8 @@ check(await marcos.getByRole('heading', { name: 'Pengar está bloqueada' }).coun
 check(await hasRow(marcos, 1240), 'lo de verdad está');
 check(!(await hasRow(marcos, 777, 1000)), 'lo anotado en el demo no');
 check(await hasRow(marcos, 555, 10000), 'el hogar vuelve a andar: llega lo de Bruno');
-check(!(await serverHas(marcos, 777)), 'y al hogar nunca llegó nada del demo');
+check(!(await serverHas(marcos, 777)) && !(await serverHas(marcos, 1016)), 'y al hogar nunca llegó nada del demo');
+check(!(await hasRow(marcos, 1016, 500)), 'ni a tus datos el gasto del demo que se borró');
 // Con el bloqueo prendido, al volver de otra app sí bloquea de nuevo
 await leaveApp(marcos);
 await backToApp(marcos);
@@ -226,12 +247,22 @@ await marcos.getByRole('heading', { name: 'Pengar está bloqueada' }).waitFor({ 
 await waitLock(marcos);
 await marcos.evaluate(() => window.__lock.answer('ok'));
 
-// --- Volver a entrar: sigue lo anotado; «Rehacer los datos de demo» lo saca ---
+// --- Volver a entrar: sigue lo anotado; «Rehacer los datos de demo» lo saca. Antes se borra algo de verdad: su
+// «Deshacer» (y su monto) no se ve en el demo ---
+await addExpense(marcos, 4321, 'Farmacia');
+await nav(marcos, 'Movimientos');
+await row(marcos, 4321).first().click();
+await marcos.getByRole('dialog').last().getByRole('button', { name: 'Borrar' }).click();
+await marcos.getByRole('button', { name: 'Deshacer' }).waitFor();
+const deletedReal = Date.now();
 await openSettings(marcos);
 await marcos.getByRole('button', { name: 'Pasar al modo demo' }).click();
 await marcos.getByRole('dialog', { name: '¿Pasar al modo demo?' }).getByRole('button', { name: 'Pasar al modo demo' }).click();
 await marcos.getByText('Modo demo: los datos son inventados', { exact: true }).waitFor({ timeout: 10000 });
+const enteredAfter = Date.now() - deletedReal;
+check(await marcos.getByRole('button', { name: 'Deshacer' }).count() === 0 && await marcos.getByText('Movimiento borrado').count() === 0 && enteredAfter < 7500, `al entrar al demo no queda el «Deshacer» de lo borrado en tus datos (${enteredAfter} ms después de borrar)`);
 check(await hasRow(marcos, 777), 'al volver a entrar sigue lo anotado en el demo');
+check(!(await hasRow(marcos, 4321, 500)), 'y nada de tus datos');
 await openSettings(marcos);
 await marcos.getByRole('button', { name: 'Rehacer los datos de demo' }).click();
 await marcos.getByRole('dialog', { name: '¿Rehacer los datos de demo?' }).getByRole('button', { name: 'Rehacer' }).click();
@@ -245,12 +276,15 @@ await marcos.evaluate(() => {
 });
 const before = await lockCalls(marcos);
 await openSettings(marcos);
+await marcos.getByText(/Este iPhone no tiene código: para salir del demo alcanza con confirmar/).waitFor();
+check(true, 'sin código, Ajustes no promete Face ID: dice que para salir alcanza con confirmar');
 await marcos.getByRole('button', { name: 'Salir del modo demo' }).click();
 const confirm = marcos.getByRole('dialog', { name: '¿Salir del modo demo?' });
 await confirm.waitFor();
 check(await lockCalls(marcos) === before, 'sin código en el iPhone, no pide Face ID: pide confirmar');
 await confirm.getByRole('button', { name: 'Salir del demo' }).click();
 await marcos.getByText('Volviste a tus datos').waitFor();
+check(await marcos.getByText(/Este iPhone no tiene código: cualquiera puede salir del demo y ver tus datos/).count() === 1, 'y antes de entrar, Ajustes avisa que cualquiera podría salir');
 await nav(marcos, 'Inicio');
 await hello(marcos, 'Marcos');
 check(true, 'y vuelven los datos de verdad');
@@ -284,6 +318,28 @@ await ex.getByText('Estás viendo datos de ejemplo (inventados).').first().waitF
 await openSettings(ex);
 check(await ex.getByRole('heading', { name: 'Modo demo' }).count() === 0, 'con los datos de ejemplo, Ajustes no ofrece el modo demo');
 await web.close();
+
+// --- «Borrar todo» con el respaldo de antes en curso (iCloud lento): mientras tanto no se puede pasar al demo ---
+const slow = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 1, locale: 'es-UY', hasTouch: true });
+await mockFx(slow);
+await mockNative(slow, { biometry: 'touchID' });
+const c = await phone('carla', slow);
+await c.getByRole('button', { name: 'Comenzar' }).click();
+await c.getByPlaceholder('Tu nombre').fill('Carla');
+await c.getByRole('button', { name: 'Empezar de cero' }).click();
+await c.getByRole('navigation').waitFor();
+await addExpense(c, 9876, 'Farmacia');
+await openSettings(c);
+check(await c.getByText(/Para volver te pide Touch ID o el código del iPhone/).count() === 1, 'con Touch ID, Ajustes dice «Touch ID» (no «Face ID»)');
+await c.evaluate(() => { window.__backup.slow = 3000; });
+await c.getByRole('button', { name: 'Borrar todo' }).click();
+await c.getByRole('dialog', { name: '¿Borrar todo?' }).getByRole('button', { name: 'Borrar todo' }).click();
+await c.getByText('Guardando un respaldo antes…').waitFor();
+const demoBtn = c.getByRole('button', { name: /Pasar al modo demo|Esperá a que termine/ });
+check(await demoBtn.isDisabled() && /Esperá a que termine/.test(await demoBtn.innerText()), 'mientras se guarda el respaldo de antes, «Pasar al modo demo» espera');
+await c.getByRole('button', { name: 'Comenzar' }).waitFor({ timeout: 15000 });
+check(JSON.parse(await stored(c, 'device')).demo !== true && JSON.parse(await stored(c, 'data')).movements.length === 0, 'y se borró lo de verdad, sin pasar al demo');
+await slow.close();
 
 await ctx.close();
 await browser.close();
