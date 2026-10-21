@@ -119,8 +119,8 @@ describe('lo impreso, cuando no hay QR', () => {
   });
 
   it('la serie separada del número y sin código de seguridad (Macromercado)', () => {
-    const text = 'MACROMERCADO\nRUT 211589950019\ne-Ticket\nF 5434058 Contado\nTOTAL DE COMPRA: $ 11.851,00';
-    expect(cfeFromText(text, parseInvoiceText(text))).toMatchObject({ ruc: '211589950019', tipo: 101, serie: 'F', numero: 5434058, total: 11851, hash6: null });
+    const text = 'MACROMERCADO\nRUT 211589950019\ne-Ticket\nF 1000001 Contado\nTOTAL DE COMPRA: $ 13.130,00';
+    expect(cfeFromText(text, parseInvoiceText(text))).toMatchObject({ ruc: '211589950019', tipo: 101, serie: 'F', numero: 1000001, total: 13130, hash6: null });
   });
 
   it('serie y número con etiqueta, e-Factura', () => {

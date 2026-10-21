@@ -135,7 +135,7 @@ const TYPES: [RegExp, number][] = [
 const NOTE_RE = /\bnota\s+de\s+(?:cr[eé]dito|d[eé]bito)\b/i;
 /** «Serie: BJ Nro: 1000001» */
 const LABELED_RE = /\bserie\s*:?\s*([A-Z]{1,2})\b[^\n]*?\b(?:n(?:[uú]mero|ro|[°º])|nº)\.?\s*:?\s*(\d{1,7})\b/i;
-/** «BJ1000001», «BJ 1000001», «F 5434058» (cerca de «e-Ticket»; con 4 cifras o más para no confundir «X3») */
+/** «BJ1000001», «BJ 1000001», «F 1000001» (cerca de «e-Ticket»; con 4 cifras o más para no confundir «X3») */
 const SERIE_NRO_RE = /(?:^|[\s:])([A-Z]{1,2})[\s-]?(\d{4,7})(?=\s|$)/;
 const HASH_TEXT_RE = /\bc[oó]d(?:igo)?\.?\s*(?:de\s*)?seguridad\s*:?\s*([A-Za-z0-9+/]{6})(?![A-Za-z0-9+/])/i;
 
