@@ -1,4 +1,5 @@
 import { useEffect, useId, useState } from 'react';
+import { DollarCard } from '../components/DollarCard';
 import { PageHeader, Sheet } from '../components/Sheet';
 import { Suricata } from '../components/Suricata';
 import { Segmented } from '../components/Toggle';
@@ -9,6 +10,7 @@ import { parseAmount, parseDecimal, round2 } from '../domain/money';
 import { savingsBalance, transfersIn } from '../domain/savingsBox';
 import { newId } from '../domain/template';
 import type { Data, SavingsBox } from '../domain/types';
+import { brouRates } from '../lib/brou';
 import { usdRateOn } from '../lib/fx';
 import { useMoney } from '../lib/useMoney';
 import { useStore } from '../store/store';
@@ -36,6 +38,7 @@ export function Savings({ onBack }: { onBack: () => void }) {
           </div>
           <Suricata pose="moneda" size={96} className="absolute -bottom-1 right-2" />
         </section>
+        <DollarCard usdSaved={bal.usd} />
         <div className="grid grid-cols-2 gap-2">
           <button className="btn-outline" onClick={() => setEditing(true)}>Actualizar saldo</button>
           <button className="btn-primary" onClick={() => setMoving(true)}>Pasar al mes</button>
@@ -102,11 +105,15 @@ function MoveToMonth({ onClose }: { onClose: () => void }) {
   const id = useId();
   const [cur, setCur] = useState<'pesos' | 'usd'>('pesos');
   const [text, setText] = useState('');
-  const [rateText, setRateText] = useState(data.settings.usdRate ? formatRate(data.settings.usdRate) : '');
+  const [rateText, setRateText] = useState('');
   useEffect(() => {
     if (cur !== 'usd') return;
     let alive = true;
-    void usdRateOn(today()).then((q) => { if (alive && q) setRateText((t) => t || formatRate(q.rate)); });
+    // La compra del eBROU (lo que te dan por tus dólares) o, si no se puede leer, la del BCU
+    void brouRates().then(async (b) => {
+      const rate = b?.ebrou?.buy ?? b?.billete?.buy ?? (await usdRateOn(today()))?.rate;
+      if (alive && rate) setRateText(formatRate(rate));
+    });
     return () => { alive = false; };
   }, [cur]);
   const typed = parseAmount(text);

@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { BudgetRows } from '../components/charts/BudgetRows';
 import { Columns } from '../components/charts/Columns';
 import { DemoChip } from '../components/Demo';
+import { DollarCard } from '../components/DollarCard';
 import { ExampleBanner } from '../components/ExampleBanner';
 import { CategoryBubble } from '../components/Icon';
 import { Suricata, type Pose } from '../components/Suricata';
@@ -15,6 +16,7 @@ import { commitments, nextMonthOutlook } from '../domain/installments';
 import { formatPct } from '../domain/money';
 import { pendingRecurring, type PendingRecurring } from '../domain/recurring';
 import { pendingReport } from '../domain/report';
+import { savingsBalance } from '../domain/savingsBox';
 import { expenseChange, kpis, monthly, monthSummary } from '../domain/stats';
 import { OTHER_COLOR } from '../domain/template';
 import type { Kind, Movement, Recurring } from '../domain/types';
@@ -126,6 +128,8 @@ export function Home({ onAdd, onScan, onStatement, onEdit, onRecord, onGo, onRep
       <CardReminders onStatement={onStatement} />
 
       <ForecastCard onSavings={onSavings} />
+
+      <HomeDollar />
 
       <DueRecurring onRecord={onRecord} />
 
@@ -316,4 +320,13 @@ function CardReminders({ onStatement }: { onStatement: () => void }) {
       ))}
     </>
   );
+}
+
+/** El dólar alto o bajo, si tenés ahorro en dólares (se apaga en Ajustes) */
+function HomeDollar() {
+  const { data, ix, device } = useStore();
+  if (!device.dollar || data.settings.example) return null;
+  const usdSaved = savingsBalance(data, ix, data.settings.savingsBox).usd;
+  if (usdSaved <= 0) return null;
+  return <DollarCard usdSaved={usdSaved} compact />;
 }

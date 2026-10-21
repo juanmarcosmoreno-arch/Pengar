@@ -175,6 +175,10 @@ function IntroSetting() {
       <p className="text-[14px] text-muted">
         Desde el día 8, Inicio te avisa si al ritmo de este mes (con los fijos que faltan) no te alcanza.
       </p>
+      <Toggle checked={device.dollar} onChange={(dollar) => updateDevice({ dollar })} label="Avisarme si el dólar está alto o bajo" />
+      <p className="text-[14px] text-muted">
+        Si tenés ahorro en dólares, Inicio te avisa cuando el dólar está 3 % arriba o abajo del promedio de los últimos 3 meses.
+      </p>
     </Section>
   );
 }
