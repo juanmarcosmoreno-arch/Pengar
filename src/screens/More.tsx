@@ -1,17 +1,18 @@
-import { ChevronRight, CircleHelp, FileText, Layers, Repeat, Settings, Target, Users, Wallet } from 'lucide-react';
+import { ChevronRight, CircleHelp, CreditCard, FileText, Layers, Repeat, Settings, Target, Users, Wallet } from 'lucide-react';
 import { DemoChip, demoOffered } from '../components/Demo';
 import { ExampleBanner } from '../components/ExampleBanner';
 import { PageHeader } from '../components/Sheet';
 import { useSync } from '../lib/sync';
 import { useStore } from '../store/store';
 
-export type MorePage = 'presupuesto' | 'fijos' | 'categorias' | 'metas' | 'facturas' | 'hogar' | 'ajustes' | 'ayuda';
+export type MorePage = 'presupuesto' | 'fijos' | 'cuotas' | 'categorias' | 'metas' | 'facturas' | 'hogar' | 'ajustes' | 'ayuda';
 
 const SETTINGS_SUB = 'Moneda, importar, respaldo, lectura con IA, modo demo';
 
 const ITEMS: { id: MorePage; label: string; sub: string; Icon: typeof Wallet }[] = [
   { id: 'presupuesto', label: 'Presupuesto', sub: 'Cuánto gastar por mes en cada categoría', Icon: Wallet },
   { id: 'fijos', label: 'Gastos fijos', sub: 'Lo que pagás todos los meses', Icon: Repeat },
+  { id: 'cuotas', label: 'Tarjetas y cuotas', sub: 'Lo que ya tenés comprometido y si te da para comprar', Icon: CreditCard },
   { id: 'categorias', label: 'Categorías y rubros', sub: 'Armalos a tu gusto: nombres, íconos, colores', Icon: Layers },
   { id: 'metas', label: 'Metas', sub: 'Ahorrar para algo', Icon: Target },
   { id: 'facturas', label: 'Facturas y estados de cuenta', sub: 'Las fotos, PDF y planillas que subiste', Icon: FileText },

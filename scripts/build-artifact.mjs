@@ -61,7 +61,8 @@ const vitrina = `<aside class="vitrina" lang="es" aria-label="Sobre esta vista p
     <li>Abrí el resumen del mes pasado, arriba en Inicio.</li>
     <li>Mirá Estadísticas: el mes, el diezmo acumulado y las tendencias.</li>
     <li>Subí el PDF de una factura: lee el comercio, el total y cada renglón.</li>
-    <li>Probá «Tarjeta» con el estado de cuenta de ejemplo.</li>
+    <li>Probá «Tarjeta» con el estado de cuenta de ejemplo: lee las compras en cuotas.</li>
+    <li>Tocá «El mes que viene» en Inicio: las cuotas de cada tarjeta y «¿Me da para comprar?».</li>
     <li>Cambiá categorías y rubros en Más.</li>
   </ol>
   <p class="nota">Vista previa web con datos de ejemplo. Los datos quedan en este navegador. Las fotos de tickets, la lectura con Claude y las descargas funcionan en la app de iPhone.</p>

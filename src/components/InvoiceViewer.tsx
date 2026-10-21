@@ -1,6 +1,7 @@
 import { Share } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import { shortDate } from '../domain/dates';
+import { CARD_NAME_MAX, cardName, knownCards, sameCard } from '../domain/installments';
 import { dayMonth } from '../domain/statementReview';
 import type { Invoice } from '../domain/types';
 import { NO_DOWNLOADS, saveOrShare } from '../lib/files';
@@ -29,8 +30,10 @@ export function invoiceCount(inv: Invoice): string {
  * Ver una factura o un estado de cuenta guardado dentro de la app, con «Compartir o guardar». Las fotos y los PDF se
  * muestran tal cual; las planillas (CSV, Excel) y el texto, como una tabla de lo que se guardó.
  */
-export function InvoiceViewer({ invoice, onClose }: { invoice: Invoice; onClose: () => void }) {
-  const { ix } = useStore();
+export function InvoiceViewer({ invoice: shown, onClose }: { invoice: Invoice; onClose: () => void }) {
+  const { ix, data } = useStore();
+  // El de ahora (se le puede cambiar el nombre de la tarjeta mientras se mira)
+  const invoice = data.invoices.find((i) => i.id === shown.id) ?? shown;
   const { money } = useMoney();
   const toast = useToast();
   const [file, setFile] = useState<Blob | null>(null);
@@ -116,6 +119,8 @@ export function InvoiceViewer({ invoice, onClose }: { invoice: Invoice; onClose:
           {invoice.items.length > 0 && <span className="shrink-0">{invoiceCount(invoice)}</span>}
         </div>
 
+        {invoice.kind === 'estado' && <CardNameRow invoice={invoice} />}
+
         {status === 'cargando' && !table && (
           <div className="flex flex-col items-center gap-3 py-16 text-muted">
             <div className="h-6 w-6 animate-spin rounded-full border-[3px] border-soft border-t-primary" />
@@ -176,5 +181,53 @@ export function InvoiceViewer({ invoice, onClose }: { invoice: Invoice; onClose:
         )}
       </div>
     </Sheet>
+  );
+}
+
+/**
+ * La tarjeta de un estado de cuenta guardado, con «Cambiar el nombre»: así se arregla una tarjeta que quedó con dos
+ * nombres (sus cuotas se contarían dos veces) o dos tarjetas con el mismo (las de una taparían las de la otra)
+ */
+function CardNameRow({ invoice }: { invoice: Invoice }) {
+  const { data, renameStatementCard } = useStore();
+  const toast = useToast();
+  const [editing, setEditing] = useState(false);
+  const [name, setName] = useState(invoice.card ?? '');
+  const inputId = useId();
+  const options = knownCards(data.invoices);
+  const save = () => {
+    renameStatementCard(invoice.id, name);
+    setEditing(false);
+    toast(name.trim() ? `Listo: este estado de cuenta es de «${name.trim()}»` : 'Listo: este estado de cuenta quedó sin nombre de tarjeta');
+  };
+  if (!editing) {
+    return (
+      <div className="flex items-center gap-3 rounded-2xl border border-line px-3 py-1">
+        <span className="min-w-0 flex-1 truncate text-[16px]">Tarjeta: {cardName(invoice)}</span>
+        <button className="min-h-tap shrink-0 px-1 text-primary" onClick={() => { setName(invoice.card ?? ''); setEditing(true); }}>Cambiar el nombre</button>
+      </div>
+    );
+  }
+  return (
+    <form className="space-y-2 rounded-2xl border border-line p-3" onSubmit={(e) => { e.preventDefault(); save(); }}>
+      <label className="label" htmlFor={inputId}>Nombre de la tarjeta</label>
+      <input id={inputId} className="field" autoComplete="off" maxLength={CARD_NAME_MAX} placeholder="Itaú, OCA, BROU, Scotiabank…" value={name} onChange={(e) => setName(e.target.value)} />
+      {options.length > 0 && (
+        <div className="flex flex-wrap gap-2">
+          {options.map((c) => (
+            <button type="button" key={c} className={`max-w-full ${sameCard(c, name) && name.trim() ? 'chip-on' : 'chip'}`} aria-pressed={sameCard(c, name) && !!name.trim()} onClick={() => setName(c)}>
+              <span className="truncate">{c}</span>
+            </button>
+          ))}
+        </div>
+      )}
+      <p className="text-[15px] leading-snug text-muted">
+        Con el mismo nombre todos los meses, se juntan sus cuotas. Si son dos tarjetas distintas, ponele otro nombre a cada una.
+      </p>
+      <div className="flex gap-2">
+        <button type="button" className="btn-ghost" onClick={() => setEditing(false)}>Cancelar</button>
+        <button className="btn-primary flex-1">Guardar el nombre</button>
+      </div>
+    </form>
   );
 }

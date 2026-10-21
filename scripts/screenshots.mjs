@@ -221,7 +221,9 @@ async function run(scheme) {
   if (JSON.stringify(first) !== JSON.stringify(['La Pasiva', 'Movie Center', 'Uber Trip'])) throw new Error(`Nuevos la primera vez: ${first}`);
   await shot('23-revisar-tarjeta');
   await page.getByRole('button', { name: 'Ver y cambiar' }).click();
-  await page.getByRole('button', { name: 'Ver', exact: true }).click();
+  // Las compras en cuotas y lo que no son gastos
+  await page.getByRole('region', { name: 'Compras en cuotas' }).getByRole('button', { name: 'Ver las compras en cuotas' }).click();
+  await page.getByRole('button', { name: 'Ver lo que no son gastos' }).click();
   await shotScroller('24-revisar-tarjeta-completo');
   for (const [merchant, rubro] of [['La Pasiva', 'Comer afuera'], ['Movie Center', 'Paseos'], ['Uber Trip', 'Paseos']]) {
     await nuevos.getByRole('group', { name: merchant }).getByRole('button', { name: 'Elegir rubro' }).click();
@@ -320,6 +322,54 @@ async function runLock() {
   await answer('cancel');
   await page.getByRole('button', { name: 'Desbloquear con Face ID' }).waitFor();
   await shot('30-bloqueo');
+  await ctx.close();
+}
+
+// Tarjetas y cuotas: con los datos de ejemplo (estados de cuenta inventados de tres tarjetas) en un día fijo
+async function runCuotas() {
+  const names = ['40-tarjetas-y-cuotas', '41-me-da-para-comprar', '42-revisar-cuotas', '43-inicio-mes-que-viene'];
+  if (only && !names.some((n) => n.startsWith(only))) return;
+  const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, colorScheme: 'light', locale: 'es-UY', hasTouch: true });
+  await mockFx(ctx);
+  const page = await ctx.newPage();
+  page.on('pageerror', (e) => console.error('pageerror', e.message));
+  const shot = async (name) => {
+    if (only && !name.startsWith(only)) return;
+    await page.waitForTimeout(350);
+    await page.screenshot({ path: join(out, `${name}.png`), animations: 'disabled' });
+    console.log('✓', name);
+  };
+  // Entera, con la ventana del alto de la página (fullPage dejaría la barra de pestañas por la mitad)
+  const shotWhole = async (name, height) => {
+    if (only && !name.startsWith(only)) return;
+    await page.setViewportSize({ width: 390, height: height ?? await page.evaluate(() => document.documentElement.scrollHeight) });
+    await shot(name);
+    await page.setViewportSize({ width: 390, height: 844 });
+  };
+  await page.clock.setFixedTime(new Date('2026-10-21T10:00:00'));
+  await page.goto(url);
+  await page.getByRole('button', { name: 'Mirar con datos de ejemplo' }).click();
+  await page.getByText('Estás viendo datos de ejemplo (inventados).').first().waitFor({ timeout: 20000 });
+  await page.getByRole('button', { name: /El mes que viene/ }).waitFor();
+  await shot('43-inicio-mes-que-viene');
+  await page.getByRole('button', { name: /El mes que viene/ }).click();
+  await page.getByRole('heading', { name: 'Tarjetas y cuotas' }).waitFor();
+  await shotWhole('40-tarjetas-y-cuotas');
+  await page.getByLabel('Cuánto sale').fill('18000');
+  await page.getByRole('button', { name: '6 cuotas' }).click();
+  await page.getByRole('group', { name: 'Con qué tarjeta (opcional)' }).getByRole('button', { name: 'OCA' }).click();
+  await page.getByRole('heading', { name: '¿Me da para comprar?' }).evaluate((el) => window.scrollTo(0, el.getBoundingClientRect().top + window.scrollY - 76));
+  await shot('41-me-da-para-comprar');
+  // El estado de cuenta de ejemplo: el bloque de las cuotas, abierto
+  await page.getByLabel('Volver').click();
+  await page.getByRole('button', { name: 'Tarjeta', exact: true }).click();
+  await page.getByRole('button', { name: 'Probar con un estado de cuenta de ejemplo' }).click();
+  await page.getByRole('heading', { name: 'Revisar compras' }).waitFor();
+  const block = page.getByRole('region', { name: 'Compras en cuotas' });
+  await block.getByRole('button', { name: 'Ver las compras en cuotas' }).click();
+  await page.getByText(/Cotización BCU de cada día/).waitFor();
+  await block.evaluate((el) => el.closest('.overflow-y-auto').scrollTo(0, el.offsetTop - 70));
+  await shot('42-revisar-cuotas');
   await ctx.close();
 }
 
@@ -473,7 +523,36 @@ async function runHousehold() {
   fake.close();
 }
 
+// La entrada (?intro), con el reloj quieto: un paso a la mitad, el cuadro 14 recién entrado sobre el 13. Tiene que verse
+// uno solo (los cuadros son transparentes fuera del dibujo: con el anterior debajo, se ven dos suricatas)
+async function runIntro() {
+  if (only && !'44-entrada'.startsWith(only)) return;
+  const steps = JSON.parse(await readFile(join(root, 'src/assets/intro/timing.json'), 'utf8'));
+  const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, locale: 'es-UY', hasTouch: true });
+  const page = await ctx.newPage();
+  page.on('pageerror', (e) => console.error('pageerror', e.message));
+  await page.clock.install({ time: new Date('2026-10-21T09:00:00') });
+  await page.clock.pauseAt(new Date('2026-10-21T09:00:01'));
+  await page.goto(`${url}?intro`);
+  const frames = page.locator('button[aria-label="Saltar la presentación"] img');
+  await frames.first().waitFor({ state: 'attached' });
+  const step = steps.findIndex(([frame]) => frame === 14);
+  await page.clock.runFor(Math.round(steps.slice(0, step).reduce((s, [, t]) => s + t, 0) * 1000) + 50);
+  // El fundido (70 ms) es una animación: corre con el reloj de verdad
+  await page.waitForTimeout(300);
+  const visible = await frames.evaluateAll((imgs) => imgs.filter((im) => Number(getComputedStyle(im).opacity) > 0.01).length);
+  if (visible !== 1) {
+    console.error(`✗ 44-entrada: se ven ${visible} cuadros a la vez`);
+    process.exitCode = 1;
+  }
+  await page.screenshot({ path: join(out, '44-entrada.png') });
+  console.log('✓', '44-entrada');
+  await ctx.close();
+}
+
 await run('light');
+await runIntro();
+await runCuotas();
 await runLock();
 await runBackup();
 await runDemo();

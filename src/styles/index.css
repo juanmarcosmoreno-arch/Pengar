@@ -155,11 +155,13 @@ select {
 .suricata-hop { animation: suricata-hop 0.6s ease-out 2; transform-origin: 50% 100%; }
 .suricata-sway { animation: suricata-sway 1.8s ease-in-out infinite alternate; transform-origin: 50% 100%; }
 
-/* La entrada (components/Intro.tsx): cada cuadro entra con un fundido cortito; al final se va todo junto */
+/* La entrada (components/Intro.tsx): cada cuadro entra con un fundido cortito y el anterior se va en el mismo; al final
+   se va todo junto */
 @keyframes intro-out {
   to { opacity: 0; }
 }
 .intro-frame-in { animation: fade-in 70ms linear; }
+.intro-frame-out { animation: intro-out 70ms linear forwards; }
 .intro-word { animation: fade-in 0.5s ease-out 0.15s both; }
 .intro-out { animation: intro-out 0.32s ease-in forwards; pointer-events: none; }
 

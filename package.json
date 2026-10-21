@@ -19,6 +19,7 @@
     "e2e:backup": "node scripts/e2e-backup.mjs",
     "e2e:hogar": "node scripts/e2e-hogar.mjs",
     "e2e:demo": "node scripts/e2e-demo.mjs",
+    "e2e:cuotas": "node scripts/e2e-cuotas.mjs",
     "ios": "npm run build && cap sync ios && cap open ios",
     "ios:sync": "npm run build && cap sync ios"
   },

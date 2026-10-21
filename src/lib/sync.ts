@@ -1163,7 +1163,8 @@ export function startSync(host: Pick<SyncHost, 'getData' | 'setData' | 'saveData
 
 /**
  * Mientras está la pantalla de bloqueo (Face ID) el hogar no trae ni manda nada (lo que esperaba para mandarse, se manda
- * ya); al sacarla, se pone al día. La pone LockGate antes de que arranque el motor, así al abrir bloqueada no sale nada
+ * ya); al sacarla, se pone al día. Al abrir con el bloqueo prendido la pone el store antes de arrancar el motor (la
+ * pantalla de bloqueo se arma después, pasada la entrada), así al abrir bloqueada no sale nada; después, LockGate
  */
 export function holdSync(on: boolean): void {
   if (held === on) return;

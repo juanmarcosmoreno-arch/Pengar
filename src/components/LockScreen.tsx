@@ -104,8 +104,8 @@ export function LockGate({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (content.current) content.current.inert = hidden;
   }, [hidden, opened]);
-  // El hogar compartido no trae ni manda nada mientras está bloqueada (al abrir, ni arranca: este efecto va antes que
-  // el del store)
+  // El hogar compartido no trae ni manda nada mientras está bloqueada (al abrir, ni arranca: el store lo arranca en
+  // pausa, y esto la saca al desbloquear)
   useEffect(() => holdSync(hidden), [hidden]);
   useEffect(() => () => holdSync(false), []);
 

@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { alignMonths, exampleData, exampleDaily } from '../example';
 import { importMonthlySheet, type Cell } from '../importSheet';
+import { commitments, nextMonthOutlook } from '../installments';
 import { buildIndex, kpis } from '../stats';
 import { templateData } from '../template';
 
@@ -32,6 +33,23 @@ describe('datos de ejemplo', () => {
     expect(exampleDaily(onlySuper, '2026-11-15').map((m) => nameOf(m.rubroId))).toEqual(['Supermercado', 'Supermercado']);
   });
 
+  it('las tarjetas: lo comprometido de cada una, el margen del mes que viene y una desactualizada', () => {
+    const res = importMonthlySheet(JSON.parse(readFileSync('public/ejemplo.json', 'utf8')) as Cell[][]);
+    for (const day of ['2026-10-01', '2026-10-21', '2026-10-31', '2027-01-05']) {
+      const data = exampleData(res, day);
+      const c = commitments(data, { today: day });
+      expect(c.cards.map((x) => [x.card, x.stale])).toEqual([['Itaú', false], ['OCA', false], ['Scotiabank', true]]);
+      // El de la cuota en dólares lleva su cuenta
+      expect(c.cards[0].plans.find((p) => p.usd)).toMatchObject({ merchant: 'Vuelos Celeste', usd: 100, rate: 40.1, amount: 4010 });
+      // La 3/3 ya terminó
+      expect(c.cards[0].plans.some((p) => p.merchant === 'Zapateria el Paso')).toBe(false);
+      const o = nextMonthOutlook(data, { today: day });
+      expect(o.income?.from).toBe('promedio');
+      expect(o.installments).toBeGreaterThan(0);
+      expect(o.margin).not.toBeNull();
+    }
+  });
+
   it('corre los meses de la planilla hasta el mes pasado y suma lo de este mes', () => {
     const res = importMonthlySheet(JSON.parse(readFileSync('public/ejemplo.json', 'utf8')) as Cell[][]);
     expect(alignMonths(res.movements, '2027-03').map((m) => m.date).sort().at(-1)).toBe('2027-03-01');
@@ -41,6 +59,8 @@ describe('datos de ejemplo', () => {
     expect(new Set(months).size).toBe(res.months.length);
     expect(data.settings).toMatchObject({ name: 'Ana', onboarded: true, example: true });
     expect(data.goals).toMatchObject([{ name: 'Vacaciones', target: 60000, saved: 18000 }]);
+    // Los estados de cuenta anteriores de tres tarjetas, con sus cuotas
+    expect(data.invoices.map((i) => [i.kind, i.card, i.date])).toEqual([['estado', 'OCA', '2027-03-25'], ['estado', 'Itaú', '2027-03-28'], ['estado', 'Scotiabank', '2027-02-15']]);
     // En lo que va de abril entró el sueldo y quedó plata
     const k = kpis(data, buildIndex(data), { from: '2027-04', to: '2027-04', includeSavings: false });
     expect(k.income).toBeGreaterThan(0);

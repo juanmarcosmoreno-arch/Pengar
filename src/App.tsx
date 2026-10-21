@@ -18,6 +18,7 @@ import { Goals } from './screens/Goals';
 import { Help } from './screens/Help';
 import { Home } from './screens/Home';
 import { Household } from './screens/Household';
+import { InstallmentsScreen } from './screens/Installments';
 import { Invoices } from './screens/Invoices';
 import { More, type MorePage } from './screens/More';
 import { MonthReport } from './screens/MonthReport';
@@ -126,10 +127,12 @@ function AppContent() {
   };
 
   let content: React.ReactNode;
-  if (tab === 'mas' && page) {
+  // «Tarjetas y cuotas» también se abre desde Inicio: «volver» lleva a donde estaba
+  if (page && (tab === 'mas' || page === 'cuotas')) {
     content = {
       presupuesto: <Budget onBack={back} />,
       fijos: <RecurringScreen onBack={back} />,
+      cuotas: <InstallmentsScreen onBack={back} onStatement={() => setScanning('tarjeta')} />,
       categorias: <Categories onBack={back} />,
       metas: <Goals onBack={back} />,
       facturas: <Invoices onBack={back} />,
@@ -155,6 +158,7 @@ function AppContent() {
         }}
         onGo={(where) => (where === 'movimientos' ? go('movimientos') : statsMonthView(currentMonth()))}
         onReport={setReport}
+        onInstallments={() => setPage('cuotas')}
       />
     );
   } else if (tab === 'movimientos') {

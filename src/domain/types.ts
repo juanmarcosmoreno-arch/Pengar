@@ -73,6 +73,22 @@ export interface InvoiceItem {
   date?: string;
 }
 
+/** Una compra en cuotas de un estado de cuenta: la cuota de ese mes (n de `of`) */
+export interface InvoiceInstallment {
+  /** Comercio limpio («Tienda Inglesa») y su clave («tienda inglesa») */
+  merchant: string;
+  key: string;
+  /** Lo que se cobra por cuota, en pesos */
+  amount: number;
+  n: number;
+  of: number;
+  /** Fecha de la compra (YYYY-MM-DD) */
+  date: string;
+  /** Si era en dólares: la cuota en U$S y la cotización con la que se pasó a pesos */
+  usd?: number;
+  rate?: number;
+}
+
 /**
  * Factura, ticket o estado de cuenta de la tarjeta guardado. El archivo (foto, PDF o planilla) se guarda aparte,
  * con la clave `file:<id>`.
@@ -83,12 +99,22 @@ export interface Invoice {
   kind?: 'factura' | 'estado';
   /** Tarjeta del estado de cuenta («OCA», «Visa BROU») */
   card?: string;
+  /** Estado de cuenta: la tarjeta que se leyó en él, si se leyó (para proponer el mismo nombre el mes que viene) */
+  readCard?: string;
   fileName: string;
   mime: string;
   merchant?: string;
   date?: string;
   total?: number;
   items: InvoiceItem[];
+  /**
+   * Estado de cuenta: sus compras en cuotas (las de los comercios que no son gastos, no). Sin esto (los guardados
+   * antes), se deducen de sus gastos con «cuota n/N» en la nota (domain/installments)
+   */
+  installments?: InvoiceInstallment[];
+  /** Estado de cuenta: límite de crédito y crédito disponible, si los trae */
+  limit?: number;
+  available?: number;
   createdAt: number;
 }
 

@@ -3,9 +3,12 @@ import { learnFrom, merchantKey, suggestRubro } from '../classify';
 import type { Cell } from '../importSheet';
 import type { TextBox } from '../ocrLines';
 import {
+  balanceCharge,
+  balanceGaps,
   detectCard,
   findDuplicates,
   installmentOf,
+  installmentsAtClosing,
   normalizeMerchant,
   parseStatementRows,
   parseStatementTable,
@@ -14,12 +17,16 @@ import {
   rowsFromBoxes,
   statementInfo,
   statementKind,
+  statementBalances,
   statementPeriod,
   toLocal,
+  withoutInstallment,
   type StatementCell,
   type StatementRow,
   type StatementTx,
 } from '../statement';
+import { statementNote } from '../statementReview';
+import { readRecord, toRecords } from '../sync';
 import { emptyData, normalizeData, templateData } from '../template';
 import type { Data, Movement } from '../types';
 
@@ -188,9 +195,9 @@ describe('estado de cuenta Santander (texto plano)', () => {
     expect(txs[5]).toMatchObject({ merchant: 'Farmacia San Roque', installment: '2/6' });
     expect(txs[6].merchant).toBe('Uber Trip');
   });
-  it('período desde el cierre anterior', () => {
+  it('período desde el cierre anterior; límite y disponible con el título al lado', () => {
     const info = statementInfo(SANTANDER);
-    expect(info).toMatchObject({ closing: '2025-12-18', previous: '2025-11-18', due: '2026-01-05', card: 'Visa Santander' });
+    expect(info).toMatchObject({ closing: '2025-12-18', previous: '2025-11-18', due: '2026-01-05', card: 'Visa Santander', limit: 150000, available: 98500 });
     expect(statementPeriod(txs, info)).toEqual({ from: '2025-11-19', to: '2025-12-18' });
   });
 });
@@ -261,6 +268,402 @@ describe('estado de cuenta Itaú (texto de Tesseract)', () => {
     expect(txs[2].installment).toBe('1/3');
     expect(txs[3].merchant).toBe('Rappi');
     expect(statementInfo(ITAU)).toEqual({ closing: '2025-10-23', due: '2025-11-07', card: 'Master Itaú' });
+  });
+});
+
+// --- Scotiabank en PDF: la cuota pegada al final («C03/03», hasta sin espacio), límite y disponible en el encabezado ---
+// Datos inventados: imitan solo el formato (columnas, posiciones y cómo se escribe la cuota)
+
+const SCOTIA_PDF: StatementRow[] = [
+  row(cell('VENC.', 0.45), cell('TARJETA NÚMERO', 0.49)),
+  row(cell('ANA PEREZ', 0.09)),
+  row(cell('NUMERO DE CUENTA', 0.057), cell('LIMITE DE CREDITO', 0.16), cell('CREDITO DISPONIBLE', 0.254), cell('FECHA DE CIERRE', 0.359), cell('VENCIMIENTO PAGO PROXIMO VENC. PAGO', 0.441)),
+  row(cell('11112222', 0.077), right('$ 150.000,00', 0.246), right('$ 98.765,43', 0.346), cell('25/03/2026', 0.37), cell('08/04/2026', 0.456), cell('07/05/2026', 0.547)),
+  row(cell('FECHA', 0.064), cell('TARJETA', 0.109), cell('DETALLE', 0.253), right('IMPORTE EN ORIGEN', 0.485), right('IMPORTE $', 0.543), right('IMPORTE U$S', 0.614)),
+  row(cell('02/03/2026', 0.054), cell('PAGO EN SCOTIABANK', 0.154), right('-3.000,00', 0.549)),
+  row(cell('14/12/2025', 0.054), cell('LIBRERIA DEL PUERTO C03/03', 0.154), right('640,00', 0.549)),
+  row(cell('27/02/2026', 0.054), cell('ALMACEN LOS ROBLES', 0.154), right('1.210,50', 0.549)),
+  row(cell('01/03/2026', 0.054), cell('HELADERIA LA NUBEC01/02', 0.154), right('455,00', 0.549)),
+  row(cell('09/03/2026', 0.054), cell('HELADERIA LA NUBE', 0.154), right('185,00', 0.549)),
+  row(cell('18/03/2026', 0.054), cell('VIVERO EL CEIBOC01/03', 0.154), right('2.400,00', 0.549)),
+  row(cell('** TOTAL Tarjeta : ANA PEREZ', 0.154), right('4.890,50', 0.549)),
+  row(cell('25/03/2026', 0.054), cell('SEG.VIDA S/SALDO FINAN.CONTRAT', 0.154), right('31,20', 0.549)),
+  row(cell('Total devolucion IVA Ley 17934 en MN', 0.154), right('96,10', 0.487)),
+  row(cell('ELECTRONICA A TRAVES DE SUCURSAL INTERNET: www.scotiabank.com.uy', 0.051)),
+];
+
+describe('estado de cuenta Scotiabank (PDF, cuota pegada al comercio)', () => {
+  const txs = parseStatementRows(SCOTIA_PDF, { today: '2026-04-02' });
+  const text = SCOTIA_PDF.map((r) => r.cells.map((c) => c.text).join(' ')).join('\n');
+  it('compras, cuotas, el pago y el seguro; los totales sin fecha no son movimientos', () => {
+    expect(brief(txs)).toEqual([
+      ['2026-03-02', 'pago', 'local', -3000, 'pago scotiabank'],
+      ['2025-12-14', 'compra', 'local', 640, 'libreria puerto'],
+      ['2026-02-27', 'compra', 'local', 1210.5, 'almacen robles'],
+      ['2026-03-01', 'compra', 'local', 455, 'heladeria nube'],
+      ['2026-03-09', 'compra', 'local', 185, 'heladeria nube'],
+      ['2026-03-18', 'compra', 'local', 2400, 'vivero'],
+      ['2026-03-25', 'cargo', 'local', 31.2, 'segvida'],
+    ]);
+    expect(txs.map((t) => t.installment ?? '')).toEqual(['', '3/3', '', '1/2', '', '1/3', '']);
+    // Sin la cuota pegada: el mismo comercio que sin cuota
+    expect(txs[3]).toMatchObject({ merchant: 'Heladeria la Nube', description: 'HELADERIA LA NUBEC01/02' });
+    expect(txs[5].merchant).toBe('Vivero el Ceibo');
+    // Las compras suman el «TOTAL Tarjeta»
+    expect(txs.filter((t) => t.kind === 'compra').reduce((a, t) => a + t.amount, 0)).toBeCloseTo(4890.5, 2);
+  });
+  it('encabezado: límite y disponible del renglón de abajo, cierre, vencimiento y la tarjeta', () => {
+    expect(statementInfo(text)).toEqual({ closing: '2026-03-25', due: '2026-04-08', limit: 150000, available: 98765.43, card: 'Scotiabank' });
+  });
+  it('sin el comienzo del período: desde la primera compra (no la cuota vieja); la cuota de una compra vieja va al cierre', () => {
+    const period = statementPeriod(txs, statementInfo(text));
+    expect(period).toEqual({ from: '2026-02-27', to: '2026-03-25' });
+    const moved = installmentsAtClosing(txs, period);
+    expect(moved[1]).toMatchObject({ date: '2026-03-25', purchaseDate: '2025-12-14', installment: '3/3' });
+    // La primera cuota de una compra del período queda con su fecha
+    expect(moved[3]).toMatchObject({ date: '2026-03-01', installment: '1/2' });
+    expect(moved[3].purchaseDate).toBeUndefined();
+    expect(moved.filter((t) => t.purchaseDate)).toHaveLength(1);
+  });
+});
+
+// --- Itaú en PDF: sin encabezados, fecha «DD MM YY», los 4 dígitos de la tarjeta, la cuota en su columna --------
+// Tres columnas de importe: el de origen (en dólares), el de $ y el de U$S. Datos inventados
+
+/** Renglón como el de Itaú: día, «mes año», la tarjeta, el comercio, la cuota y los importes donde van */
+const itau = (d: string, my: string, cardNo: string, desc: string, cuota: string, amts: { origen?: string; pesos?: string; usd?: string }) => row(
+  cell(d, 0.112), cell(my, 0.133), cell(cardNo, 0.182), cell(desc, 0.239),
+  ...(cuota ? [right(cuota, 0.521)] : []),
+  ...(amts.origen ? [right(amts.origen, 0.698)] : []),
+  ...(amts.pesos ? [right(amts.pesos, 0.796)] : []),
+  ...(amts.usd ? [right(amts.usd, 0.895)] : []),
+);
+const ITAU_HEAD = [
+  row(cell('1/', 0.886), cell('2', 0.907)),
+  row(cell('28/08/26', 0.825)),
+  row(cell('ANA PEREZ', 0.462)),
+  row(cell('12/09/26', 0.222), cell('29/09/26', 0.346), cell('CALLE FALSA 123', 0.462)),
+  row(cell('111111-1', 0.109), cell('$', 0.209), right('90.000,00', 0.315), cell('$', 0.334), right('41.000,00', 0.44)),
+  row(right('61,00%', 0.605), right('8,50%', 0.778), right('7,77', 0.878)),
+];
+const ITAU_PDF: StatementRow[] = [
+  ...ITAU_HEAD,
+  row(cell('SALDO DEL ESTADO DE CUENTA ANTERIOR', 0.225), right('50.000,00', 0.705), right('120,00', 0.782)),
+  row(cell('31', 0.112), cell('07 26', 0.133), cell('PAGOS', 0.189), right('-50.000,00', 0.796), right('-120,00', 0.895)),
+  itau('05', '08 26', '2011', 'SUPERMERCADO EL TREBOL', '', { pesos: '1500,00' }),
+  itau('10', '03 26', '2011', 'VIAJES ARCOIRIS', '6/12', { usd: '150,00' }),
+  itau('12', '08 26', '2011', 'STREAMFLIX.COM', '', { origen: '15,99', usd: '15,99' }),
+  itau('20', '08 26', '2011', 'CLOUDBOX', '', { origen: '0,99', usd: '-0,99' }),
+  itau('15', '01 26', '2045', 'MUEBLERIA LOS PINOS', '8/ 8', { pesos: '2000,00' }),
+  itau('06', '07 26', '2045', 'ZAPATERIA EL PASO', '2/ 3', { pesos: '900,00' }),
+  itau('11', '12 25', '2045', 'COLCHONERIA DESCANSO', '9/12', { pesos: '1250,00' }),
+  itau('18', '08 26', '2045', 'OPTICA VISION', '1/ 6', { pesos: '960,00' }),
+  itau('18', '08 26', '2045', 'REDUC. IVA LEY 17934', '', { pesos: '-20,00' }),
+  itau('22', '08 26', '2011', 'LA PARRILLA DEL ESTE', '', { usd: '85,00' }),
+  // Una compra que el comercio presentó tarde: trae su fecha de antes del período
+  itau('20', '07 26', '2045', 'KIOSCO LA ESQUINA', '', { pesos: '300,00' }),
+  itau('28', '08 26', '2045', 'PEQUE?OS GIGANTES', '', { pesos: '640,00' }),
+  row(cell('SEGURO DE VIDA SOBRE SALDO', 0.239), right('300,00', 0.796), right('2,00', 0.895)),
+  row(cell('En', 0.175), cell('este mes la Reducción de IVA - Leyes N° 17934 y N° 19210 es de $', 0.196), right('-20,00', 0.747)),
+  row(cell('SALDO CONTADO', 0.189), right('7.830,00', 0.796), right('252,00', 0.895)),
+  row(cell('*', 0.161), cell('Los', 0.175), cell('montos a financiar y cuotas son meramente indicativos, pudiendo variar de acuerdo', 0.204)),
+  row(cell('3', 0.168), cell('cuotas de', 0.182), right('2.300,00', 0.465), cell('TEA', 0.493), right('61,00 %', 0.578)),
+];
+
+describe('estado de cuenta Itaú (PDF sin encabezados)', () => {
+  const txs = parseStatementRows(ITAU_PDF, { today: '2026-09-05' });
+  const text = ITAU_PDF.map((r) => r.cells.map((c) => c.text).join(' ')).join('\n');
+  it('fecha en tres pedazos, sin los dígitos de la tarjeta, y cada importe en su columna', () => {
+    expect(brief(txs)).toEqual([
+      ['2026-07-31', 'pago', 'local', -50000, 'pagos'],
+      ['2026-07-31', 'pago', 'usd', -120, 'pagos'],
+      ['2026-08-05', 'compra', 'local', 1500, 'supermercado trebol'],
+      ['2026-03-10', 'compra', 'usd', 150, 'viajes'],
+      ['2026-08-12', 'compra', 'usd', 15.99, 'streamflix'],
+      ['2026-08-20', 'credito', 'usd', -0.99, 'cloudbox'],
+      ['2026-01-15', 'compra', 'local', 2000, 'muebleria'],
+      ['2026-07-06', 'compra', 'local', 900, 'zapateria'],
+      ['2025-12-11', 'compra', 'local', 1250, 'colchoneria'],
+      ['2026-08-18', 'compra', 'local', 960, 'optica vision'],
+      ['2026-08-18', 'credito', 'local', -20, 'reduc'],
+      ['2026-08-22', 'compra', 'usd', 85, 'parrilla este'],
+      ['2026-07-20', 'compra', 'local', 300, 'kiosco esquina'],
+      ['2026-08-28', 'compra', 'local', 640, 'pequenos'],
+      // Sin fecha, pegado al último movimiento: en pesos y en dólares
+      ['2026-08-28', 'cargo', 'local', 300, 'seguro'],
+      ['2026-08-28', 'cargo', 'usd', 2, 'seguro'],
+    ]);
+  });
+  it('la cuota de su columna («6/12», «8/ 8») y el comercio limpio', () => {
+    expect(txs.map((t) => t.installment ?? '')).toEqual(['', '', '', '6/12', '', '', '8/8', '2/3', '9/12', '1/6', '', '', '', '', '', '']);
+    expect(txs[3]).toMatchObject({ description: 'VIAJES ARCOIRIS 6/12', merchant: 'Viajes Arcoiris' });
+    expect(txs[6].merchant).toBe('Muebleria los Pinos');
+    expect(txs.some((t) => /2011|2045/.test(t.description))).toBe(false);
+    // La Ñ que el PDF escribió como «?»
+    expect(txs[13].merchant).toBe('Pequeños Gigantes');
+  });
+  it('cierra con el saldo contado en pesos y en dólares', () => {
+    const total = (cur: string) => txs.filter((t) => t.currency === cur && t.kind !== 'pago').reduce((a, t) => a + t.amount, 0);
+    expect(total('local')).toBeCloseTo(7830, 2);
+    expect(total('usd')).toBeCloseTo(252, 2);
+    // El saldo anterior (corrido de las columnas) y el contado, por orden: con los movimientos, no falta nada
+    expect(statementBalances(text)).toEqual({ previous: { local: 50000, usd: 120 }, closing: { local: 7830, usd: 252 } });
+    expect(balanceGaps(txs, text)).toEqual([]);
+  });
+  it('si el saldo contado es más que el anterior y los movimientos, avisa cuánto falta', () => {
+    const more = text.replace('SALDO CONTADO 7.830,00 252,00', 'SALDO CONTADO 7.830,00 260,00');
+    expect(balanceGaps(txs, more)).toEqual([{ currency: 'usd', amount: 8 }]);
+    expect(balanceCharge('2026-08-28', 'usd', 8)).toMatchObject({ kind: 'cargo', currency: 'usd', amount: 8, balance: true });
+    // Sin el saldo anterior no se compara
+    expect(balanceGaps(txs, more.replace(/SALDO DEL ESTADO DE CUENTA ANTERIOR.*/, ''))).toEqual([]);
+  });
+  it('sin cierre escrito: el período termina en el último movimiento y empieza un mes antes (aunque haya una compra presentada tarde)', () => {
+    const info = statementInfo(text);
+    // Sin el nombre del banco en el texto: la tarjeta la pregunta la pantalla
+    expect(info.card).toBeUndefined();
+    expect(info.closing).toBeUndefined();
+    const period = statementPeriod(txs, info);
+    expect(period).toEqual({ from: '2026-07-29', to: '2026-08-28' });
+    const moved = installmentsAtClosing(txs, period);
+    expect(moved.filter((t) => t.purchaseDate).map((t) => [t.installment, t.purchaseDate, t.date])).toEqual([
+      ['6/12', '2026-03-10', '2026-08-28'],
+      ['8/8', '2026-01-15', '2026-08-28'],
+      ['2/3', '2026-07-06', '2026-08-28'],
+      ['9/12', '2025-12-11', '2026-08-28'],
+    ]);
+    // La primera cuota de una compra del período, con su fecha
+    expect(moved[9]).toMatchObject({ date: '2026-08-18', installment: '1/6' });
+  });
+  it('sin «cierre» escrito, el cierre es la fecha sola de arriba: las cuotas que siguen van ahí aunque el último movimiento sea antes', () => {
+    const rows = [
+      row(cell('28/09/26', 0.825)),
+      row(cell('13/10/26', 0.222), cell('09/11/26', 0.346)),
+      row(cell('31', 0.112), cell('08 26', 0.133), cell('PAGOS', 0.189), right('-50.000,00', 0.796), right('-120,00', 0.895)),
+      itau('20', '07 26', '2011', 'KIOSCO LA ESQUINA', '', { pesos: '300,00' }),
+      itau('02', '09 26', '2011', 'SUPERMERCADO EL TREBOL', '', { pesos: '1500,00' }),
+      itau('20', '09 26', '2011', 'PANADERIA LA ESPIGA', '', { pesos: '150,00' }),
+      itau('25', '08 26', '2011', 'ZAPATERIA EL PASO', '2/ 3', { pesos: '900,00' }),
+      itau('22', '08 26', '2011', 'VIVERO EL CEIBO', '2/ 2', { pesos: '400,00' }),
+      itau('12', '08 26', '2011', 'OPTICA VISION', '2/ 6', { pesos: '960,00' }),
+    ];
+    const txs = parseStatementRows(rows, { today: '2026-10-05' });
+    const info = statementInfo(rows.map((r) => r.cells.map((c) => c.text).join(' ')).join('\n'));
+    expect(info.pageDate).toBe('2026-09-28');
+    const period = statementPeriod(txs, info);
+    expect(period).toEqual({ from: '2026-08-29', to: '2026-09-28' });
+    expect(installmentsAtClosing(txs, period).filter((t) => t.installment).map((t) => [t.installment, t.date])).toEqual([
+      ['2/3', '2026-09-28'], ['2/2', '2026-09-28'], ['2/6', '2026-09-28'],
+    ]);
+    // Sin esa fecha, el período termina en el último movimiento y empieza unos días antes del real: las que siguen de
+    // los últimos 25 días igual van al cierre (el banco repite la fecha de la compra)
+    const noPage = statementPeriod(txs, {});
+    expect(noPage).toEqual({ from: '2026-08-21', to: '2026-09-20' });
+    expect(installmentsAtClosing(txs, noPage).filter((t) => t.installment).map((t) => t.date)).toEqual(['2026-09-20', '2026-09-20', '2026-09-20']);
+    // Una fecha sola que no cuadra con los movimientos (mucho después del último) no es el cierre
+    expect(statementPeriod(txs, { pageDate: '2026-12-01' })?.to).toBe('2026-09-20');
+  });
+  it('la tarjeta sale del encabezado o del pie, nunca de un comercio que se llama como una marca o un banco', () => {
+    const head = Array.from({ length: 22 }, (_, i) => `RENGLON DEL ENCABEZADO ${i + 1}`);
+    const doc = (move: string) => [...head, move, 'Consultas en www.itau.com.uy'].join('\n');
+    expect(detectCard(doc('13 09 26 2011 SUPERMERCADO EL TREBOL 1.500,00'))).toBe('Itaú');
+    for (const name of ['OPTICA MASTER', 'RESTAURANTE LA OCA', 'FARMACIA SANTANDER', 'VISA VIAJES', 'PAGO OCA']) {
+      expect(detectCard(doc(`13 09 26 2011 ${name} 1.500,00`))).toBe('Itaú');
+    }
+    // En los primeros renglones también: un movimiento no es el encabezado
+    expect(detectCard(['ESTADO DE CUENTA', '05/09/2026 MASTER CLEAN TINTORERIA 1.500,00', 'www.itau.com.uy'].join('\n'))).toBe('Itaú');
+  });
+  it('un cargo sin fecha después de cuotas viejas va con la fecha más nueva, no con la de la compra', () => {
+    const rows = [
+      row(cell('28/09/26', 0.825)),
+      itau('02', '09 26', '2011', 'SUPERMERCADO EL TREBOL', '', { pesos: '1500,00' }),
+      itau('25', '09 26', '2011', 'FARMACIA LOS ALAMOS', '', { pesos: '700,00' }),
+      // La tarjeta adicional, solo con cuotas de compras anteriores (con la fecha de la compra)
+      itau('15', '01 26', '2045', 'MUEBLERIA LOS PINOS', '9/ 9', { pesos: '2000,00' }),
+      itau('18', '04 26', '2045', 'COLCHONERIA DESCANSO', '6/ 6', { pesos: '760,00' }),
+      row(cell('SEGURO DE VIDA SOBRE SALDO', 0.239), right('300,00', 0.796), right('2,00', 0.895)),
+    ];
+    const txs = parseStatementRows(rows, { today: '2026-10-05' });
+    expect(txs.filter((t) => t.kind === 'cargo').map((t) => [t.date, t.currency, t.amount])).toEqual([['2026-09-25', 'local', 300], ['2026-09-25', 'usd', 2]]);
+  });
+  it('un año de dos cifras lejos del cierre no es una fecha (y el renglón no cuenta)', () => {
+    const rows = [row(cell('Cierre 28/08/2026', 0.05)), itau('10', '03 12', '2011', 'COMERCIO VIEJO', '', { pesos: '100,00' }), itau('10', '08 26', '2011', 'COMERCIO NUEVO', '', { pesos: '200,00' })];
+    expect(brief(parseStatementRows(rows))).toEqual([['2026-08-10', 'compra', 'local', 200, 'comercio']]);
+  });
+});
+
+describe('columnas sin encabezado', () => {
+  it('dos columnas que aparecen solas: primero pesos y después dólares', () => {
+    const rows = [
+      row(cell('Cierre 25/09/2026', 0.05)),
+      row(cell('01/09', 0.05), cell('ALMACEN', 0.14), right('500,00', 0.72)),
+      row(cell('02/09', 0.05), cell('STREAMFLIX', 0.14), right('8,49', 0.92)),
+      row(cell('03/09', 0.05), cell('KIOSCO PEPE', 0.14), right('120,00', 0.72)),
+      row(cell('04/09', 0.05), cell('APPSTORE', 0.14), right('0,00', 0.72), right('2,99', 0.92)),
+    ];
+    expect(parseStatementRows(rows).map((t) => [t.currency, t.amount])).toEqual([['local', 500], ['usd', 8.49], ['local', 120], ['usd', 2.99]]);
+  });
+  it('una columna que nunca va sola es la del importe de origen', () => {
+    const rows = [
+      row(cell('Cierre 25/09/2026', 0.05)),
+      row(cell('01/09', 0.05), cell('MP *MERCADOLIBRE 01/03', 0.14), right('3.000,00', 0.72), right('1.000,00', 0.92)),
+      row(cell('02/09', 0.05), cell('ALMACEN', 0.14), right('450,00', 0.92)),
+      row(cell('03/09', 0.05), cell('MUEBLERIA 01/06', 0.14), right('6.000,00', 0.72), right('1.000,00', 0.92)),
+    ];
+    expect(parseStatementRows(rows).map((t) => [t.currency, t.amount])).toEqual([['local', 1000], ['local', 450], ['local', 1000]]);
+  });
+  // Como Itaú: origen, $ y U$S terminan en 0,698, 0,796 y 0,895
+  const HEAD = [row(cell('28/08/26', 0.825)), row(cell('12/09/26', 0.222), cell('29/09/26', 0.346))];
+  const pagos = row(cell('31', 0.112), cell('07 26', 0.133), cell('PAGOS', 0.189), right('-50.000,00', 0.796), right('-120,00', 0.895));
+  const seguro = row(cell('SEGURO DE VIDA SOBRE SALDO', 0.239), right('300,00', 0.796), right('2,00', 0.895));
+  const pesos = [
+    itau('05', '08 26', '2011', 'SUPERMERCADO EL TREBOL', '', { pesos: '1500,00' }),
+    itau('06', '08 26', '2011', 'FARMACIA LOS ALAMOS', '', { pesos: '700,00' }),
+  ];
+  const read = (rows: StatementRow[]) => parseStatementRows(rows, { today: '2026-09-05' }).map((t) => [t.kind, t.currency, t.amount, t.key]);
+  it('una sola compra en dólares, con su importe de origen o sin él', () => {
+    expect(read([...HEAD, ...pesos, itau('12', '08 26', '2011', 'STREAMFLIX.COM', '', { origen: '15,99', usd: '15,99' })])).toEqual([
+      ['compra', 'local', 1500, 'supermercado trebol'], ['compra', 'local', 700, 'farmacia alamos'], ['compra', 'usd', 15.99, 'streamflix'],
+    ]);
+    expect(read([...HEAD, ...pesos, itau('10', '03 26', '2011', 'VIAJES ARCOIRIS', '6/12', { usd: '150,00' })]).at(-1)).toEqual(['compra', 'usd', 150, 'viajes']);
+  });
+  it('el pago y el seguro en pesos y en dólares marcan las dos columnas, aunque no haya compras en dólares', () => {
+    expect(read([...HEAD, pagos, ...pesos, seguro])).toEqual([
+      ['pago', 'local', -50000, 'pagos'], ['pago', 'usd', -120, 'pagos'],
+      ['compra', 'local', 1500, 'supermercado trebol'], ['compra', 'local', 700, 'farmacia alamos'],
+      ['cargo', 'local', 300, 'seguro'], ['cargo', 'usd', 2, 'seguro'],
+    ]);
+    // Con una sola compra en dólares con su importe de origen: el de origen no es un gasto en pesos
+    expect(read([...HEAD, pagos, ...pesos, itau('12', '08 26', '2011', 'STREAMFLIX.COM', '', { origen: '15,99', usd: '15,99' }), seguro]).filter((t) => t[3] === 'streamflix'))
+      .toEqual([['compra', 'usd', 15.99, 'streamflix']]);
+  });
+  it('sin columnas, los dos importes de un pago o de un cargo son pesos y dólares (de una compra, el último)', () => {
+    const txs = parseStatementText(['10/09 DISCO 500,00', '11/09 PAGOS -1.000,00 -20,00', 'SEGURO DE VIDA 30,00 2,00', '12/09 COMPRA AFUERA 15,99 15,99'].join('\n'), { today: '2025-09-30' });
+    expect(txs.map((t) => [t.kind, t.currency, t.amount])).toEqual([
+      ['compra', 'local', 500], ['pago', 'local', -1000], ['pago', 'usd', -20], ['cargo', 'local', 30], ['cargo', 'usd', 2], ['compra', 'local', 15.99],
+    ]);
+  });
+  it('un renglón que nombra «pesos» y «dólares» no es un encabezado, ni arriba ni abajo de los movimientos', () => {
+    const moves = [
+      pagos, ...pesos,
+      itau('10', '03 26', '2011', 'VIAJES ARCOIRIS', '6/12', { usd: '150,00' }),
+      itau('22', '08 26', '2011', 'LA PARRILLA DEL ESTE', '', { usd: '85,00' }),
+      seguro,
+    ];
+    const good = read([...HEAD, ...moves]);
+    expect(good.filter((t) => t[1] === 'usd').map((t) => t[2])).toEqual([-120, 150, 85, 2]);
+    for (const extra of [row(cell('Pagá en pesos o en dólares', 0.161)), row(cell('PESOS URUGUAYOS', 0.415), cell('DÓLARES', 0.754)), row(cell('Importes en pesos y en dólares', 0.138))]) {
+      expect(read([...HEAD, ...moves, extra])).toEqual(good);
+      expect(read([...HEAD, extra, ...moves])).toEqual(good);
+    }
+  });
+  it('un párrafo que dice «cuotas» o «importe» no es un encabezado', () => {
+    const rows = [...ITAU_PDF.slice(0, 13), row(cell('financiar el saldo total o un importe menor. Las cuotas incluyen IVA sobre los', 0.168))];
+    expect(parseStatementRows(rows, { today: '2026-09-05' }).filter((t) => t.currency === 'usd').map((t) => t.amount)).toEqual([-120, 150, 15.99, -0.99]);
+  });
+});
+
+describe('límite y disponible', () => {
+  it('títulos arriba y valores abajo, solo si son tantos como los títulos', () => {
+    expect(statementInfo('LIMITE DE CREDITO   CREDITO DISPONIBLE\n$ 80.000,00   $ 12.500,50')).toEqual({ limit: 80000, available: 12500.5 });
+    expect(statementInfo('LIMITE DE CREDITO   CREDITO DISPONIBLE\n$ 80.000,00')).toEqual({});
+    expect(statementInfo('Límite de crédito disponible $ 3.000,00')).toEqual({ available: 3000 });
+  });
+  it('los importes en dólares no son el límite; un texto que nombra el límite sin importe no inventa nada', () => {
+    expect(statementInfo('Límite de compra U$S 2.000,00 $ 80.000,00')).toEqual({ limit: 80000 });
+    expect(statementInfo('Si superás el límite de crédito se cobra un cargo')).toEqual({});
+  });
+  it('lo disponible para adelantos y el límite en cuotas no son lo disponible ni el límite; cada título se queda con su importe', () => {
+    expect(statementInfo('Límite de crédito $ 80.000,00 Disponible para adelantos $ 5.000,00 Disponible para compras $ 30.000,00')).toEqual({ limit: 80000, available: 30000 });
+    expect(statementInfo('Límite de compra en cuotas $ 50.000,00 Límite de crédito $ 80.000,00')).toEqual({ limit: 80000 });
+    expect(statementInfo('Límite de crédito Pago mínimo $ 1.000,00')).toEqual({});
+    // El renglón de abajo con palabras es un párrafo, no los valores
+    expect(statementInfo('Si superás el límite de crédito\nse cobra un cargo de $ 320,00')).toEqual({});
+  });
+});
+
+describe('período sin fechas escritas', () => {
+  it('una planilla con varios meses va desde el primer movimiento', () => {
+    const txs = parseStatementText(
+      ['05/06/2026 ALMACEN 100,00', '10/07/2026 KIOSCO 200,00', '15/07/2026 PANADERIA LA ESPIGA 250,00', '12/08/2026 FARMACIA LOS ALAMOS 300,00', '20/08/2026 VIVERO 400,00'].join('\n'),
+    );
+    expect(statementPeriod(txs, {})).toEqual({ from: '2026-06-05', to: '2026-08-20' });
+  });
+  it('una tarjeta de poco uso con una compra presentada tarde sigue siendo un solo mes: las cuotas de antes van al cierre', () => {
+    const text = [
+      'FECHA DE CIERRE', '25/09/2026',
+      '31/08/2026 PAGO EN SCOTIABANK -3.000,00', '05/09/2026 ALMACEN LOS ROBLES 1.210,50', '10/07/2026 KIOSCO LA ESQUINA 300,00',
+      '14/07/2026 LIBRERIA DEL PUERTO C03/03 640,00', '20/07/2026 VIVERO EL CEIBO C02/02 400,00', '02/08/2026 ZAPATERIA EL PASO C02/06 900,00',
+    ].join('\n');
+    const txs = parseStatementText(text, { today: '2026-10-01' });
+    const period = statementPeriod(txs, statementInfo(text));
+    expect(period).toEqual({ from: '2026-08-26', to: '2026-09-25' });
+    expect(installmentsAtClosing(txs, period).filter((t) => t.purchaseDate).map((t) => [t.installment, t.date])).toEqual([
+      ['3/3', '2026-09-25'], ['2/2', '2026-09-25'], ['2/6', '2026-09-25'],
+    ]);
+  });
+  it('si solo hay cuotas de compras anteriores, desde un mes antes del último', () => {
+    const txs = parseStatementText(['05/01/2026 MUEBLERIA CUOTA 8/10 100,00', '10/03/2026 OPTICA CUOTA 3/6 200,00'].join('\n'));
+    expect(statementPeriod(txs, { closing: '2026-08-25' })).toEqual({ from: '2026-07-26', to: '2026-08-25' });
+  });
+  it('el 31 de marzo: un mes antes es el último de febrero', () => {
+    const txs = parseStatementText('05/01/2026 MUEBLERIA CUOTA 8/10 100,00', { today: '2026-04-01' });
+    expect(statementPeriod(txs, { closing: '2026-03-31' })).toEqual({ from: '2026-03-01', to: '2026-03-31' });
+  });
+});
+
+describe('cuotas con la fecha de la compra y los repetidos', () => {
+  const period = { from: '2026-08-26', to: '2026-09-25' };
+  const read = (lines: string[]) => installmentsAtClosing(parseStatementText(lines.join('\n'), { today: '2026-10-01' }), period);
+  const sept = read(['03/03/2026 COLCHONERIA DESCANSO CUOTA 7/9 1.250,00', '29/08/2026 OPTICA VISION CUOTA 1/3 900,00', '02/09/2026 ALMACEN 300,00']);
+  it('la cuota de una compra vieja va al cierre y la nota dice de cuándo es la compra', () => {
+    expect(sept.map((t) => [t.date, t.purchaseDate ?? ''])).toEqual([['2026-09-25', '2026-03-03'], ['2026-08-29', ''], ['2026-09-02', '']]);
+    expect(statementNote(sept[0], 'Itaú', 1)).toBe('Itaú · cuota 7/9 · compra del 3/3/2026');
+    const usdTx = { ...sept[0], currency: 'usd' as const, amount: 30 };
+    expect(statementNote(usdTx, 'Itaú', 40.1)).toBe('Itaú · cuota 7/9 · compra del 3/3/2026 · U$S\u00a030,00 × 40,10');
+  });
+  // Lo que quedó guardado de setiembre: un gasto por compra, con la fecha y la nota del borrador
+  const saved = sept.map((t, i) => mov(t.date, t.amount, { id: `s${i}`, origin: 'tarjeta', note: statementNote(t, 'Itaú', 1) }));
+  it('subir el mismo estado de cuenta otra vez encuentra todo repetido', () => {
+    expect([...findDuplicates(sept, saved).entries()]).toEqual([[0, 's0'], [1, 's1'], [2, 's2']]);
+  });
+  it('la misma cuota guardada antes (con la fecha de la compra) también es repetida; otra cuota o sin cuota en la nota, no', () => {
+    const before = [
+      mov('2026-03-03', 1250, { id: 'v1', origin: 'tarjeta', note: 'Itaú · cuota 7/9' }),
+      mov('2026-03-03', 1250, { id: 'v2', origin: 'tarjeta', note: 'Itaú · cuota 6/9' }),
+      mov('2026-03-04', 1250, { id: 'v3' }),
+    ];
+    expect([...findDuplicates(sept, before).entries()]).toEqual([[0, 'v1']]);
+    expect(findDuplicates(sept, before.slice(1)).size).toBe(0);
+  });
+  it('una cuota llevada al cierre no es una compra nueva sin cuota de esos días (ni al revés)', () => {
+    const sep = installmentsAtClosing(parseStatementText('14/06/2026 LIBRERIA DEL PUERTO C04/04 640,00', { today: '2026-10-01' }), period);
+    expect(sep[0]).toMatchObject({ date: '2026-09-25', purchaseDate: '2026-06-14', installment: '4/4' });
+    const kept = [mov('2026-09-25', 640, { id: 'c4', origin: 'tarjeta', note: statementNote(sep[0], 'Scotiabank', 1) })];
+    // En octubre, una compra sin cuota del 27/09 por el mismo monto
+    const oct = parseStatementText('27/09/2026 KIOSCO LA ESQUINA 640,00', { today: '2026-11-01' });
+    expect(findDuplicates(oct, kept).size).toBe(0);
+    // Un gasto anotado a mano cerca del cierre no tapa la cuota
+    expect(findDuplicates(sep, [mov('2026-09-24', 640, { id: 'm1' })]).size).toBe(0);
+    // La misma cuota, sí
+    expect([...findDuplicates(sep, kept).entries()]).toEqual([[0, 'c4']]);
+  });
+  it('lo guardado con la versión anterior del mismo estado de cuenta (con la fecha de la compra y sin la cuota) es repetido; lo de otro mes, no', () => {
+    const again = installmentsAtClosing(parseStatementText('20/07/2026 VIVERO EL CEIBOC02/02 400,00', { today: '2026-10-01' }), period);
+    expect(again[0]).toMatchObject({ date: '2026-09-25', purchaseDate: '2026-07-20', installment: '2/2' });
+    const invoice = (id: string, date: string) => ({ id, kind: 'estado' as const, card: 'Scotiabank', fileName: 'e.pdf', mime: 'application/pdf', date, items: [], createdAt: 0 });
+    const before = [mov('2026-07-20', 400, { id: 'v1', origin: 'tarjeta', note: 'Scotiabank', invoiceId: 'e1' })];
+    expect([...findDuplicates(again, before, 40, { closing: '2026-09-25', invoices: [invoice('e1', '2026-09-25')] }).entries()]).toEqual([[0, 'v1']]);
+    // La 1/2 de julio (guardada con el estado de cuenta de julio) no es la 2/2 de setiembre
+    expect(findDuplicates(again, before, 40, { closing: '2026-09-25', invoices: [invoice('e1', '2026-07-25')] }).size).toBe(0);
+    expect(findDuplicates(again, before).size).toBe(0);
+  });
+  it('la cuota siguiente del mes que viene no parece repetida', () => {
+    const oct = installmentsAtClosing(
+      parseStatementText(['03/03/2026 COLCHONERIA DESCANSO CUOTA 8/9 1.250,00', '29/08/2026 OPTICA VISION CUOTA 2/3 900,00'].join('\n'), { today: '2026-11-01' }),
+      { from: '2026-09-26', to: '2026-10-25' },
+    );
+    expect(oct.map((t) => t.date)).toEqual(['2026-10-25', '2026-10-25']);
+    expect(findDuplicates(oct, saved).size).toBe(0);
   });
 });
 
@@ -390,6 +793,9 @@ describe('tipo de movimiento', () => {
     ['SEGURO DE VIDA', 'cargo'], ['SEGURO SALDO DEUDOR', 'cargo'], ['INTERESES FINANCIACION', 'cargo'], ['IVA S/INTERESES', 'cargo'],
     ['TIMBRE', 'cargo'], ['COSTO DE EMISIÓN', 'cargo'], ['TIENDA INGLESA', 'compra'], ['PAGOS WEB ANTEL', 'compra'], ['MAPFRE SEGUROS', 'compra'],
     ['ANTEL RECARGA SALDO', 'compra'], ['MERCADOPAGO*DISCO', 'compra'],
+    ['SEG.VIDA S/SALDO FINAN.CONTRAT', 'cargo'], ['SEGURO DE VIDA SOBRE SALDO', 'cargo'], ['REDUC. IVA LEY 17934', 'credito'],
+    // El total de lo que ya se descontó en cada compra: no es un movimiento
+    ['Total devolucion IVA Ley 17934 en MN', 'saldo'], ['** TOTAL Tarjeta : ANA PEREZ', 'saldo'],
   ] as const)('%s → %s', (desc, kind) => expect(statementKind(desc)).toBe(kind));
 });
 
@@ -397,8 +803,43 @@ describe('cuotas', () => {
   it.each([
     ['FARMASHOP CUOTA 02/06', '2/6'], ['MOTOCICLO CTA 3 DE 12', '3/12'], ['SAN ROQUE C.2/6', '2/6'], ['DIVINO C2/10', '2/10'],
     ['MP *MERCADOLIBRE 04/10', '4/10'], ['Cuota: 1/3 PANADERIA', '1/3'],
+    // Scotiabank: al final, con o sin espacio; Itaú: en su columna, a veces con un espacio
+    ['LIBRERIA DEL PUERTO C03/03', '3/3'], ['HELADERIA LA NUBEC01/02', '1/2'], ['VIVERO EL CEIBOC02/12 ', '2/12'], ['MUEBLERIA 6/ 6', '6/6'],
   ])('%s → %s', (desc, inst) => expect(installmentOf(desc)).toBe(inst));
-  it.each(['TIENDA INGLESA', 'COMPRA 12/09', 'CUOTA 1/1', 'DISCO 7'])('%s no tiene cuota', (desc) => expect(installmentOf(desc)).toBeUndefined());
+  it.each([
+    'TIENDA INGLESA', 'COMPRA 12/09', 'CUOTA 1/1', 'DISCO 7',
+    // Pegado pero no puede ser una cuota, o no está al final
+    'ALMACEN SAN MARCOC12/09', 'COMERCIO C01/2026', 'FARMACIAC01/02 POCITOS', 'PLAZAC00/03',
+    // Un total de dos cifras con un espacio antes es una fecha o un número, no la columna de Itaú
+    'CINE 3/ 30',
+  ])('%s no tiene cuota', (desc) => expect(installmentOf(desc)).toBeUndefined());
+  it.each(['CUOTA SOCIAL 09/26', 'UTE FACTURA 08/26', 'ANTEL 10/26', 'COLEGIO MATRICULA 03/26', 'SEGURO AUTO 11/27', 'PATENTE 12/25'])(
+    '%s es un mes («MM/AA» con el año del cierre), no una cuota',
+    (desc) => expect(installmentOf(desc, 2026)).toBeUndefined(),
+  );
+  it('con «cuota» o «C» antes, el mismo «MM/AA» sí es una cuota; con otro total, también', () => {
+    expect(installmentOf('MUEBLERIA CUOTA 09/26', 2026)).toBe('9/26');
+    expect(installmentOf('MUEBLERIA C09/26', 2026)).toBe('9/26');
+    expect(installmentOf('MP *MERCADOLIBRE 04/10', 2026)).toBe('4/10');
+    expect(installmentOf('MUEBLERIA 6/ 6', 2026)).toBe('6/6');
+  });
+  it('en un estado de cuenta, la cuota social del mes no deja cuotas; la columna de Itaú sí', () => {
+    const txs = parseStatementText(
+      ['Fecha de cierre: 25/09/2026', '02/09 CLUB ATLETICO CUOTA SOCIAL 09/26 1.200,00', '08/09 COLEGIO MATRICULA 03/26 4.500,00', '10/09 OPTICA VISION 02/06 900,00'].join('\n'),
+      { today: '2026-10-01' },
+    );
+    expect(txs.map((t) => t.installment ?? '')).toEqual(['', '', '2/6']);
+    // En su propia celda (la columna de la cuota), aunque parezca un mes
+    const rows = [row(cell('Cierre 28/09/2026', 0.05)), itau('10', '09 26', '2011', 'COLCHONERIA DESCANSO', '1/26', { pesos: '500,00' })];
+    expect(parseStatementRows(rows).map((t) => t.installment)).toEqual(['1/26']);
+  });
+  it('la cuota pegada no queda en el comercio; lo que no es cuota, sí', () => {
+    expect(withoutInstallment('HELADERIA LA NUBEC01/02')).toBe('HELADERIA LA NUBE');
+    expect(withoutInstallment('LIBRERIA DEL PUERTO C03/03')).toBe('LIBRERIA DEL PUERTO');
+    expect(normalizeMerchant('HELADERIA LA NUBEC01/02')).toEqual(normalizeMerchant('HELADERIA LA NUBE'));
+    expect(withoutInstallment('ALMACEN SAN MARCOC12/09')).toBe('ALMACEN SAN MARCOC12/09');
+    expect(withoutInstallment('MUEBLERIA LOS PINOS 6/ 6')).toBe('MUEBLERIA LOS PINOS');
+  });
 });
 
 describe('comercios', () => {
@@ -435,6 +876,14 @@ describe('comercios', () => {
     expect(normalizeMerchant('FARMACIA MERCEDES')).toEqual({ merchant: 'Farmacia Mercedes', key: 'farmacia mercedes' });
     expect(normalizeMerchant('SQ *CAFE MONTEVIDEO')).toEqual({ merchant: 'Cafe Montevideo', key: 'cafe montevideo' });
     expect(name('REINTEGRO IVA LEY 19210')).toBe('Reintegro IVA Ley');
+  });
+  it('cifras y letras pegadas al comienzo son parte del nombre; la Ñ que el PDF escribió como «?»', () => {
+    expect(normalizeMerchant('7K VIAJES')).toEqual({ merchant: '7K Viajes', key: '7k viajes' });
+    expect(normalizeMerchant('PEQUE?OS GIGANTES')).toEqual({ merchant: 'Pequeños Gigantes', key: 'pequenos' });
+    // Los códigos siguen afuera
+    expect(normalizeMerchant('SPOTIFY P2A4B6C8').merchant).toBe('Spotify');
+    expect(normalizeMerchant('123 DISCO').merchant).toBe('Disco');
+    expect(normalizeMerchant('DISCO N? 18').merchant).toBe('Disco');
   });
   it('rubros genéricos necesitan la palabra que distingue a la tienda', () => {
     expect(key('FARMACIA SAN ROQUE CUOTA 02/06')).toBe('farmacia san roque');
@@ -620,5 +1069,18 @@ describe('datos guardados', () => {
     expect(d.invoices[0].card).toBe('OCA');
     expect(d.settings.usdRate).toBe(40.25);
     expect(normalizeData({ ...base, settings: { ...base.settings, usdRate: -3 } }).settings.usdRate).toBeUndefined();
+  });
+  it('las cuotas, el límite y el disponible del estado de cuenta se guardan y viajan al hogar tal cual', () => {
+    const base = emptyData();
+    const inv = {
+      id: 'f9', kind: 'estado' as const, card: 'OCA', fileName: 'oca.pdf', mime: 'application/pdf', items: [], createdAt: 1, date: '2026-09-25',
+      installments: [{ merchant: 'Optica Vision', key: 'optica vision', amount: 300, n: 1, of: 3, date: '2026-09-02' }],
+      limit: 80000,
+      available: 12500.5,
+    };
+    const d = normalizeData({ ...base, invoices: [inv] });
+    expect(d.invoices[0]).toEqual(inv);
+    const rec = toRecords({ ...d, settings: { ...d.settings, onboarded: true } }).find((r) => r.kind === 'invoice')!;
+    expect(readRecord('invoice', rec.id, JSON.parse(JSON.stringify(rec.data)))).toEqual(inv);
   });
 });
