@@ -16,9 +16,10 @@ export function Toggle({ checked, onChange, label }: { checked: boolean; onChang
   );
 }
 
-export function Segmented<T extends string>({ value, options, onChange }: { value: T; options: { id: T; label: string }[]; onChange: (v: T) => void }) {
+/** `label`: nombre del grupo para el lector de pantalla, si no hay un título que lo diga */
+export function Segmented<T extends string>({ value, options, onChange, label }: { value: T; options: { id: T; label: string }[]; onChange: (v: T) => void; label?: string }) {
   return (
-    <div className="flex rounded-full bg-sunken p-1" role="group">
+    <div className="flex rounded-full bg-sunken p-1" role="group" aria-label={label}>
       {options.map((o) => (
         <button
           key={o.id}

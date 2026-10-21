@@ -22,6 +22,11 @@ export interface Category {
   budget: Budget;
   /** Cuenta como ahorro/inversión: se puede sacar de los gastos con «Incluir ahorro» */
   savings?: boolean;
+  /**
+   * Cuenta corriente de una categoría en % del ingreso (el diezmo): desde qué mes se suma lo que faltó o sobró, y el
+   * saldo de antes (positivo: lo que faltaba dar). Sin esto, se cuenta desde el primer mes con datos y saldo 0
+   */
+  ledger?: { from: string; opening: number };
   order: number;
 }
 
@@ -53,6 +58,8 @@ export interface Movement {
   /** Total de un mes entero (importado de la planilla, sin días) */
   monthly?: boolean;
   createdAt: number;
+  /** En un hogar compartido: quién lo anotó (id de usuario de Supabase). Lo pone lib/sync al mandarlo */
+  createdBy?: string;
 }
 
 export interface InvoiceItem {
@@ -102,9 +109,16 @@ export interface Recurring {
   paused?: boolean;
   /** Último mes YYYY-MM ya anotado o salteado */
   doneThrough?: string;
+  /** Los meses (YYYY-MM) que se saltearon con «Saltar» (para el resumen: no es lo mismo que olvidarse) */
+  skipped?: string[];
   createdAt: number;
 }
 
+/**
+ * Ajustes que van con los datos (y en los respaldos). Los que son solo de este teléfono (el bloqueo con Face ID, el
+ * aviso del día 1) están en lib/device.ts. En un hogar compartido se comparten la moneda, lo aprendido y la última
+ * cotización escrita; `name`, `ai`, `onboarded`, `example` y `lastReportSeen` quedan en cada teléfono (domain/sync.ts).
+ */
 export interface Settings {
   name: string;
   currency: {
@@ -123,13 +137,22 @@ export interface Settings {
   onboarded: boolean;
   /** Son los datos de ejemplo (inventados): Inicio y Más muestran un aviso para empezar con los propios */
   example?: boolean;
-  /** Cotización del dólar para pasar a pesos las compras en U$S de la tarjeta (la última usada) */
+  /** Última cotización del dólar escrita a mano en el estado de cuenta (si no hay conexión con el BCU, se ofrece) */
   usdRate?: number;
+  /** Último resumen del mes abierto (YYYY-MM): hasta abrir el del mes pasado, Inicio lo ofrece */
+  lastReportSeen?: string;
+  /** Ajustes del hogar que trajo una versión más nueva de la app y esta no conoce: se guardan y se mandan tal cual */
+  sharedExtra?: Record<string, unknown>;
 }
 
 export interface Data {
   /** 2: íconos ya migrados (ver normalizeData) */
   version: 2;
+  /**
+   * De qué datos se trata: cambia con «Borrar todo» y con el ejemplo (emptyData); restaurar y la planilla lo conservan.
+   * En un hogar compartido, si no es el de lo sincronizado, se bajan los datos del hogar (lib/sync). No se comparte
+   */
+  datasetId?: string;
   categories: Category[];
   rubros: Rubro[];
   movements: Movement[];

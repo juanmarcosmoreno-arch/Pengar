@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { emptyData } from '../domain/template';
+import { useSync } from '../lib/sync';
 import { useStore } from '../store/store';
 import { ConfirmSheet } from './ConfirmSheet';
 import { Suricata } from './Suricata';
@@ -7,6 +8,8 @@ import { Suricata } from './Suricata';
 /** Aviso de que son los datos de ejemplo, con la salida para empezar con los propios (vuelve a la bienvenida) */
 export function ExampleBanner({ className = '' }: { className?: string }) {
   const { data, replaceAll } = useStore();
+  // En un hogar compartido, el ejemplo no lo tocó: al volver a empezar se bajan sus datos
+  const { household, phase } = useSync();
   const [asking, setAsking] = useState(false);
   if (!data.settings.example) return null;
   return (
@@ -21,7 +24,9 @@ export function ExampleBanner({ className = '' }: { className?: string }) {
       {asking && (
         <ConfirmSheet
           title="¿Empezar con tus datos?"
-          message="Se borran los datos de ejemplo y volvés a la bienvenida para cargar tu planilla o empezar de cero."
+          message={household && phase !== 'removed'
+            ? `Se borran los datos de ejemplo y volvés a la bienvenida. Seguís en el hogar «${household.name}»: al empezar, vuelven sus datos.`
+            : 'Se borran los datos de ejemplo y volvés a la bienvenida para cargar tu planilla o empezar de cero.'}
           confirmLabel="Empezar"
           onConfirm={() => {
             // La clave de Claude no es parte del ejemplo: queda

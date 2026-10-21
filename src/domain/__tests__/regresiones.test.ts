@@ -361,3 +361,165 @@ describe('gastos fijos y datos', () => {
     expect(exampleOutdated({ ...d, settings: { ...d.settings, example: undefined } }, '2026-12-05')).toBe(false);
   });
 });
+
+// --- Segunda revisión: resumen, diezmo, hogar compartido, tickets y dólares ---------------------------------------
+
+describe('revisión: resumen y diezmo', () => {
+  const cat = (id: string, name: string, extra: Partial<Category> = {}): Category => ({
+    id, name, kind: 'gasto', icon: 'm:otros', color: '#888', budget: { type: 'none' }, order: 0, ...extra,
+  });
+  const categories: Category[] = [
+    cat('ali', 'Alimentación', { budget: { type: 'fixed', amount: 20000 } }),
+    cat('fij', 'Fijos', { budget: { type: 'fixed', amount: 30000 } }),
+    cat('die', 'Diezmos', { budget: { type: 'percentIncome', pct: 10 } }),
+    cat('ing', 'Ingresos', { kind: 'ingreso' }),
+  ];
+  const rubros: Rubro[] = [['super', 'ali'], ['alquiler', 'fij'], ['diezmo', 'die'], ['sueldo', 'ing']].map(([id, categoryId]) => ({ id, name: id, categoryId, keywords: [] }));
+  const m = (rubroId: string, date: string, amount: number): Movement =>
+    ({ id: `${rubroId}${date}${amount}`, rubroId, date, amount, kind: rubroId === 'sueldo' ? 'ingreso' : 'gasto', origin: 'manual', createdAt: 0 });
+  const base = (movements: Movement[], extra: Partial<Data> = {}): Data =>
+    ({ ...emptyData(), categories, rubros, movements, ...extra, settings: { ...emptyData().settings, onboarded: true } });
+
+  it('un fijo olvidado sigue «sin anotar» aunque después se anote o se saltee un mes posterior', async () => {
+    const { monthReport } = await import('../report');
+    const { skipRecurring } = await import('../recurring');
+    const alquiler = { id: 'r-alq', rubroId: 'alquiler', kind: 'gasto' as const, amount: 24000, day: 1, createdAt: Date.parse('2026-06-01T12:00:00') };
+    // Octubre olvidado; el 1/11 «Anotar todos» sube doneThrough a noviembre
+    const d = base([m('sueldo', '2026-10-01', 100000), m('alquiler', '2026-11-01', 24000)], { recurring: [{ ...alquiler, doneThrough: '2026-11' }] });
+    const r = monthReport(d, buildIndex(d), '2026-10');
+    expect(r.recurring.missing.map((x) => x.id)).toEqual(['r-alq']);
+    expect(r.recurring.skipped).toEqual([]);
+    // Salteado de verdad en octubre, y anotado noviembre: sigue «salteado»
+    const skipped = { ...skipRecurring({ ...alquiler, doneThrough: '2026-09' }, '2026-10'), doneThrough: '2026-11' };
+    const d2 = { ...d, recurring: [skipped] };
+    expect(monthReport(d2, buildIndex(d2), '2026-10').recurring.skipped.map((x) => x.id)).toEqual(['r-alq']);
+  });
+
+  it('un mes cerrado sin ingresos: el presupuesto en % y el diezmo usan el mismo ingreso (el real)', async () => {
+    const { monthReport } = await import('../report');
+    const { percentCards } = await import('../stats');
+    const d = base([m('sueldo', '2026-09-01', 100000), m('diezmo', '2026-10-05', 15000), m('super', '2026-10-06', 5000)]);
+    const ix = buildIndex(d);
+    const r = monthReport(d, ix, '2026-10');
+    const line = [...r.budget!.over, ...r.budget!.under].find((l) => l.category.id === 'die')!;
+    expect(line.budget).toBe(0);
+    expect(r.percent[0].expected).toBe(0);
+    expect(r.budget!.total).toBe(50000);
+    // Estadísticas → Mes de ese mes cerrado dice lo mismo; el mes en curso sí estima con el anterior
+    expect(monthSummary(d, ix, '2026-10', false, '2026-11').budget).toBe(50000);
+    expect(percentCards(d, ix, '2026-10', '2026-10')[0]).toMatchObject({ income: 100000, incomeEstimated: true, expected: 10000 });
+  });
+
+  it('dar de más en el diezmo no es pasarse: el titular y la tarjeta del presupuesto dicen lo mismo', async () => {
+    const { monthReport } = await import('../report');
+    const d = base([m('sueldo', '2026-10-01', 100000), m('super', '2026-10-03', 19000), m('alquiler', '2026-10-04', 29500), m('diezmo', '2026-10-05', 15000)]);
+    const r = monthReport(d, buildIndex(d), '2026-10');
+    expect(r.mood).toBe('celebrando');
+    expect(r.budget).toMatchObject({ total: 60000, spent: 58500, diff: -1500, extra: 5000 });
+    expect(r.budget!.over.map((l) => l.category.id)).toEqual(['die']);
+  });
+
+  it('cambiar el % del diezmo cierra la cuenta con el % de antes (no inventa una deuda)', async () => {
+    const { ledgerAfterChange, percentLedger } = await import('../ledger');
+    const months = ['2026-04', '2026-05', '2026-06', '2026-07', '2026-08', '2026-09'];
+    const d = base(months.flatMap((mo) => [m('sueldo', `${mo}-01`, 100000), m('diezmo', `${mo}-02`, 10000)]));
+    const prev = d.categories.find((c) => c.id === 'die')!;
+    const next: Category = { ...prev, budget: { type: 'percentIncome', pct: 12 } };
+    const ledger = ledgerAfterChange(d, buildIndex(d), prev, next, '2026-10');
+    expect(ledger).toEqual({ from: '2026-10', opening: 0 });
+    const d12 = { ...d, categories: d.categories.map((c) => (c.id === 'die' ? { ...next, ledger } : c)) };
+    expect(percentLedger(d12, buildIndex(d12), 'die', '2026-10').pending).toBe(0);
+    // Sin cambio de %, o con la cuenta cambiada a mano, queda como venía
+    expect(ledgerAfterChange(d, buildIndex(d), prev, { ...prev, name: 'Diezmo' }, '2026-10')).toBeUndefined();
+  });
+});
+
+describe('revisión: hogar compartido (mezcla)', async () => {
+  const { localChanges, mergeRemote, outRecords, presentHashes, recordHashes, toRecords, sharedSettings } = await import('../sync');
+  const { dueMovements } = await import('../recurring');
+  let clock = Date.parse('2026-10-21T12:00:00.000Z');
+  const rem = (kind: 'settings' | 'rubro' | 'movement' | 'invoice' | 'goal' | 'recurring', id: string, data: unknown, deleted = false) => ({
+    kind, id, data: JSON.parse(JSON.stringify(data)), updatedAt: new Date((clock += 1000)).toISOString(), updatedBy: 'otro', deleted,
+  });
+  const cats: Category[] = [{ id: 'ali', name: 'Alimentación', kind: 'gasto', icon: 'm:otros', color: '#888', budget: { type: 'none' }, order: 0 }];
+  const rubs: Rubro[] = [{ id: 'super', name: 'Super', categoryId: 'ali', keywords: [] }, { id: 'feria', name: 'Feria', categoryId: 'ali', keywords: [] }];
+  const home = (): Data => normalizeData({
+    categories: cats, rubros: rubs,
+    movements: [mov('2026-10-10', 500, 'feria', { id: 'mf' }), mov('2026-10-11', 900, 'super', { id: 'ms' })],
+    goals: [{ id: 'g1', name: 'Viaje', icon: 'plane', target: 10000, saved: 100 }],
+    settings: { ...emptyData().settings, onboarded: true, learned: { disco: 'super' } },
+  });
+  const pendingOf = (synced: Record<string, string>, d: Data) => new Set(localChanges(synced, d).changed.map((c) => c.key));
+
+  it('lo que esta versión no conoce se guarda y no se manda de vuelta', () => {
+    const d = home();
+    const synced = recordHashes(toRecords(d));
+    const res = mergeRemote(d, [rem('settings', 'hogar', { ...sharedSettings(d.settings), theme: 'oscuro' }), rem('invoice', 'f9', { id: 'f9', kind: 'recibo', fileName: 'r.pdf', mime: 'application/pdf', items: [], createdAt: 1 })], []);
+    expect(outRecords(localChanges({ ...synced, ...presentHashes(res.hashes) }, res.data))).toEqual([]);
+    // Y si después cambia algo de acá, se manda con lo que no conoce
+    const later = { ...res.data, settings: { ...res.data.settings, learned: { ...res.data.settings.learned, tata: 'super' } } };
+    const out = outRecords(localChanges({ ...synced, ...presentHashes(res.hashes) }, later));
+    expect(out[0].data).toMatchObject({ theme: 'oscuro' });
+    expect(res.data.invoices[0].kind).toBe('recibo');
+  });
+
+  it('dos aportes a la misma meta casi a la vez se suman', () => {
+    const b = home();
+    const synced = recordHashes(toRecords(b));
+    const mine = { ...b, goals: [{ ...b.goals[0], saved: 130 }] };
+    const res = mergeRemote(mine, [rem('goal', 'g1', { ...b.goals[0], saved: 150 })], pendingOf(synced, mine), { goals: { g1: 100 } });
+    expect(res.data.goals[0].saved).toBe(180);
+    expect(res.goalBases).toEqual({ g1: 150 });
+    // Lo mismo que llega de nuevo (el margen) no se vuelve a sumar
+    const again = mergeRemote(res.data, [rem('goal', 'g1', { ...b.goals[0], saved: 150 })], ['goal:g1'], { goals: { g1: 150 } });
+    expect(again.data.goals[0].saved).toBe(180);
+  });
+
+  it('un rubro unido en otro teléfono no deja huérfano lo anotado acá sin mandar: el rubro queda', () => {
+    const b = home();
+    const synced = recordHashes(toRecords(b));
+    const mine = { ...b, movements: [...b.movements, mov('2026-10-20', 700, 'feria', { id: 'mnuevo' })] };
+    const res = mergeRemote(mine, [rem('movement', 'mf', { ...b.movements[0], rubroId: 'super' }), rem('rubro', 'feria', {}, true)], pendingOf(synced, mine));
+    const ix = buildIndex(res.data);
+    expect(ix.categoryOf(res.data.movements.find((x) => x.id === 'mnuevo')!)?.id).toBe('ali');
+    expect(res.revived).toEqual(['rubro:feria']);
+    // Vuelve al hogar con lo nuevo (lo borrado en el servidor sale de lo sincronizado, como en el motor)
+    const after = { ...synced, ...presentHashes(res.hashes) };
+    for (const [k, h] of Object.entries(res.hashes)) if (h === null) delete after[k];
+    const out = outRecords(localChanges(after, res.data)).map((o) => `${o.kind}:${o.id}`).sort();
+    expect(out).toEqual(['movement:mnuevo', 'rubro:feria']);
+    // Sin nada pendiente, la lápida se aplica
+    expect(mergeRemote(b, [rem('rubro', 'feria', {}, true)], []).data.rubros.map((r) => r.id)).toEqual(['super']);
+  });
+
+  it('un gasto fijo anotado en dos teléfonos a la vez queda una sola vez', () => {
+    const d0 = home();
+    const d = { ...d0, recurring: [{ id: 'r-alq', rubroId: 'super', kind: 'gasto' as const, amount: 24000, day: 1, doneThrough: '2026-10', createdAt: 0 }] };
+    const synced = recordHashes(toRecords(d));
+    const a = dueMovements(d, '2026-11', '2026-11-01');
+    const b = dueMovements(d, '2026-11', '2026-11-01');
+    expect(a[0].movement.id).toBe(b[0].movement.id);
+    const mine = { ...d, movements: [...d.movements, ...b.map((x) => x.movement)], recurring: d.recurring.map((r) => ({ ...r, doneThrough: '2026-11' })) };
+    const res = mergeRemote(mine, [rem('movement', a[0].movement.id, a[0].movement), rem('recurring', 'r-alq', { ...d.recurring[0], doneThrough: '2026-11' })], pendingOf(synced, mine));
+    expect(res.data.movements.filter((x) => x.date.startsWith('2026-11')).map((x) => x.amount)).toEqual([24000]);
+  });
+});
+
+describe('revisión: tickets y dólares', () => {
+  it('ticket de Disco impreso: sin renglones del año, de la cantidad ni del código de seguridad', () => {
+    const PRINTED = ['Disco', 'e-Ticket', 'BJ1000001 17/10/2026', 'CONTADO', 'AGUJA SIN HUESO 422.36', '1.324 KG x 319.00', 'BONDIOLA ENTER MEDIA 248.83',
+      '1.670 KG x 149.00', 'PANAL BABYSEC PREMIU 949.00', '1.000 UN x 949.00', 'TOTAL: $ 1620.19', 'Cod. de Seguridad: q7RxP4', 'Res. DGI 2379/2012'].join('\n');
+    const p = parseInvoiceText(PRINTED);
+    expect(p.items.map((i) => [i.description, i.amount])).toEqual([['AGUJA SIN HUESO', 422.36], ['BONDIOLA ENTER MEDIA', 248.83], ['PANAL BABYSEC PREMIU', 949]]);
+    expect(p.total).toBe(1620.19);
+  });
+
+  it('una compra en dólares ya anotada se reconoce por la cuenta de la nota, con cualquier cotización', () => {
+    const tx = { date: '2026-10-10', description: 'AMAZON', merchant: 'AMAZON', key: 'amazon', amount: 100, currency: 'usd', kind: 'compra' } as Parameters<typeof findDuplicates>[0][number];
+    const anotado = mov('2026-10-10', 4250, 'r', { note: 'U$S 100 × 42,50' });
+    expect(findDuplicates([tx], [anotado], 40).size).toBe(1);
+    expect(findDuplicates([tx], [anotado]).size).toBe(1);
+    // Otro monto en dólares no
+    expect(findDuplicates([tx], [{ ...anotado, note: 'U$S 120 × 42,50' }], 42.5).size).toBe(0);
+  });
+});

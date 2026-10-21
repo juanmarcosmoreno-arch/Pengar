@@ -14,7 +14,7 @@ export function Budget({ onBack }: { onBack: () => void }) {
   const { data } = useStore();
   const { money } = useMoney();
   const cats = data.categories.filter((c) => c.kind === 'gasto').sort((a, b) => a.order - b.order);
-  const income = incomeFor(data, currentMonth()).amount;
+  const income = incomeFor(data, currentMonth(), currentMonth()).amount;
   const total = cats.reduce((s, c) => s + budgetAmount(c, income), 0);
   const noSavings = cats.filter((c) => !c.savings).reduce((s, c) => s + budgetAmount(c, income), 0);
   return (

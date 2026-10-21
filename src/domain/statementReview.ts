@@ -4,7 +4,8 @@
  * interesan) se recuerdan con NOT_SPEND.
  */
 import { merchantKey, suggestRubro, type Suggestion } from './classify';
-import { NBSP, round2 } from './money';
+import { formatRate, rateOn, usd, type UsdRate } from './fx';
+import { round2 } from './money';
 import { isSpend, withoutInstallment, type StatementTx } from './statement';
 import type { Category, Rubro, Settings } from './types';
 
@@ -95,21 +96,45 @@ export function applyCredits(amounts: number[], items: CreditTarget[], credits: 
   return out;
 }
 
-const usdFormat = new Intl.NumberFormat('es-UY', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-const rateFormat = new Intl.NumberFormat('es-UY', { maximumFractionDigits: 2 });
+export { usd };
 
-/** «U$S 12,99» */
-export const usd = (n: number) => `U$S${NBSP}${usdFormat.format(n)}`;
-
-/** Nota del gasto: la tarjeta, la cuota y la cuenta en dólares («OCA · cuota 2/3 · U$S 12,99 × 40») */
+/** Nota del gasto: la tarjeta, la cuota y la cuenta en dólares («OCA · cuota 2/3 · U$S 12,99 × 40,15») */
 export function statementNote(tx: StatementTx, card: string | undefined, usdRate: number): string | undefined {
   const parts = [
     card,
     tx.installment && `cuota ${tx.installment}`,
-    tx.currency === 'usd' && `${usd(tx.amount)} × ${rateFormat.format(usdRate)}`,
+    tx.currency === 'usd' && `${usd(tx.amount)} × ${formatRate(usdRate)}`,
   ].filter(Boolean);
   return parts.length ? parts.join(' · ') : undefined;
 }
 
 /** «13/10» */
 export const dayMonth = (iso: string) => `${Number(iso.slice(8, 10))}/${Number(iso.slice(5, 7))}`;
+
+/** Lo que en dólares se pasa a pesos: las compras y los créditos (los pagos y el saldo, no) */
+const usdToConvert = (t: StatementTx) => t.currency === 'usd' && (isSpend(t) || t.kind === 'credito');
+
+/** De qué fechas hace falta la cotización del dólar (la primera y la última compra o crédito en U$S), o null */
+export function usdDates(txs: StatementTx[]): { from: string; to: string } | null {
+  const dates = txs.filter(usdToConvert).map((t) => t.date).sort();
+  return dates.length ? { from: dates[0], to: dates.at(-1)! } : null;
+}
+
+/**
+ * Cotización de cada movimiento (en el orden del estado de cuenta): si la persona escribió una, esa para todos; si
+ * no, la del BCU de la fecha de cada compra (o la del último día hábil antes). null si a alguno le falta. Los en
+ * pesos llevan 1 (toLocal no la usa).
+ */
+export function txRates(txs: StatementTx[], single: number | null, rates: UsdRate[] | null): number[] | null {
+  const out: number[] = [];
+  for (const t of txs) {
+    if (!usdToConvert(t)) out.push(1);
+    else if (single) out.push(single);
+    else {
+      const r = rates && rateOn(t.date, rates);
+      if (!r) return null;
+      out.push(r.rate);
+    }
+  }
+  return out;
+}

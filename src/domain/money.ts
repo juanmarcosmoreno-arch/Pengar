@@ -28,6 +28,11 @@ export function formatMoney(n: number, c: Currency = DEFAULT_CURRENCY, opts: { s
   return `${sign}${c.symbol}${NBSP}${abs}`;
 }
 
+/** El número solo, sin el símbolo ni el signo (para las tablas, donde la moneda va en el título): «28.450» */
+export function formatNumber(n: number, c: Currency = DEFAULT_CURRENCY): string {
+  return nf(c.locale, c.decimals).format(Math.abs(n));
+}
+
 /** Para ejes y etiquetas chicas: «$ 28 mil», «$ 1,2 M» */
 export function formatCompact(n: number, c: Currency = DEFAULT_CURRENCY): string {
   if (Math.abs(n) < 1000) return `${c.symbol}${NBSP}${Math.round(n)}`;

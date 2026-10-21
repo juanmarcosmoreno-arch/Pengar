@@ -1,20 +1,24 @@
 /** Estado de la app: los datos en memoria, guardados en el teléfono a medida que cambian. */
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { learnFrom } from '../domain/classify';
-import { today } from '../domain/dates';
+import { currentMonth, today } from '../domain/dates';
 import { exampleOutdated } from '../domain/example';
 import { distributeTotal } from '../domain/invoice';
 import { mergeImport, replaceImport, type ImportResult } from '../domain/importSheet';
+import { ledgerAfterChange } from '../domain/ledger';
 import { round2 } from '../domain/money';
-import { dueMovements } from '../domain/recurring';
+import { dueMovements, skipRecurring as skipRecurringIn } from '../domain/recurring';
 import { NOT_SPEND } from '../domain/statementReview';
 import { buildIndex, type Index } from '../domain/stats';
 import { emptyData, newId, normalizeData, templateData } from '../domain/template';
 import type { Category, Data, Goal, Invoice, InvoiceItem, Movement, Recurring, Rubro, Settings } from '../domain/types';
+import { canAutoBackup, maybeAutoBackup, onBackground, type AutoBackupRun } from '../lib/autoBackup';
 import { restoreFiles, type ReadBackup } from '../lib/backup';
 import { deleteFile, loadData, pruneFiles, saveData, saveFile } from '../lib/db';
+import { defaultDevice, loadDevice, saveDevice, type Device } from '../lib/device';
 import { loadExample } from '../lib/example';
 import { isPreview } from '../lib/platform';
+import { notifyDataChanged, startSync } from '../lib/sync';
 
 export interface InvoiceToSave {
   file: Blob;
@@ -54,8 +58,14 @@ interface Store {
   /** El último cambio no se pudo guardar en el teléfono (se reintenta con el próximo, o con saveNow) */
   saveError: boolean;
   saveNow: () => void;
+  /** Ajustes de este teléfono (bloqueo, aviso del día 1): no van en los datos ni en los respaldos */
+  device: Device;
+  updateDevice: (patch: Partial<Device>) => void;
+  /** «Hacer un respaldo ahora» (el automático, aunque ya haya uno de hoy). Nunca tira: dice cómo salió */
+  backupNow: () => Promise<AutoBackupRun>;
   update: (fn: (d: Data) => Data) => void;
-  addMovement: (m: Omit<Movement, 'id' | 'createdAt'>) => void;
+  /** Con `id`, ese (el de un gasto fijo del mes); si ya existe, uno nuevo */
+  addMovement: (m: Omit<Movement, 'id' | 'createdAt'> & { id?: string }) => void;
   updateMovement: (id: string, patch: Partial<Movement>) => void;
   deleteMovement: (id: string) => void;
   /**
@@ -75,8 +85,10 @@ interface Store {
   deleteGoal: (id: string) => void;
   upsertRecurring: (r: Recurring) => void;
   deleteRecurring: (id: string) => void;
-  /** El fijo ya está anotado (o salteado) hasta `month` */
+  /** El fijo ya está anotado hasta `month` */
   markRecurring: (id: string, month: string) => void;
+  /** «Saltar» el fijo en `month` (queda hecho hasta ese mes y anotado que se salteó). Devuelve cómo deshacerlo */
+  skipRecurring: (id: string, month: string) => () => void;
   /** Anota todos los fijos vencidos del mes con su monto estimado. Devuelve cuántos y cómo deshacerlo */
   recordAllDue: (month: string, todayISO: string) => { count: number; undo: () => void };
   updateSettings: (patch: Partial<Settings>) => void;
@@ -109,12 +121,16 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const [ready, setReady] = useState(false);
   const [loadError, setLoadError] = useState(false);
   const [saveError, setSaveError] = useState(false);
+  const [device, setDevice] = useState<Device>(defaultDevice);
   const timer = useRef<ReturnType<typeof setTimeout>>();
   // Lo último sin guardar, si se cargó bien lo guardado, y lo que se hace recién con los datos ya guardados
   const pending = useRef<Data>();
   const current = useRef<Data>(data);
   const loaded = useRef(false);
   const afterSave = useRef<(() => Promise<void>)[]>([]);
+  // Los ajustes del teléfono al día, y los que falta guardar
+  const deviceNow = useRef<Device>(device);
+  const pendingDevice = useRef<Device>();
 
   const load = useCallback(async () => {
     setLoadError(false);
@@ -134,41 +150,79 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       }
     }
     loaded.current = true;
+    // Datos de antes, sin id: se les pone uno y se guarda ya (el hogar compartido compara con él; uno que no quedó
+    // guardado cambiaría al reabrir). Si no se puede guardar, siguen sin id
+    if (saved && !saved.datasetId) {
+      const withId = { ...saved, datasetId: newId('d') };
+      saved = await saveData(withId).then(() => withId, () => saved);
+    }
+    // Después de los datos: al leerlos se pasa acá lo que era de este teléfono (lib/db). Si no se pueden leer, de fábrica
+    const dev = await loadDevice().catch(() => new Promise((r) => setTimeout(r, 300)).then(loadDevice)).catch((e) => {
+      console.error(e);
+      return defaultDevice();
+    });
+    deviceNow.current = dev;
+    setDevice(dev);
     if (saved && isPreview && exampleOutdated(saved, today())) {
       // El ejemplo guardado es de otro mes: se vuelve a armar para este, con el nombre y la clave que había
       const prev = saved;
       saved = await loadExample().then((ex) => ({ ...ex, settings: { ...ex.settings, name: prev.settings.name, ai: prev.settings.ai } }), () => prev);
     }
-    if (saved) setData(saved);
+    const show = (d: Data) => {
+      current.current = d;
+      setData(d);
+    };
+    if (saved) show(saved);
     // La vista previa web abre directo en Inicio, con los datos de ejemplo
-    else if (isPreview) await loadExample().then(setData, (e) => console.error(e));
+    else if (isPreview) await loadExample().then(show, (e) => console.error(e));
     setReady(true);
   }, []);
 
   useEffect(() => void load(), [load]);
-  useEffect(() => {
-    current.current = data;
-  }, [data]);
 
-  /** Guarda ya lo pendiente (y después hace lo que esperaba a que se guardara) */
-  const flush = useCallback(async () => {
+  /** Guarda ya lo pendiente (y después hace lo que esperaba a que se guardara). false si los datos no se pudieron guardar */
+  const flushOnce = useCallback(async (): Promise<boolean> => {
     clearTimeout(timer.current);
+    // Primero los ajustes del teléfono, si cambiaron (si fallan, igual se guardan los datos)
+    const dev = pendingDevice.current;
+    let devFailed = false;
+    if (dev) {
+      pendingDevice.current = undefined;
+      try {
+        await saveDevice(dev);
+      } catch (e) {
+        console.error(e);
+        pendingDevice.current ??= dev;
+        devFailed = true;
+      }
+    }
     const next = pending.current;
-    if (!next || !loaded.current) return;
+    if (!next || !loaded.current) {
+      if (dev) setSaveError(devFailed);
+      return true;
+    }
     pending.current = undefined;
     const jobs = afterSave.current.splice(0);
     try {
       await saveData(next);
-      setSaveError(false);
+      setSaveError(devFailed);
     } catch (e) {
       console.error(e);
       setSaveError(true);
       pending.current ??= next;
       afterSave.current.unshift(...jobs);
-      return;
+      return false;
     }
     for (const job of jobs) await job().catch((e) => console.error(e));
+    return true;
   }, []);
+  // De a uno: quien espera a que se guarde (el hogar compartido) no sigue mientras otro guardado está a mitad de camino
+  const saving = useRef<Promise<boolean>>(Promise.resolve(true));
+  const flush = useCallback((): Promise<boolean> => {
+    const run = saving.current.then(flushOnce, flushOnce);
+    saving.current = run.catch(() => false);
+    return run;
+  }, [flushOnce]);
 
   // Al pasar a segundo plano o cerrar, se guarda enseguida: iOS puede cerrar la app antes de los 250 ms
   useEffect(() => {
@@ -182,19 +236,62 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     };
   }, [flush]);
 
+  // Sobre lo último (no sobre lo ya dibujado) y enseguida: así el hogar compartido (lib/sync) lee al instante lo aplicado
   const update = useCallback((fn: (d: Data) => Data) => {
-    setData((prev) => {
-      const next = fn(prev);
-      current.current = next;
-      // Si no se pudo leer lo guardado, nada se guarda encima
-      if (loaded.current) {
-        pending.current = next;
-        clearTimeout(timer.current);
-        timer.current = setTimeout(() => void flush(), 250);
-      }
-      return next;
-    });
+    const next = fn(current.current);
+    current.current = next;
+    // Al instante, no después de dibujar: «Borrar todo» seguido de «Empezar de cero» no puede pasar por cambios del hogar
+    notifyDataChanged();
+    // Si no se pudo leer lo guardado, nada se guarda encima
+    if (loaded.current) {
+      pending.current = next;
+      clearTimeout(timer.current);
+      timer.current = setTimeout(() => void flush(), 250);
+    }
+    setData(next);
   }, [flush]);
+
+  // Hogar compartido (lib/sync): con los datos ya leídos, manda lo que cambia y trae lo de los demás. Sin Supabase
+  // configurado (y en la vista previa) no hace nada
+  useEffect(() => {
+    if (!ready || loadError) return;
+    return startSync({
+      getData: () => current.current,
+      setData: update,
+      saveData: async () => {
+        if (!(await flush())) throw new Error('No se pudieron guardar los datos en el teléfono');
+      },
+    });
+  }, [ready, loadError, update, flush]);
+
+  /** Los ajustes del teléfono se guardan enseguida (con lo que haya pendiente de los datos) */
+  const updateDevice = useCallback((patch: Partial<Device>) => {
+    const next = { ...deviceNow.current, ...patch };
+    deviceNow.current = next;
+    pendingDevice.current = next;
+    setDevice(next);
+    void flush();
+  }, [flush]);
+
+  /** Respaldo automático (lib/autoBackup): cómo salió queda en los ajustes del teléfono, para mostrarlo en Ajustes */
+  const runBackup = useCallback(async (force: boolean): Promise<AutoBackupRun> => {
+    if (!loaded.current) return { skipped: 'empty' };
+    const res = await maybeAutoBackup(current.current, deviceNow.current.autoBackup, { force });
+    // Sobre lo de ahora: mientras tanto lo pudieron apagar
+    if (res.state) updateDevice({ autoBackup: { ...deviceNow.current.autoBackup, ...res.state } });
+    return res;
+  }, [updateDevice]);
+
+  // Al abrir (un rato después, para no demorar lo primero que se ve) y al pasar a segundo plano
+  useEffect(() => {
+    if (!ready || loadError || !canAutoBackup) return;
+    const timer = setTimeout(() => void runBackup(false), 3000);
+    const off = onBackground(() => void runBackup(false));
+    return () => {
+      clearTimeout(timer);
+      off();
+    };
+  }, [ready, loadError, runBackup]);
 
   /** Para después de guardar los datos (borrar un archivo antes podría dejar una factura sin archivo) */
   const whenSaved = useCallback((job: () => Promise<void>) => {
@@ -214,8 +311,14 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     retryLoad: () => void load(),
     saveError,
     saveNow: () => void flush(),
+    device,
+    updateDevice,
+    backupNow: () => runBackup(true),
     update,
-    addMovement: (m) => update((d) => ({ ...d, movements: [...d.movements, { ...m, id: newId('m'), createdAt: Date.now() }] })),
+    addMovement: ({ id, ...m }) => update((d) => ({
+      ...d,
+      movements: [...d.movements, { ...m, id: id && !d.movements.some((x) => x.id === id) ? id : newId('m'), createdAt: Date.now() }],
+    })),
     updateMovement: (id, patch) => update((d) => ({ ...d, movements: d.movements.map((m) => (m.id === id ? { ...m, ...patch } : m)) })),
     deleteMovement: (id) => update((d) => ({ ...d, movements: d.movements.filter((m) => m.id !== id) })),
     saveInvoice: async (inv) => {
@@ -306,10 +409,14 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       }));
       whenSaved(() => deleteFile(id));
     },
-    upsertCategory: (c) => update((d) => ({
-      ...d,
-      categories: d.categories.some((x) => x.id === c.id) ? d.categories.map((x) => (x.id === c.id ? c : x)) : [...d.categories, c],
-    })),
+    upsertCategory: (c) => update((d) => {
+      const prev = d.categories.find((x) => x.id === c.id);
+      if (!prev) return { ...d, categories: [...d.categories, c] };
+      // Cambiar el % del ingreso no recalcula los meses pasados: la cuenta del diezmo sigue con el % de antes hasta acá
+      const ledger = ledgerAfterChange(d, buildIndex(d), prev, c, currentMonth());
+      const next = ledger === c.ledger ? c : { ...c, ledger };
+      return { ...d, categories: d.categories.map((x) => (x.id === c.id ? next : x)) };
+    }),
     deleteCategory: (id, moveTo) => update((d) => {
       const rubros = moveTo ? d.rubros.map((r) => (r.categoryId === id ? { ...r, categoryId: moveTo } : r)) : d.rubros.filter((r) => r.categoryId !== id);
       const left = new Set(rubros.map((r) => r.id));
@@ -353,6 +460,14 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       ...d,
       recurring: d.recurring.map((r) => (r.id === id && (!r.doneThrough || r.doneThrough < month) ? { ...r, doneThrough: month } : r)),
     })),
+    skipRecurring: (id, month) => {
+      const before = data.recurring.find((r) => r.id === id);
+      update((d) => ({ ...d, recurring: d.recurring.map((r) => (r.id === id ? skipRecurringIn(r, month) : r)) }));
+      return () => update((d) => ({
+        ...d,
+        recurring: d.recurring.map((r) => (r.id === id && before ? { ...r, doneThrough: before.doneThrough, skipped: before.skipped } : r)),
+      }));
+    },
     recordAllDue: (month, todayISO) => {
       // Se arman afuera del update para que los ids sean los mismos al deshacer
       const due = dueMovements(data, month, todayISO);
@@ -415,10 +530,12 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     },
     restoreBackup: async (b, settings) => {
       await restoreFiles(b.files);
-      update(() => normalizeData({ ...b.data, settings: { ...b.data.settings, ...settings } }));
+      // Los ajustes de este teléfono (el bloqueo, el aviso del día 1) no vienen en el respaldo: quedan como estaban. El
+      // id de los datos sigue siendo el de acá: en un hogar, lo restaurado es un cambio de estos datos
+      update((d) => normalizeData({ ...b.data, datasetId: d.datasetId, settings: { ...b.data.settings, ...settings } }));
       pruneAfterSave();
     },
-  }), [data, ix, ready, loadError, saveError, update, load, flush, whenSaved, pruneAfterSave]);
+  }), [data, ix, ready, loadError, saveError, device, updateDevice, runBackup, update, load, flush, whenSaved, pruneAfterSave]);
 
   return <Ctx.Provider value={store}>{children}</Ctx.Provider>;
 }

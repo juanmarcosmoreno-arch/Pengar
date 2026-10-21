@@ -29,13 +29,18 @@ const NOT_ITEM = new RegExp(
     'visa', 'master', 'master ?card', 'oca', 'cabal', 'amex', 'transaccion', 'autorizacion', 'lote', 'terminal', 'comprobante', 'dgi',
     'ley', 'descuento ley', 'devolucion iva', 'resolucion', 'puntos', 'ahorraste', 'items?\\b', 'articulos', 'cantidad',
   ].map((w) => `\\b(?:${w})(?:e?s)?(?![a-z])`)
-    // Abreviatura: «COD SEGURIDAD»
-    .concat('\\bcod\\.? seg')
+    // «COD SEGURIDAD», «Cod. de Seguridad», «Código de seguridad»
+    .concat('\\bcod(?:igo)?\\.?(?: de)? seg')
     .join('|'),
   'i',
 );
 
 const DISCOUNT = /\b(desc(uento)?|bonif|promo|ahorro|rebaja)\b/i;
+
+/** El renglón de la cantidad, debajo del producto: «1.324 KG x 319.00», «2 UN x 45,00» (no es otro producto) */
+const QUANTITY_LINE = /^\s*\d+(?:[.,]\d+)?\s*(?:un|u|unid|kgs?|lts?|l|grs?|g)?\.?\s*[x*]\s*\$?\s*[\d.,]+\s*$/i;
+/** Un renglón que termina en una fecha («BJ1000001 17/10/2026»): el año no es un monto */
+const DATE_AT_END = /\b(\d{1,2})[/.-](\d{1,2})[/.-](\d{4}|\d{2})\s*$/;
 
 const plain = (s: string) => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
 
@@ -123,6 +128,9 @@ export function parseInvoiceText(text: string): ParsedInvoice {
   const total = findTotal(lines);
   const items: ParsedInvoice['items'] = [];
   for (const line of lines) {
+    if (QUANTITY_LINE.test(line)) continue;
+    const date = DATE_AT_END.exec(line);
+    if (date && validDay(+(date[3].length === 2 ? `20${date[3]}` : date[3]), +date[2], +date[1])) continue;
     const found = lastAmount(line);
     if (!found) continue;
     // Sacar cantidades y precios unitarios: «2 x 45,00», «1,000 UN x 120,00»

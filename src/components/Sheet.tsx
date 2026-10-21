@@ -37,8 +37,8 @@ export function Sheet({ title, onClose, children, footer, tall = false }: {
   );
 }
 
-/** Encabezado de una pantalla secundaria, con «volver» */
-export function PageHeader({ title, onBack, right }: { title: ReactNode; onBack?: () => void; right?: ReactNode }) {
+/** Encabezado de una pantalla secundaria, con «volver». `titleId`: para nombrar la pantalla entera (aria-labelledby) */
+export function PageHeader({ title, onBack, right, titleId }: { title: ReactNode; onBack?: () => void; right?: ReactNode; titleId?: string }) {
   return (
     <header className="sticky top-0 z-10 flex items-center gap-1 bg-bg/95 px-3 pt-[calc(env(safe-area-inset-top)+8px)] pb-2 backdrop-blur">
       {onBack && (
@@ -46,7 +46,7 @@ export function PageHeader({ title, onBack, right }: { title: ReactNode; onBack?
           <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M15 5l-7 7 7 7" /></svg>
         </button>
       )}
-      <h1 className={`min-w-0 flex-1 truncate text-[28px] leading-tight ${onBack ? '' : 'pl-2'}`}>{title}</h1>
+      <h1 id={titleId} className={`min-w-0 flex-1 truncate text-[28px] leading-tight ${onBack ? '' : 'pl-2'}`}>{title}</h1>
       {right}
     </header>
   );

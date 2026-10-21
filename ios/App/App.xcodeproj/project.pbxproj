@@ -11,6 +11,8 @@
 		A1B2C3D4E5F6100000000002 /* PengarOCRPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F6100000000001 /* PengarOCRPlugin.swift */; };
 		A1B2C3D4E5F6100000000006 /* PengarAIPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F6100000000005 /* PengarAIPlugin.swift */; };
 		A1B2C3D4E5F6100000000008 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F6100000000007 /* PrivacyInfo.xcprivacy */; };
+		A1B2C3D4E5F610000000000A /* PengarLockPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F6100000000009 /* PengarLockPlugin.swift */; };
+		A1B2C3D4E5F610000000000C /* PengarBackupPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F610000000000B /* PengarBackupPlugin.swift */; };
 		2FAD9763203C412B000D30F8 /* config.xml in Resources */ = {isa = PBXBuildFile; fileRef = 2FAD9762203C412B000D30F8 /* config.xml */; };
 		4D22ABE92AF431CB00220026 /* CapApp-SPM in Frameworks */ = {isa = PBXBuildFile; productRef = 4D22ABE82AF431CB00220026 /* CapApp-SPM */; };
 		50379B232058CBB4000EE86E /* capacitor.config.json in Resources */ = {isa = PBXBuildFile; fileRef = 50379B222058CBB4000EE86E /* capacitor.config.json */; };
@@ -27,6 +29,8 @@
 		A1B2C3D4E5F6100000000001 /* PengarOCRPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PengarOCRPlugin.swift; sourceTree = "<group>"; };
 		A1B2C3D4E5F6100000000005 /* PengarAIPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PengarAIPlugin.swift; sourceTree = "<group>"; };
 		A1B2C3D4E5F6100000000007 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
+		A1B2C3D4E5F6100000000009 /* PengarLockPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PengarLockPlugin.swift; sourceTree = "<group>"; };
+		A1B2C3D4E5F610000000000B /* PengarBackupPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PengarBackupPlugin.swift; sourceTree = "<group>"; };
 		2FAD9762203C412B000D30F8 /* config.xml */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = config.xml; sourceTree = "<group>"; };
 		50379B222058CBB4000EE86E /* capacitor.config.json */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.json; path = capacitor.config.json; sourceTree = "<group>"; };
 		504EC3041FED79650016851F /* App.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = App.app; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -78,6 +82,8 @@
 				A1B2C3D4E5F6100000000003 /* PengarViewController.swift */,
 				A1B2C3D4E5F6100000000001 /* PengarOCRPlugin.swift */,
 				A1B2C3D4E5F6100000000005 /* PengarAIPlugin.swift */,
+				A1B2C3D4E5F6100000000009 /* PengarLockPlugin.swift */,
+				A1B2C3D4E5F610000000000B /* PengarBackupPlugin.swift */,
 				504EC30B1FED79650016851F /* Main.storyboard */,
 				504EC30E1FED79650016851F /* Assets.xcassets */,
 				504EC3101FED79650016851F /* LaunchScreen.storyboard */,
@@ -175,6 +181,8 @@
 				A1B2C3D4E5F6100000000004 /* PengarViewController.swift in Sources */,
 				A1B2C3D4E5F6100000000002 /* PengarOCRPlugin.swift in Sources */,
 				A1B2C3D4E5F6100000000006 /* PengarAIPlugin.swift in Sources */,
+				A1B2C3D4E5F610000000000A /* PengarLockPlugin.swift in Sources */,
+				A1B2C3D4E5F610000000000C /* PengarBackupPlugin.swift in Sources */,
 				9582B6832FE993A70072D4E8 /* SceneDelegate.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -250,7 +258,7 @@
 				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
-				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
+				IPHONEOS_DEPLOYMENT_TARGET = 15.4;
 				MTL_ENABLE_DEBUG_INFO = YES;
 				ONLY_ACTIVE_ARCH = YES;
 				SDKROOT = iphoneos;
@@ -301,7 +309,7 @@
 				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
-				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
+				IPHONEOS_DEPLOYMENT_TARGET = 15.4;
 				MTL_ENABLE_DEBUG_INFO = NO;
 				SDKROOT = iphoneos;
 				SWIFT_COMPILATION_MODE = wholemodule;
@@ -318,7 +326,7 @@
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				INFOPLIST_FILE = App/Info.plist;
-				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
+				IPHONEOS_DEPLOYMENT_TARGET = 15.4;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
@@ -340,7 +348,7 @@
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				INFOPLIST_FILE = App/Info.plist;
-				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
+				IPHONEOS_DEPLOYMENT_TARGET = 15.4;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",

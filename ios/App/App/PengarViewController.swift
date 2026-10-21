@@ -7,6 +7,8 @@ class PengarViewController: CAPBridgeViewController {
     override open func capacitorDidLoad() {
         bridge?.registerPluginInstance(PengarOCRPlugin())
         bridge?.registerPluginInstance(PengarAIPlugin())
+        bridge?.registerPluginInstance(PengarLockPlugin())
+        bridge?.registerPluginInstance(PengarBackupPlugin())
         // «Texto más grande» de iOS: WKWebView no lo aplica solo. Se agranda el texto de la página (como hace
         // @capacitor/text-zoom) al cargarla y cada vez que cambia el ajuste
         webView?.configuration.userContentController.addUserScript(

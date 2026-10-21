@@ -1,14 +1,16 @@
-import { ChevronLeft, ChevronRight } from 'lucide-react';
+import { ChevronLeft, ChevronRight, ClipboardList } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { BudgetRows } from '../components/charts/BudgetRows';
 import { Donut } from '../components/charts/Donut';
 import { HBars } from '../components/charts/HBars';
 import { Legend, TimeChart } from '../components/charts/TimeChart';
 import { Icon } from '../components/Icon';
+import { LedgerSheet, LedgerSummary } from '../components/LedgerSheet';
 import { PageHeader } from '../components/Sheet';
 import { EmptyState, Suricata } from '../components/Suricata';
 import { Segmented, Toggle } from '../components/Toggle';
 import { addMonths, currentMonth, monthLabel, monthOf } from '../domain/dates';
+import { percentLedger } from '../domain/ledger';
 import { formatPct } from '../domain/money';
 import {
   dataSpan, foldOthers, groupTotals, kpis, monthly, monthSummary, percentCards, stack, type Filter, type GroupBy,
@@ -23,13 +25,23 @@ type Period = '6' | '12' | 'anio' | 'todo';
 const INCOME_COLOR = '#176B60';
 const SAVINGS_COLOR = '#6250d6';
 
-export function Stats({ view, setView, month, setMonth }: { view: StatsView; setView: (v: StatsView) => void; month: string; setMonth: (m: string) => void }) {
+export function Stats({ view, setView, month, setMonth, savings, setSavings, onReport }: {
+  view: StatsView;
+  setView: (v: StatsView) => void;
+  month: string;
+  setMonth: (m: string) => void;
+  /** «Incluir ahorro» de Mes (desde el resumen se abre apagado, como el resumen) */
+  savings: boolean;
+  setSavings: (v: boolean) => void;
+  /** Abre el resumen de un mes que ya cerró */
+  onReport: (month: string) => void;
+}) {
   return (
     <div>
       <PageHeader title="Estadísticas" />
       <div className="space-y-4 px-4 pb-6">
         <Segmented value={view} onChange={setView} options={[{ id: 'mes', label: 'Mes' }, { id: 'tendencias', label: 'Tendencias' }]} />
-        {view === 'mes' ? <MonthView month={month} setMonth={setMonth} /> : <Trends />}
+        {view === 'mes' ? <MonthView month={month} setMonth={setMonth} includeSavings={savings} setIncludeSavings={setSavings} onReport={onReport} /> : <Trends />}
       </div>
     </div>
   );
@@ -136,16 +148,16 @@ function Trends() {
         <ul className="mt-3 divide-y divide-line">
           {folded.map((g) => (
             <li key={g.key}>
-              {/* En un teléfono angosto (menos de 360 px) el porcentaje va debajo del nombre y sin ícono: si no, el nombre queda en 3 letras */}
+              {/* En un teléfono angosto (menos de 360 px) el porcentaje va debajo del nombre y sin ícono: si no, el nombre queda en 3 letras. Un nombre largo baja a otro renglón (no se corta) */}
               <button className={`flex w-full items-center gap-2.5 py-2 text-left ${active && active !== g.key ? 'opacity-50' : ''}`} onClick={() => setActive(active === g.key ? null : g.key)}>
                 <span className="h-3 w-3 shrink-0 rounded-full" style={{ background: g.color }} />
-                {by === 'category' && <Icon name={g.icon} size={18} className="text-muted max-[359px]:hidden" />}
+                {by === 'category' && <Icon name={g.icon} size={18} className="shrink-0 text-muted max-[359px]:hidden" />}
                 <span className="min-w-0 flex-1">
-                  <span className="block truncate">{g.name}</span>
+                  <span className="line-clamp-2 break-words leading-tight">{g.name}</span>
                   <span className="hidden text-[14px] text-muted tabular max-[359px]:block">{formatPct(g.share)}</span>
                 </span>
-                <span className="w-12 text-right text-[15px] text-muted tabular max-[359px]:hidden">{formatPct(g.share)}</span>
-                <span className="w-24 shrink-0 text-right tabular max-[359px]:w-auto">{money(g.total)}</span>
+                <span className="w-12 shrink-0 text-right text-[15px] text-muted tabular max-[359px]:hidden">{formatPct(g.share)}</span>
+                <span className="shrink-0 text-right tabular">{money(g.total)}</span>
               </button>
             </li>
           ))}
@@ -168,11 +180,18 @@ function Trends() {
 
 // --- Mes -----------------------------------------------------------------------------------------------
 
-function MonthView({ month, setMonth }: { month: string; setMonth: (m: string) => void }) {
+function MonthView({ month, setMonth, includeSavings, setIncludeSavings, onReport }: {
+  month: string;
+  setMonth: (m: string) => void;
+  includeSavings: boolean;
+  setIncludeSavings: (v: boolean) => void;
+  onReport: (month: string) => void;
+}) {
   const { data, ix } = useStore();
   const { money } = useMoney();
-  const [includeSavings, setIncludeSavings] = useState(true);
   const [open, setOpen] = useState<string | null>(null);
+  // Historial de una categoría en % del ingreso (el diezmo)
+  const [history, setHistory] = useState<string | null>(null);
   // Tocar una barra de «Real contra presupuesto» abre su detalle, más abajo, y lo trae a la vista
   const jump = useRef(false);
   const rowRefs = useRef(new Map<string, HTMLLIElement>());
@@ -189,9 +208,11 @@ function MonthView({ month, setMonth }: { month: string; setMonth: (m: string) =
       setOpen(id);
     }
   };
-  const s = monthSummary(data, ix, month, includeSavings);
-  const cards = percentCards(data, ix, month);
+  const s = monthSummary(data, ix, month, includeSavings, currentMonth());
+  const cards = percentCards(data, ix, month, currentMonth()).map((c) => ({ ...c, ledger: percentLedger(data, ix, c.category.id, month) }));
   const over = s.rows.find((r) => r.status === 'over');
+  // El resumen se ofrece para los meses que ya cerraron y tienen algo anotado
+  const closed = month < currentMonth() && data.movements.some((m) => monthOf(m.date) === month);
 
   const detail = useMemo(() => {
     const byCat = new Map<string, Map<string, number>>();
@@ -213,7 +234,12 @@ function MonthView({ month, setMonth }: { month: string; setMonth: (m: string) =
         <div className="text-2xl">{monthLabel(month)}</div>
         <button className="flex min-h-tap min-w-tap items-center justify-center disabled:opacity-30" disabled={month >= currentMonth()} onClick={() => setMonth(addMonths(month, 1))} aria-label="Mes siguiente"><ChevronRight /></button>
       </div>
-      <Toggle checked={includeSavings} onChange={setIncludeSavings} label="Incluir ahorro" />
+      <div>
+        <Toggle checked={includeSavings} onChange={setIncludeSavings} label="Incluir ahorro" />
+        <p className="text-[14px] text-muted">
+          {includeSavings ? 'Los gastos y el presupuesto incluyen el ahorro.' : 'Sin el ahorro, como el resumen del mes.'}
+        </p>
+      </div>
 
       <div className="grid grid-cols-2 gap-3">
         <Kpi label="Ingresos" value={money(s.income)} />
@@ -244,6 +270,12 @@ function MonthView({ month, setMonth }: { month: string; setMonth: (m: string) =
         </div>
       )}
 
+      {closed && (
+        <button className="btn-outline w-full" onClick={() => onReport(month)}>
+          <ClipboardList size={20} strokeWidth={1.75} /> Ver resumen del mes
+        </button>
+      )}
+
       <Card title="Real contra presupuesto" sub="La barra es lo gastado; la rayita, el presupuesto de la categoría.">
         {s.rows.length ? <BudgetRows rows={s.rows} onSelect={select} /> : <p className="text-muted">No hay gastos ni presupuesto este mes.</p>}
       </Card>
@@ -253,18 +285,38 @@ function MonthView({ month, setMonth }: { month: string; setMonth: (m: string) =
           <dl className="divide-y divide-line text-[17px]">
             {[
               [`Ingresos${c.incomeEstimated ? ' (del mes anterior)' : ''}`, money(c.income)],
-              [`${c.pct}% del ingreso`, money(c.expected)],
+              [`${c.pct}% del ingreso`, `${c.incomeEstimated ? '≈ ' : ''}${money(c.expected)}`],
               ['Dado este mes', money(c.real)],
             ].map(([l, v]) => (
               <div key={l} className="flex justify-between py-1.5"><dt className="text-muted">{l}</dt><dd className="tabular">{v}</dd></div>
             ))}
-            <div className="flex justify-between py-1.5">
-              <dt className="text-muted">Diferencia</dt>
-              <dd className={`tabular ${c.diff < 0 ? 'text-danger' : 'text-ok'}`}>{c.diff < 0 ? `Faltan ${money(-c.diff)}` : `${money(c.diff)} de más`}</dd>
-            </div>
+            {!c.incomeEstimated && (
+              <div className="flex justify-between py-1.5">
+                <dt className="text-muted">Diferencia</dt>
+                {/* Menos de medio peso (el 10% de $ 187.892 son $ 18.789,20) no es que falte */}
+                <dd className={`tabular ${c.diff < -0.5 ? 'text-danger' : 'text-ok'}`}>
+                  {c.diff < -0.5 ? `Faltan ${money(-c.diff)}` : c.diff > 0.5 ? `${money(c.diff)} de más` : 'Justo'}
+                </dd>
+              </div>
+            )}
           </dl>
+          {/* Sin ingresos todavía en el mes en curso: es una estimación, no algo que falte (el acumulado usa lo real) */}
+          {c.incomeEstimated && (
+            <p className="pt-1.5 text-[16px] text-muted">
+              Todavía no entró nada este mes: si entra lo mismo que el mes pasado, te toca dar ≈ {money(c.expected)}.
+            </p>
+          )}
+          {/* Lo de todos los meses: el ingreso real de cada uno, desde «Contar desde» */}
+          <LedgerSummary
+            pending={c.ledger.pending}
+            from={c.ledger.from}
+            month={month}
+            note={c.incomeEstimated && month >= c.ledger.from ? `${monthLabel(month, { year: false })} se cuenta cuando entre el ingreso.` : undefined}
+            onHistory={() => setHistory(c.category.id)}
+          />
         </Card>
       ))}
+      {history && <LedgerSheet categoryId={history} month={month} onClose={() => setHistory(null)} />}
 
       <Card title="Detalle del mes" sub="Por categoría y rubro">
         <ul className="divide-y divide-line">

@@ -6,8 +6,11 @@ import {
 } from '../domain/importSheet';
 import { plural } from '../domain/text';
 import { readSpreadsheet, type Sheet } from '../lib/files';
+import { household, useSync } from '../lib/sync';
 import { useMoney } from '../lib/useMoney';
+import { activeHousehold, sharedNote } from '../screens/Household';
 import { useStore } from '../store/store';
+import { ConfirmSheet } from './ConfirmSheet';
 
 /**
  * Importar una planilla (.xlsx o .csv): elegir el archivo, ver un resumen y confirmar.
@@ -21,6 +24,9 @@ export function ImportFlow({ mode, name, onDone, compact = false }: { mode: 'rep
   const [result, setResult] = useState<{ res: ImportResult; sheet: string } | null>(null);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  // «Reemplazar todo» con datos propios pregunta antes (en un hogar, cambia para todos)
+  const [asking, setAsking] = useState(false);
+  const hh = activeHousehold(useSync());
 
   const analyze = (s: Sheet) => {
     try {
@@ -53,6 +59,8 @@ export function ImportFlow({ mode, name, onDone, compact = false }: { mode: 'rep
 
   const confirm = (how: 'replace' | 'merge') => {
     if (!result) return;
+    // Ya confirmado: en un hogar, la tanda que borra lo de antes no se frena (lib/sync)
+    if (how === 'replace' && hh) household.allowBigDelete();
     applyImport(result.res, how, name);
     onDone();
   };
@@ -110,12 +118,22 @@ export function ImportFlow({ mode, name, onDone, compact = false }: { mode: 'rep
             ) : (
               <>
                 <button className="btn-primary" onClick={() => confirm('merge')}>Sumar a lo que ya tengo</button>
-                <button className="btn-outline" onClick={() => confirm('replace')}>Reemplazar todo por la planilla</button>
+                <button className="btn-outline" onClick={() => setAsking(true)}>Reemplazar todo por la planilla</button>
               </>
             )}
             <button className="btn-ghost" onClick={() => { setResult(null); setSheets(null); }}>Elegir otro archivo</button>
           </div>
         </div>
+      )}
+      {asking && (
+        <ConfirmSheet
+          title="¿Reemplazar todo?"
+          message={`Se borra lo de ahora (${plural(data.movements.length, 'movimiento', 'movimientos')}, las categorías y los rubros) y los gastos fijos quedan vacíos: queda solo lo de la planilla.${sharedNote(hh)}`}
+          confirmLabel="Reemplazar"
+          danger
+          onConfirm={() => confirm('replace')}
+          onClose={() => setAsking(false)}
+        />
       )}
     </div>
   );

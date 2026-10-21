@@ -64,13 +64,18 @@ export function Goals({ onBack }: { onBack: () => void }) {
 }
 
 function GoalSheet({ value, onClose }: { value: Goal | 'new'; onClose: () => void }) {
-  const { upsertGoal, deleteGoal } = useStore();
+  const { data, upsertGoal, deleteGoal } = useStore();
   const toast = useToast();
   const id = useId();
   const [g, setG] = useState<Goal>(value === 'new' ? { id: newId('g'), name: '', icon: 'm:viajes', target: 0, saved: 0 } : value);
   const [target, setTarget] = useState(g.target ? String(g.target) : '');
   const [saved, setSaved] = useState(g.saved ? String(g.saved) : '');
   const t = parseAmount(target) ?? 0;
+  // «Ya tengo» sin tocar queda como está ahora (en un hogar, alguien pudo sumar mientras la hoja estaba abierta)
+  const savedNow = () => {
+    const typed = parseAmount(saved) ?? 0;
+    return value !== 'new' && typed === value.saved ? data.goals.find((x) => x.id === value.id)?.saved ?? typed : typed;
+  };
   return (
     <Sheet
       title={value === 'new' ? 'Nueva meta' : 'Editar meta'}
@@ -90,7 +95,7 @@ function GoalSheet({ value, onClose }: { value: Goal | 'new'; onClose: () => voi
               Borrar
             </button>
           )}
-          <button className="btn-primary flex-1" disabled={!g.name.trim() || t <= 0} onClick={() => { upsertGoal({ ...g, name: g.name.trim(), target: t, saved: parseAmount(saved) ?? 0 }); onClose(); }}>Guardar</button>
+          <button className="btn-primary flex-1" disabled={!g.name.trim() || t <= 0} onClick={() => { upsertGoal({ ...g, name: g.name.trim(), target: t, saved: savedNow() }); onClose(); }}>Guardar</button>
         </div>
       }
     >
@@ -112,8 +117,10 @@ function GoalSheet({ value, onClose }: { value: Goal | 'new'; onClose: () => voi
   );
 }
 
-function AddToGoal({ goal, onClose, onReached }: { goal: Goal; onClose: () => void; onReached: (g: Goal) => void }) {
-  const { upsertGoal } = useStore();
+function AddToGoal({ goal: opened, onClose, onReached }: { goal: Goal; onClose: () => void; onReached: (g: Goal) => void }) {
+  const { data, upsertGoal } = useStore();
+  // La meta como está ahora (en un hogar, otro pudo sumar mientras la hoja estaba abierta)
+  const goal = data.goals.find((x) => x.id === opened.id) ?? opened;
   const [text, setText] = useState('');
   // En el iPhone el teclado de números no tiene «-»: se elige si se suma o se resta
   const [how, setHow] = useState<'sumar' | 'restar'>('sumar');

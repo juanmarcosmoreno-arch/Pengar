@@ -1,4 +1,4 @@
-import { ArrowDown, ArrowUp, Camera, CreditCard, Minus, Plus } from 'lucide-react';
+import { ArrowDown, ArrowUp, Camera, ChevronRight, CreditCard, Minus, Plus } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { BudgetRows } from '../components/charts/BudgetRows';
 import { Columns } from '../components/charts/Columns';
@@ -7,9 +7,10 @@ import { CategoryBubble } from '../components/Icon';
 import { Suricata, type Pose } from '../components/Suricata';
 import { MovementRow } from '../components/MovementRow';
 import { useToast } from '../components/Toast';
-import { addMonths, currentMonth, monthLabel, today } from '../domain/dates';
+import { addMonths, currentMonth, monthLabel, monthName, today } from '../domain/dates';
 import { formatPct } from '../domain/money';
 import { pendingRecurring, type PendingRecurring } from '../domain/recurring';
+import { pendingReport } from '../domain/report';
 import { expenseChange, kpis, monthly, monthSummary } from '../domain/stats';
 import { OTHER_COLOR } from '../domain/template';
 import type { Kind, Movement, Recurring } from '../domain/types';
@@ -19,7 +20,7 @@ import { useStore } from '../store/store';
 // El suricata saluda solo la primera vez que se abre Inicio en la sesión
 let greeted = false;
 
-export function Home({ onAdd, onScan, onStatement, onEdit, onRecord, onGo }: {
+export function Home({ onAdd, onScan, onStatement, onEdit, onRecord, onGo, onReport }: {
   onAdd: (kind: Kind) => void;
   onScan: () => void;
   /** Estado de cuenta de la tarjeta */
@@ -28,6 +29,8 @@ export function Home({ onAdd, onScan, onStatement, onEdit, onRecord, onGo }: {
   /** Anotar un gasto fijo (abre el formulario con su monto estimado) */
   onRecord: (r: Recurring) => void;
   onGo: (where: 'movimientos' | 'mes') => void;
+  /** Abrir el resumen de un mes */
+  onReport: (month: string) => void;
 }) {
   const { data, ix } = useStore();
   const { money } = useMoney();
@@ -45,13 +48,15 @@ export function Home({ onAdd, onScan, onStatement, onEdit, onRecord, onGo }: {
     title: monthLabel(p.month),
     value: p.expense,
   }));
-  const summary = monthSummary(data, ix, month, false);
+  const summary = monthSummary(data, ix, month, false, currentMonth());
   const budgeted = summary.rows.filter((r) => r.hasBudget).sort((a, b) => b.real / (b.budget || 1) - a.real / (a.budget || 1)).slice(0, 4);
   const recent = [...data.movements]
     .filter((m) => !m.monthly)
     .sort((a, b) => b.date.localeCompare(a.date) || b.createdAt - a.createdAt)
     .slice(0, 5);
   const hasMonthsOnly = !recent.length && data.movements.length > 0;
+  // Desde el 1 y hasta que lo abras, el resumen del mes que cerró
+  const report = pendingReport(data, today());
   // La cara del suricata según cómo viene el mes
   const mood: Pose = k.balance < 0 ? 'cara-preocupado' : summary.budget > 0 && summary.diff > 0 ? 'cara-pensando' : k.income > 0 ? 'cara-feliz' : 'cara-normal';
 
@@ -66,6 +71,17 @@ export function Home({ onAdd, onScan, onStatement, onEdit, onRecord, onGo }: {
       </header>
 
       <ExampleBanner />
+
+      {report && (
+        <button className="card flex w-full items-center gap-3 border-primary/40 bg-soft/20 py-2 pl-3 pr-2 text-left" onClick={() => onReport(report)}>
+          <Suricata pose="lista" size={64} className="shrink-0" />
+          <span className="min-w-0 flex-1">
+            <span className="block text-xl leading-tight">Tu resumen de {monthName(report)} está listo</span>
+            <span className="block text-[15px] leading-snug text-muted">Cómo te fue: lo que entró, lo que gastaste y el presupuesto</span>
+          </span>
+          <ChevronRight className="shrink-0 text-muted" size={22} />
+        </button>
+      )}
 
       <section className="card relative overflow-hidden p-5">
         <div className="text-lg text-muted">Te queda en {monthLabel(month, { year: false }).toLowerCase()}</div>
@@ -154,7 +170,7 @@ function laterText(list: PendingRecurring[], name: (r: PendingRecurring) => stri
 
 /** Los gastos fijos del mes que ya llegaron a su día y todavía no se anotaron */
 function DueRecurring({ onRecord }: { onRecord: (r: Recurring) => void }) {
-  const { data, ix, update, markRecurring, recordAllDue } = useStore();
+  const { data, ix, skipRecurring, recordAllDue } = useStore();
   const { money } = useMoney();
   const toast = useToast();
   const now = today();
@@ -167,12 +183,8 @@ function DueRecurring({ onRecord }: { onRecord: (r: Recurring) => void }) {
   const original = (r: PendingRecurring) => data.recurring.find((x) => x.id === r.id) ?? r;
 
   const skip = (r: PendingRecurring) => {
-    const before = original(r).doneThrough;
-    markRecurring(r.id, month);
-    toast(`Salteaste «${name(r)}» este mes`, {
-      label: 'Deshacer',
-      run: () => update((d) => ({ ...d, recurring: d.recurring.map((x) => (x.id === r.id ? { ...x, doneThrough: before } : x)) })),
-    });
+    const undo = skipRecurring(r.id, month);
+    toast(`Salteaste «${name(r)}» este mes`, { label: 'Deshacer', run: undo });
   };
   const recordAll = () => {
     const { count, undo } = recordAllDue(month, now);

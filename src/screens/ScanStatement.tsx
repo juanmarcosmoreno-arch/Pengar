@@ -8,6 +8,7 @@ import { useToast } from '../components/Toast';
 import { Toggle } from '../components/Toggle';
 import { suggestRubro } from '../domain/classify';
 import { MONTHS, monthOf } from '../domain/dates';
+import { formatRate, validUsdRate, type UsdRate } from '../domain/fx';
 import { NBSP, parseDecimal, round2 } from '../domain/money';
 import { findDuplicates, isSpend, planillaMonths, toLocal, withoutInstallment, type StatementTx } from '../domain/statement';
 import {
@@ -20,10 +21,13 @@ import {
   NOT_SPEND,
   spendRubros,
   statementNote,
+  txRates,
   usd,
+  usdDates,
   type MerchantGroup,
 } from '../domain/statementReview';
 import { capital, joinAnd, plural } from '../domain/text';
+import { usdRates } from '../lib/fx';
 import { PdfPasswordError } from '../lib/pdf';
 import { isNative, isPreview } from '../lib/platform';
 import { exampleStatement, readStatement, type StatementDraft } from '../lib/readStatement';
@@ -33,17 +37,16 @@ import { useStore } from '../store/store';
 
 const AI_NAME: Partial<Record<SuggestReason, string>> = { apple: 'Apple Intelligence', claude: 'Claude' };
 
-/** Si no hay otra (ni en el estado de cuenta ni la última que se usó) */
+/** Solo para buscar los repetidos en dólares (con 3% de tolerancia) si el estado de cuenta no trae cotización */
 const DEFAULT_USD_RATE = 40;
 
 const SHEETS = '.csv,.xlsx,.xls,.ods,text/csv,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
 
-/** La cotización que se acepta (la misma de statementInfo): un número fuera de esto es un error de tipeo */
-const validUsdRate = (v: number) => v > 10 && v < 200;
-
 /** Estado de cuenta de la tarjeta (PDF, planilla o foto) → revisar por comercio → un gasto por compra */
 export function ScanStatement({ onClose }: { onClose: () => void }) {
   const { data } = useStore();
+  // Pantalla entera encima de la app: para el lector de pantalla es un diálogo, con este título
+  const titleId = useId();
   const [draft, setDraft] = useState<StatementDraft | null>(null);
   const [progress, setProgress] = useState('');
   const [error, setError] = useState('');
@@ -108,8 +111,8 @@ export function ScanStatement({ onClose }: { onClose: () => void }) {
   const leave = (to: 'cerrar' | 'otro') => (draft && dirty.current ? setLeaving(to) : doLeave(to));
 
   return (
-    <div className="fixed inset-0 z-30 overflow-y-auto bg-bg">
-      <PageHeader title={draft ? 'Revisar compras' : 'Estado de cuenta'} onBack={() => leave('cerrar')} />
+    <div className="fixed inset-0 z-30 overflow-y-auto bg-bg" role="dialog" aria-modal="true" aria-labelledby={titleId}>
+      <PageHeader titleId={titleId} title={draft ? 'Revisar compras' : 'Estado de cuenta'} onBack={() => leave('cerrar')} />
       {input(pdf, 'application/pdf,.pdf')}
       {input(sheet, SHEETS)}
       {isNative && input(camera, 'image/*', true)}
@@ -183,12 +186,31 @@ function Review({ draft, onDone, onRetry, onDirty }: { draft: StatementDraft; on
   const toast = useToast();
   const { txs } = draft;
   const firstRate = draft.usdRate ?? DEFAULT_USD_RATE;
-  const hasUsd = txs.some((t) => t.currency === 'usd' && (isSpend(t) || t.kind === 'credito'));
-  const [rateText, setRateText] = useState(String(firstRate).replace('.', ','));
+  const [usdRange] = useState(() => usdDates(txs));
+  const hasUsd = !!usdRange;
+  // Las compras en dólares van con la cotización del BCU de su fecha (undefined mientras se busca, null si no se
+  // pudo); si la persona escribe una, esa para todas
+  const [bcu, setBcu] = useState<UsdRate[] | null | undefined>(() => (usdRange ? undefined : null));
+  // `force`: «Probar de nuevo» (sin esperar los minutos de pausa después de una falla)
+  const [askBcu, setAskBcu] = useState<{ force: boolean }>({ force: false });
+  useEffect(() => {
+    if (!usdRange) return;
+    let alive = true;
+    setBcu(undefined);
+    void usdRates(usdRange.from, usdRange.to, askBcu).then((r) => alive && setBcu(r));
+    return () => { alive = false; };
+  }, [askBcu]); // eslint-disable-line react-hooks/exhaustive-deps
+  const [rateText, setRateText] = useState('');
   // Con decimales siempre: «39,875» es la cotización, no 39.875 pesos (parseAmount lo leería como miles)
-  const parsedRate = parseDecimal(rateText);
-  const rate = parsedRate != null && validUsdRate(parsedRate) ? parsedRate : 0;
-  const validRate = !hasUsd || rate > 0;
+  const parsedRate = rateText.trim() ? parseDecimal(rateText) : null;
+  const single = parsedRate != null && validUsdRate(parsedRate) ? parsedRate : null;
+  const badRate = !!rateText.trim() && single == null;
+  // Las del BCU, si respondió con todas las fechas que hacen falta
+  const bcuRates = bcu ? txRates(txs, null, bcu) : null;
+  const bcuOk = bcuRates != null;
+  const rates = badRate ? null : single ? txRates(txs, single, null) : hasUsd ? bcuRates : txRates(txs, null, null);
+  const rateOf = (i: number) => rates?.[i] ?? 0;
+  const validRate = rates != null;
   // Algo que eligió la persona (no las sugerencias): salir sin guardar lo pierde
   const [touched, setTouched] = useState(false);
   useEffect(() => onDirty(touched), [touched]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -240,7 +262,7 @@ function Review({ draft, onDone, onRetry, onDirty }: { draft: StatementDraft; on
     return () => { alive = false; };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const local = (i: number) => toLocal(txs[i], rate);
+  const local = (i: number) => toLocal(txs[i], rateOf(i));
   const skipMonth = (i: number) => skipPlanilla && fixed.months.includes(monthOf(txs[i].date));
   const rubroOf = (key: string) => (excluded.has(key) ? undefined : choice[key]?.rubroId);
   const monthName = (m: string) => MONTHS[Number(m.slice(5, 7)) - 1];
@@ -262,7 +284,7 @@ function Review({ draft, onDone, onRetry, onDirty }: { draft: StatementDraft; on
   const targets = rows.map((r) => txs[r.i]);
   const amounts = applyCredits(rows.map((r) => local(r.i)), targets, [...subtract].map((i) => ({ ...txs[i], amount: local(i) })));
   const movements = rows
-    .map((r, k) => ({ date: txs[r.i].date, amount: amounts[k], rubroId: r.rubroId, merchant: r.merchant, note: statementNote(txs[r.i], draft.card, rate) }))
+    .map((r, k) => ({ date: txs[r.i].date, amount: amounts[k], rubroId: r.rubroId, merchant: r.merchant, note: statementNote(txs[r.i], draft.card, rateOf(r.i)) }))
     .filter((m) => m.amount > 0);
   const total = round2(movements.reduce((s, m) => s + m.amount, 0));
 
@@ -273,6 +295,10 @@ function Review({ draft, onDone, onRetry, onDirty }: { draft: StatementDraft; on
   const spendTotal = round2(spends.reduce((s, [, i]) => s + local(i), 0));
   const usdSpends = spends.filter(([t]) => t.currency === 'usd');
   const usdTotal = round2(usdSpends.reduce((s, [t]) => s + t.amount, 0));
+  // La cotización promedio que quedó (las del BCU cambian un poco de un día a otro)
+  const usdConverted = txs.map((t, i) => [t, i] as const).filter(([t]) => t.currency === 'usd' && (isSpend(t) || t.kind === 'credito'));
+  const usdWeight = usdConverted.reduce((s, [t]) => s + Math.abs(t.amount), 0);
+  const avgRate = usdWeight ? usdConverted.reduce((s, [t, i]) => s + Math.abs(t.amount) * rateOf(i), 0) / usdWeight : 0;
   const period = draft.period && `del ${dayMonth(draft.period.from)} al ${dayMonth(draft.period.to)}`;
 
   const nuevos = fixed.groups.filter((g) => section[g.key] === 'nuevo');
@@ -327,7 +353,7 @@ function Review({ draft, onDone, onRetry, onDirty }: { draft: StatementDraft; on
         date: draft.period?.to ?? txs.map((t) => t.date).sort().at(-1),
         movements,
         learned,
-        usdRate: hasUsd ? rate : undefined,
+        usdRate: single ?? undefined,
       });
       const saved = count ? plural(count, 'gasto guardado', 'gastos guardados') : 'Estado de cuenta guardado';
       toast(fileKept ? saved : `${saved}; el archivo no se pudo guardar en este navegador`, { label: 'Deshacer', run: undo });
@@ -420,14 +446,48 @@ function Review({ draft, onDone, onRetry, onDirty }: { draft: StatementDraft; on
       </div>
 
       {hasUsd && (
-        <div className="card flex items-center gap-3 p-4">
-          <div className="min-w-0 flex-1">
-            <label htmlFor="usd-rate" className="text-lg">Cotización del dólar</label>
-            <div className="text-[15px] text-muted">
-              {usdSpends.length ? `${plural(usdSpends.length, 'compra', 'compras')}: ${usd(usdTotal)}${rate > 0 ? ` = ${money(usdTotal * rate)}` : ''}` : 'Para los créditos en dólares'}
+        <div className="card space-y-3 p-4">
+          <div>
+            <div className="text-lg">{usdSpends.length ? 'Compras en dólares' : 'Créditos en dólares'}</div>
+            {usdSpends.length > 0 && (
+              <div className="text-[15px] text-muted">
+                {plural(usdSpends.length, 'compra', 'compras')}: {usd(usdTotal)}{validRate ? ` = ${money(round2(usdSpends.reduce((s, [, i]) => s + local(i), 0)))}` : ''}
+              </div>
+            )}
+            <div className={`text-[15px] ${badRate || (!single && bcu !== undefined && !bcuOk) ? 'text-danger' : 'text-muted'}`} aria-live="polite">
+              {badRate ? 'Revisá la cotización (por ejemplo, 40,10)'
+                : single ? `Con tu cotización (${formatRate(single)}) para todas`
+                : bcu === undefined ? (
+                  <span className="flex items-center gap-2">
+                    <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-soft border-t-primary" /> Buscando la cotización del BCU…
+                  </span>
+                )
+                : bcuOk ? `Cotización BCU de cada día (≈ ${avgRate.toLocaleString('es-UY', { minimumFractionDigits: 1, maximumFractionDigits: 1 })})`
+                : isPreview ? 'En la vista previa no se consulta el BCU: poné la cotización'
+                : 'No se pudo traer la cotización del BCU: escribila'}
             </div>
+            {!isPreview && !single && bcu === null && (
+              <button className="min-h-tap text-[16px] text-primary" onClick={() => setAskBcu({ force: true })}>Probar de nuevo</button>
+            )}
           </div>
-          <input id="usd-rate" className="field w-[84px] shrink-0 px-3 text-right tabular" inputMode="decimal" value={rateText} onChange={(e) => { setTouched(true); setRateText(e.target.value); }} />
+          <div className="flex items-center gap-3 border-t border-line pt-3">
+            <label htmlFor="usd-rate" className="min-w-0 flex-1 leading-tight">
+              <span className="block text-[17px]">Usar una sola cotización</span>
+              <span className="block text-[14px] text-muted">{bcuOk ? 'Opcional: manda sobre la del BCU' : 'Para todas las compras'}</span>
+            </label>
+            <input
+              id="usd-rate"
+              className="field w-[84px] shrink-0 px-3 text-right tabular"
+              inputMode="decimal"
+              value={rateText}
+              onChange={(e) => { setTouched(true); setRateText(e.target.value); }}
+            />
+          </div>
+          {!rateText.trim() && draft.usdRate && (draft.usdRateFrom === 'estado' || (bcu !== undefined && !bcuOk)) && (
+            <button className="chip" onClick={() => { setTouched(true); setRateText(formatRate(draft.usdRate!)); }}>
+              Usar {formatRate(draft.usdRate)} ({draft.usdRateFrom === 'estado' ? 'la del estado de cuenta' : 'la última que usaste'})
+            </button>
+          )}
         </div>
       )}
 
@@ -543,8 +603,11 @@ function Review({ draft, onDone, onRetry, onDirty }: { draft: StatementDraft; on
 
       <div className="fixed inset-x-0 bottom-0 z-10 border-t border-line bg-bg/95 px-4 pt-3 pb-[max(1rem,env(safe-area-inset-bottom))] backdrop-blur">
         {(missing > 0 || !validRate) && (
-          <p className="pb-2 text-center text-[16px] text-danger">
-            {missing > 0 ? `Faltan ${plural(missing, 'comercio', 'comercios')}` : rateText.trim() ? 'Revisá la cotización del dólar (por ejemplo, 40,10)' : 'Falta la cotización del dólar'}
+          <p className={`pb-2 text-center text-[16px] ${missing === 0 && !badRate && bcu === undefined ? 'text-muted' : 'text-danger'}`}>
+            {missing > 0 ? `Faltan ${plural(missing, 'comercio', 'comercios')}`
+              : badRate ? 'Revisá la cotización del dólar (por ejemplo, 40,10)'
+              : bcu === undefined ? 'Buscando la cotización del dólar…'
+              : 'Falta la cotización del dólar'}
           </p>
         )}
         <button className="btn-primary w-full" disabled={missing > 0 || !validRate || saving} onClick={save}>

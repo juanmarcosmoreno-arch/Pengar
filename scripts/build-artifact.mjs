@@ -6,6 +6,7 @@
 // { "assets/index-ABC.js": { "from": "dist-preview/assets/index-ABC.js", "contentType": "text/javascript" }, … }
 import { readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { join, relative, resolve, sep } from 'node:path';
+import { loadEnv } from 'vite';
 
 const root = resolve(import.meta.dirname, '..');
 const dist = join(root, 'dist-preview');
@@ -57,8 +58,8 @@ const vitrina = `<aside class="vitrina" lang="es" aria-label="Sobre esta vista p
   <p class="lema">Tu dinero, más simple.</p>
   <h2>Para probar</h2>
   <ol>
-    <li>Anotá un gasto o un ingreso desde Inicio.</li>
-    <li>Mirá Estadísticas: el mes y las tendencias.</li>
+    <li>Abrí el resumen del mes pasado, arriba en Inicio.</li>
+    <li>Mirá Estadísticas: el mes, el diezmo acumulado y las tendencias.</li>
     <li>Subí el PDF de una factura: lee el comercio, el total y cada renglón.</li>
     <li>Probá «Tarjeta» con el estado de cuenta de ejemplo.</li>
     <li>Cambiá categorías y rubros en Más.</li>
@@ -123,6 +124,14 @@ const js = files.filter((f) => f.path.endsWith('.js')).map((f) => readFileSync(j
 const workerName = worker?.path.split('/').pop();
 if (!worker || !js.includes(`new URL("${workerName}",import.meta.url)`)) throw new Error('No encontré el worker de pdf.js con ruta relativa');
 if (!files.some((f) => f.path === 'ejemplo.json')) throw new Error('Falta ejemplo.json (public/ejemplo.json: node scripts/make-example.mjs)');
+
+// La vista previa se comparte: no puede llevar el proyecto de Supabase del .env (vite.config los deja vacíos)
+const env = loadEnv('production', root, 'VITE_');
+const secrets = [env.VITE_SUPABASE_URL, env.VITE_SUPABASE_ANON_KEY].map((v) => (v ?? '').trim().replace(/^["']|["']$/g, '')).filter((v) => v.length >= 8);
+for (const f of files.filter((x) => /\.(m?js|css|json|html)$/.test(x.path))) {
+  const text = readFileSync(join(root, f.from), 'utf8');
+  if (secrets.some((v) => text.includes(v))) throw new Error(`${f.path} tiene la dirección o la clave de Supabase del .env: la vista previa no las lleva`);
+}
 
 const size = files.reduce((s, f) => s + statSync(join(root, f.from)).size, 0);
 console.log(`✓ dist-preview/pengar.html y files.json (${files.length} archivos, ${(size / 1024 / 1024).toFixed(1)} MB)`);

@@ -3,11 +3,12 @@ import { useEffect, useRef, useState } from 'react';
 import { shortDate } from '../domain/dates';
 import { dayMonth } from '../domain/statementReview';
 import type { Invoice } from '../domain/types';
-import { loadFile } from '../lib/db';
 import { NO_DOWNLOADS, saveOrShare } from '../lib/files';
 import { jpegName } from '../lib/ocr';
 import { PdfPasswordError, renderPdfPages } from '../lib/pdf';
 import { isPreview } from '../lib/platform';
+import { RemoteError } from '../lib/remote';
+import { loadInvoiceFile, useSync } from '../lib/sync';
 import { useMoney } from '../lib/useMoney';
 import { useStore } from '../store/store';
 import { Sheet } from './Sheet';
@@ -35,7 +36,13 @@ export function InvoiceViewer({ invoice, onClose }: { invoice: Invoice; onClose:
   const [file, setFile] = useState<Blob | null>(null);
   const [imageUrl, setImageUrl] = useState<string>();
   const [status, setStatus] = useState<'cargando' | 'listo' | 'error' | 'clave'>('cargando');
+  // En un hogar compartido, el archivo de otro se baja la primera vez: sin conexión no se puede
+  const [offline, setOffline] = useState(false);
   const [hidden, setHidden] = useState(0);
+  // «Probar de nuevo» (en un hogar, el archivo puede no haber llegado todavía)
+  const [tries, setTries] = useState(0);
+  const sync = useSync();
+  const inHousehold = !!sync.household && sync.phase !== 'removed';
   const pagesBox = useRef<HTMLDivElement>(null);
   const isPdf = invoice.mime === 'application/pdf' || /\.pdf$/i.test(invoice.fileName);
   const isImage = !isPdf && invoice.mime.startsWith('image/');
@@ -44,8 +51,9 @@ export function InvoiceViewer({ invoice, onClose }: { invoice: Invoice; onClose:
   useEffect(() => {
     let alive = true;
     let url: string | undefined;
+    setStatus('cargando');
     (async () => {
-      const blob = await loadFile(invoice.id);
+      const blob = await loadInvoiceFile(invoice.id);
       if (!alive) return;
       if (!blob) throw new Error('sin archivo');
       setFile(blob);
@@ -63,13 +71,15 @@ export function InvoiceViewer({ invoice, onClose }: { invoice: Invoice; onClose:
       setStatus('listo');
     })().catch((e) => {
       console.error(e);
-      if (alive) setStatus(e instanceof PdfPasswordError ? 'clave' : 'error');
+      if (!alive) return;
+      setOffline(e instanceof RemoteError && e.kind === 'offline');
+      setStatus(e instanceof PdfPasswordError ? 'clave' : 'error');
     });
     return () => {
       alive = false;
       if (url) URL.revokeObjectURL(url);
     };
-  }, [invoice.id, isPdf, isImage]);
+  }, [invoice.id, isPdf, isImage, tries]);
 
   // Las fotos se guardan como JPEG: si el nombre es otro («IMG_1234.PNG», de antes), se comparte como .jpg
   const shareName = invoice.mime === 'image/jpeg' && !/\.jpe?g$/i.test(invoice.fileName) ? jpegName(invoice.fileName, 'factura') : invoice.fileName;
@@ -117,7 +127,11 @@ export function InvoiceViewer({ invoice, onClose }: { invoice: Invoice; onClose:
             <Suricata pose="cara-preocupado" size={90} />
             <p className="text-xl">{status === 'clave' ? 'Este PDF tiene contraseña' : `No se pudo abrir ${noun}`}</p>
             <p className="text-muted">
-              {!file
+              {offline
+                ? 'Está en el hogar compartido, pero sin conexión no se puede bajar. Probá de nuevo con conexión.'
+                : !file && inHousehold
+                ? 'Todavía no está en el hogar: puede que el teléfono donde se anotó no lo haya subido. Probá de nuevo en un rato.'
+                : !file
                 ? `No se encontró el archivo ${where}.`
                 : isPreview
                   ? 'El archivo está guardado, pero no se puede mostrar acá. En la app de iPhone lo podés compartir o guardar.'
@@ -125,6 +139,9 @@ export function InvoiceViewer({ invoice, onClose }: { invoice: Invoice; onClose:
                     ? 'Para verlo, abrilo con «Compartir o guardar» (te pide la contraseña).'
                     : 'El archivo está guardado, pero no se puede mostrar acá. Probá con «Compartir o guardar».'}
             </p>
+            {!file && (offline || inHousehold) && (
+              <button className="btn-outline mt-2" onClick={() => setTries((n) => n + 1)}>Probar de nuevo</button>
+            )}
           </div>
         )}
 

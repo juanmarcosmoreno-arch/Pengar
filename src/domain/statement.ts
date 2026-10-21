@@ -7,6 +7,7 @@
  */
 import { monthOf, today as todayISO } from './dates';
 import { norm, sheetDate, type Cell } from './importSheet';
+import { splitUsdNote } from './fx';
 import { parseAmount, round2 } from './money';
 import { groupRows, type TextBox } from './ocrLines';
 import type { Movement } from './types';
@@ -911,20 +912,34 @@ function similarity(key: string, other: string | undefined): number {
  */
 export function findDuplicates(txs: StatementTx[], movements: Movement[], usdRate?: number): Map<number, string> {
   const pool = movements.filter((m) => m.kind === 'gasto' && !m.monthly);
+  // Lo anotado en dólares lleva la cuenta en la nota («U$S 100 × 42,50»): se compara en dólares, sin cotización
+  const usdOf = new Map(pool.map((m) => [m.id, splitUsdNote(m.note).usd]));
   const pairs: { i: number; id: string; sim: number; dAmount: number; dDays: number }[] = [];
   txs.forEach((tx, i) => {
     if (!isSpend(tx)) return;
-    if (tx.currency === 'usd' && !(usdRate && usdRate > 0)) return;
-    const amount = toLocal(tx, usdRate ?? 1);
-    // En dólares la cotización del día de la compra puede ser otra
-    const tol = Math.max(1, amount * (tx.currency === 'usd' ? 0.03 : 0.01));
+    const usd = tx.currency === 'usd';
+    // Sin cotización, en dólares solo se reconoce lo que tiene la cuenta en dólares en la nota
+    const rate = usd ? (usdRate && usdRate > 0 ? usdRate : null) : 1;
+    const amount = rate ? toLocal(tx, rate) : 0;
+    // En dólares la cotización del día de la compra puede ser otra (la de `usdRate` es una sola, y a veces aproximada)
+    const tol = Math.max(1, amount * (usd ? 0.03 : 0.01));
     for (const m of pool) {
       // Otra cuota de la misma compra: hay bancos que repiten la fecha de la compra todos los meses
       const cuota = m.note?.match(/cuota (\d+\/\d+)/)?.[1];
       if (tx.installment && cuota && cuota !== tx.installment) continue;
-      const dAmount = Math.abs(m.amount - amount);
       const dDays = Math.abs(dayNumber(m.date) - dayNumber(tx.date));
-      if (dAmount <= tol && dDays <= 3) pairs.push({ i, id: m.id, sim: similarity(tx.key, m.merchant || m.note), dAmount, dDays });
+      if (dDays > 3) continue;
+      const mUsd = usd ? usdOf.get(m.id) : undefined;
+      let dAmount: number;
+      if (mUsd != null) {
+        dAmount = Math.abs(mUsd - tx.amount);
+        if (dAmount > Math.max(0.01, tx.amount * 0.005)) continue;
+      } else {
+        if (!rate) continue;
+        dAmount = Math.abs(m.amount - amount);
+        if (dAmount > tol) continue;
+      }
+      pairs.push({ i, id: m.id, sim: similarity(tx.key, m.merchant || m.note), dAmount, dDays });
     }
   });
   pairs.sort((a, b) => b.sim - a.sim || a.dAmount - b.dAmount || a.dDays - b.dDays || a.i - b.i);

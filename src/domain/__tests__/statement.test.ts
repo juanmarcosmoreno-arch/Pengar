@@ -563,7 +563,8 @@ describe('datos guardados', () => {
       ],
       settings: { ...base.settings, usdRate: 40.25 },
     });
-    expect(d.invoices.map((i) => i.kind)).toEqual(['estado', undefined]);
+    // Uno desconocido (de una versión más nueva) queda como vino: se muestra como factura
+    expect(d.invoices.map((i) => i.kind)).toEqual(['estado', 'otro']);
     expect(d.invoices[0].card).toBe('OCA');
     expect(d.settings.usdRate).toBe(40.25);
     expect(normalizeData({ ...base, settings: { ...base.settings, usdRate: -3 } }).settings.usdRate).toBeUndefined();

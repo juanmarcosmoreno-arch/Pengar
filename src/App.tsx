@@ -1,19 +1,23 @@
 import { useEffect, useState } from 'react';
+import { LockGate } from './components/LockScreen';
 import { MovementSheet, type MovementPreset } from './components/MovementSheet';
 import { Suricata } from './components/Suricata';
 import { TabBar, type Tab } from './components/TabBar';
 import { ToastProvider } from './components/Toast';
-import { currentMonth, monthOf, today } from './domain/dates';
-import { recurringDate } from './domain/recurring';
+import { addMonths, currentMonth, monthOf, today } from './domain/dates';
+import { recurringDate, recurringMovementId } from './domain/recurring';
 import type { Kind, Movement } from './domain/types';
+import { onReminderTap, syncReminder } from './lib/reportReminder';
 import { scrollToTop } from './lib/scroll';
 import { Budget } from './screens/Budget';
 import { Categories } from './screens/Categories';
 import { Goals } from './screens/Goals';
 import { Help } from './screens/Help';
 import { Home } from './screens/Home';
+import { Household } from './screens/Household';
 import { Invoices } from './screens/Invoices';
 import { More, type MorePage } from './screens/More';
+import { MonthReport } from './screens/MonthReport';
 import { Movements } from './screens/Movements';
 import { RecurringScreen } from './screens/Recurring';
 import { ScanInvoice } from './screens/ScanInvoice';
@@ -48,16 +52,27 @@ function SaveError({ onRetry }: { onRetry: () => void }) {
 }
 
 export default function App() {
-  const { data, ready, loadError, retryLoad, saveError, saveNow, markRecurring } = useStore();
+  const { data, device, ready, loadError, retryLoad, saveError, saveNow, markRecurring } = useStore();
   const [tab, setTab] = useState<Tab>('inicio');
   const [page, setPage] = useState<MorePage | null>(null);
   const [editing, setEditing] = useState<Editing>(null);
   const [scanning, setScanning] = useState<'factura' | 'tarjeta' | null>(null);
   const [statsView, setStatsView] = useState<StatsView>('mes');
   const [statsMonth, setStatsMonth] = useState(currentMonth());
+  // «Incluir ahorro» de Estadísticas → Mes: desde el resumen se abre apagado (el resumen cuenta sin el ahorro)
+  const [statsSavings, setStatsSavings] = useState(true);
   const [movMonth, setMovMonth] = useState(currentMonth());
+  // Resumen del mes abierto (YYYY-MM)
+  const [report, setReport] = useState<string | null>(null);
 
   useEffect(scrollToTop, [tab, page]);
+  // Tocar el aviso del día 1 abre el resumen del mes que cerró
+  useEffect(() => onReminderTap(() => setReport(addMonths(currentMonth(), -1))), []);
+  // El aviso programado en el iPhone sigue al ajuste de este teléfono (también después de borrar todo)
+  const reminder = device.reportReminder;
+  useEffect(() => {
+    if (ready && !loadError) void syncReminder(reminder);
+  }, [ready, loadError, reminder]);
   // Al terminar la bienvenida (también después de dejar los datos de ejemplo) se arranca en Inicio
   const onboarded = data.settings.onboarded;
   useEffect(() => {
@@ -69,12 +84,19 @@ export default function App() {
 
   if (!ready) return null;
   if (loadError) return <LoadError onRetry={retryLoad} />;
-  if (!data.settings.onboarded) return <ToastProvider>{saveError && <SaveError onRetry={saveNow} />}<Welcome /></ToastProvider>;
+  // El mismo LockGate en la bienvenida y en la app: al terminar la bienvenida no se vuelve a bloquear
+  if (!data.settings.onboarded) return <LockGate><ToastProvider>{saveError && <SaveError onRetry={saveNow} />}<Welcome /></ToastProvider></LockGate>;
 
   const back = () => setPage(null);
   const go = (t: Tab) => {
     setTab(t);
     setPage(null);
+  };
+  const statsMonthView = (m: string, opts: { savings?: boolean } = {}) => {
+    setStatsView('mes');
+    setStatsMonth(m);
+    if (opts.savings !== undefined) setStatsSavings(opts.savings);
+    go('estadisticas');
   };
 
   let content: React.ReactNode;
@@ -85,6 +107,7 @@ export default function App() {
       categorias: <Categories onBack={back} />,
       metas: <Goals onBack={back} />,
       facturas: <Invoices onBack={back} />,
+      hogar: <Household onBack={back} />,
       ajustes: <Settings onBack={back} />,
       ayuda: <Help onBack={back} />,
     }[page];
@@ -100,32 +123,58 @@ export default function App() {
           const now = today();
           const month = monthOf(now);
           setEditing({
-            preset: { kind: r.kind, rubroId: r.rubroId, amount: r.amount, note: r.note, date: recurringDate(r, month, now) },
+            preset: { kind: r.kind, rubroId: r.rubroId, amount: r.amount, note: r.note, date: recurringDate(r, month, now), id: recurringMovementId(r.id, month) },
             onSaved: () => markRecurring(r.id, month),
           });
         }}
-        onGo={(where) => {
-          if (where === 'movimientos') go('movimientos');
-          else { setStatsView('mes'); setStatsMonth(currentMonth()); go('estadisticas'); }
-        }}
+        onGo={(where) => (where === 'movimientos' ? go('movimientos') : statsMonthView(currentMonth()))}
+        onReport={setReport}
       />
     );
   } else if (tab === 'movimientos') {
     content = <Movements month={movMonth} setMonth={setMovMonth} onAdd={() => setEditing({ kind: 'gasto' })} onEdit={(movement) => setEditing({ movement })} />;
   } else if (tab === 'estadisticas') {
-    content = <Stats view={statsView} setView={setStatsView} month={statsMonth} setMonth={setStatsMonth} />;
+    content = (
+      <Stats
+        view={statsView}
+        setView={setStatsView}
+        month={statsMonth}
+        setMonth={setStatsMonth}
+        savings={statsSavings}
+        setSavings={setStatsSavings}
+        onReport={setReport}
+      />
+    );
   } else {
     content = <More onOpen={setPage} />;
   }
 
+  // Con una pantalla entera encima (escanear, el resumen), lo de abajo no se toca ni lo recorre el lector de pantalla
+  const behind = report || scanning ? ({ inert: '', 'aria-hidden': true } as Record<string, unknown>) : {};
+
   return (
-    <ToastProvider>
-      {saveError && <SaveError onRetry={saveNow} />}
-      <main className="mx-auto max-w-xl pb-[calc(env(safe-area-inset-bottom)+76px)]">{content}</main>
-      <TabBar tab={tab} onChange={go} />
-      {editing && <MovementSheet movement={editing.movement} kind={editing.kind} preset={editing.preset} onSaved={editing.onSaved} onClose={() => setEditing(null)} />}
-      {scanning === 'factura' && <ScanInvoice onClose={() => setScanning(null)} />}
-      {scanning === 'tarjeta' && <ScanStatement onClose={() => setScanning(null)} />}
-    </ToastProvider>
+    // Con el bloqueo prendido, nada de esto se arma ni se ve hasta desbloquear
+    <LockGate>
+      <ToastProvider>
+        {saveError && <SaveError onRetry={saveNow} />}
+        <main className="mx-auto max-w-xl pb-[calc(env(safe-area-inset-bottom)+76px)]" {...behind}>{content}</main>
+        <div {...behind}>
+          <TabBar tab={tab} onChange={go} />
+        </div>
+        {editing && <MovementSheet movement={editing.movement} kind={editing.kind} preset={editing.preset} onSaved={editing.onSaved} onClose={() => setEditing(null)} />}
+        {scanning === 'factura' && <ScanInvoice onClose={() => setScanning(null)} />}
+        {scanning === 'tarjeta' && <ScanStatement onClose={() => setScanning(null)} />}
+        {report && (
+          <MonthReport
+            month={report}
+            onClose={() => setReport(null)}
+            onStats={(m) => {
+              setReport(null);
+              statsMonthView(m, { savings: false });
+            }}
+          />
+        )}
+      </ToastProvider>
+    </LockGate>
   );
 }

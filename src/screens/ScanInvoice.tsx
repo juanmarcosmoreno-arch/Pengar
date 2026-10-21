@@ -1,4 +1,4 @@
-import { Camera, FileText, ImageIcon, Plus, Sparkles, Trash2 } from 'lucide-react';
+import { BadgeCheck, Camera, ExternalLink, FileText, ImageIcon, Plus, QrCode, Sparkles, Trash2 } from 'lucide-react';
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { ConfirmSheet } from '../components/ConfirmSheet';
 import { RubroPicker } from '../components/RubroPicker';
@@ -32,6 +32,8 @@ const toRow = (i: DraftItem): Row => ({ ...i, key: ++rowKey, amountText: String(
 /** Foto o PDF de una factura → revisar lo leído → guardar como gasto(s) con la factura adjunta */
 export function ScanInvoice({ onClose }: { onClose: () => void }) {
   const { data } = useStore();
+  // Pantalla entera encima de la app: para el lector de pantalla es un diálogo, con este título
+  const titleId = useId();
   const [draft, setDraft] = useState<InvoiceDraft | null>(null);
   const [progress, setProgress] = useState('');
   const [error, setError] = useState('');
@@ -84,8 +86,8 @@ export function ScanInvoice({ onClose }: { onClose: () => void }) {
   const leave = (to: 'cerrar' | 'otra') => (draft && dirty.current ? setLeaving(to) : doLeave(to));
 
   return (
-    <div className="fixed inset-0 z-30 overflow-y-auto bg-bg">
-      <PageHeader title={draft ? 'Revisar factura' : 'Escanear factura'} onBack={() => leave('cerrar')} />
+    <div className="fixed inset-0 z-30 overflow-y-auto bg-bg" role="dialog" aria-modal="true" aria-labelledby={titleId}>
+      <PageHeader titleId={titleId} title={draft ? 'Revisar factura' : 'Escanear factura'} onBack={() => leave('cerrar')} />
       {input(camera, 'image/*', true)}
       {input(gallery, 'image/*')}
       {input(pdf, 'application/pdf,.pdf')}
@@ -245,6 +247,19 @@ function Review({ draft, onDone, onRetry, onDirty }: { draft: InvoiceDraft; onDo
           <button className="-ml-1 min-h-tap px-1 text-primary" onClick={onRetry}>Probar con otra</button>
         </div>
       </div>
+      {draft.dgi && (
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+          <span className="inline-flex items-center gap-1.5 rounded-full border border-primary/40 bg-soft/25 px-3 py-1 text-[15px] text-primary">
+            {draft.dgi.from === 'oficial' ? <BadgeCheck size={17} className="shrink-0" /> : <QrCode size={17} className="shrink-0" />}
+            {draft.dgi.from === 'oficial' ? 'Ticket oficial de la DGI' : 'Total y fecha del QR de la DGI'}
+          </span>
+          {draft.dgi.url && (
+            <a href={draft.dgi.url} target="_blank" rel="noopener noreferrer" className="inline-flex min-h-tap items-center gap-1 px-1 text-[15px] text-primary">
+              Ver en la DGI <ExternalLink size={15} />
+            </a>
+          )}
+        </div>
+      )}
       {draft.notice && <p className="text-[15px] text-muted">{draft.notice}</p>}
 
       <div className="card space-y-3 p-4">

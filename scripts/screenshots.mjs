@@ -5,6 +5,9 @@ import { createServer } from 'node:http';
 import { readFile, mkdir } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { extname, join, resolve } from 'node:path';
+import { mockFx } from './bcu-mock.mjs';
+import { buildFake, fakeDist, serve } from './fake-remote.mjs';
+import { mockNative } from './native-mock.mjs';
 
 const root = resolve(import.meta.dirname, '..');
 const dist = join(root, 'dist');
@@ -52,6 +55,8 @@ async function statementPdf({ from, closing, rows }) {
 
 async function run(scheme) {
   const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, colorScheme: scheme, locale: 'es-UY', hasTouch: true });
+  // La cotización del BCU, simulada (sin salir a la red)
+  await mockFx(ctx);
   const page = await ctx.newPage();
   page.on('pageerror', (e) => console.error('pageerror', e.message));
   page.on('console', (m) => m.type() === 'error' && console.error('console', m.text()));
@@ -92,6 +97,11 @@ async function run(scheme) {
   await page.getByRole('button', { name: 'Gasto', exact: true }).click();
   await page.getByLabel('Monto').fill('450');
   await shot('04-nuevo-gasto');
+  // En dólares: se guarda en pesos con la cotización del BCU del día
+  await page.getByRole('group', { name: 'Moneda' }).getByRole('button', { name: 'U$S' }).click();
+  await page.getByLabel('Monto').fill('20');
+  await page.getByText(/al dólar BCU de hoy/).waitFor();
+  await shot('29-gasto-en-dolares');
   await page.getByLabel('Cerrar').last().click();
   await page.getByRole('navigation').getByRole('button', { name: 'Movimientos' }).click();
   await shot('05-movimientos', true);
@@ -140,6 +150,21 @@ async function run(scheme) {
   await page.getByRole('button', { name: 'Guardar' }).click();
   await page.getByRole('button', { name: 'Anotar todos' }).click();
   await due.waitFor({ state: 'detached' });
+  // Resumen del mes que cerró (octubre): Inicio lo ofrece desde el 1 hasta que se abre
+  await page.getByText(/movimientos anotados/).waitFor({ state: 'detached' });
+  await page.evaluate(() => window.scrollTo(0, 0));
+  await shot('26-inicio-resumen');
+  await page.getByRole('button', { name: /Tu resumen de octubre está listo/ }).click();
+  await page.getByRole('heading', { name: 'Resumen de octubre' }).waitFor();
+  await shotScroller('27-resumen');
+  await page.getByRole('button', { name: 'Cerrar', exact: true }).click();
+  // Diezmo acumulado: el 10% de lo que entró en noviembre todavía no se dio
+  await page.getByRole('navigation').getByRole('button', { name: 'Estadísticas' }).click();
+  await page.getByRole('button', { name: 'Ver historial' }).first().click();
+  await page.getByRole('dialog').last().getByText('Mes a mes').waitFor();
+  await shot('28-diezmo-historial');
+  await page.getByRole('dialog').last().getByLabel('Cerrar').last().click();
+  await page.getByRole('navigation').getByRole('button', { name: 'Inicio' }).click();
   // Factura en PDF: escanear, revisar y verla guardada dentro de la app
   await page.getByRole('button', { name: 'Factura' }).click();
   await page.locator('input[type=file][accept*="pdf"]').setInputFiles({ name: 'ticket.pdf', mimeType: 'application/pdf', buffer: await ticketPdf() });
@@ -162,7 +187,7 @@ async function run(scheme) {
   await page.getByLabel('Monto').fill('1240');
   await page.getByPlaceholder('Buscar rubro…').fill('Supermercado');
   await page.getByRole('button', { name: 'Supermercado', exact: true }).click();
-  await page.getByRole('dialog').locator('input[type=date]').fill('2026-11-05');
+  await page.getByRole('dialog').last().locator('input[type=date]').fill('2026-11-05');
   await page.getByRole('button', { name: 'Guardar' }).click();
   await page.getByRole('button', { name: 'Tarjeta', exact: true }).click();
   await page.waitForTimeout(4200); // que se vaya el aviso del gasto
@@ -200,8 +225,8 @@ async function run(scheme) {
   await shotScroller('24-revisar-tarjeta-completo');
   for (const [merchant, rubro] of [['La Pasiva', 'Comer afuera'], ['Movie Center', 'Paseos'], ['Uber Trip', 'Paseos']]) {
     await nuevos.getByRole('group', { name: merchant }).getByRole('button', { name: 'Elegir rubro' }).click();
-    await page.getByRole('dialog').getByPlaceholder('Buscar rubro…').fill(rubro);
-    await page.getByRole('dialog').getByRole('button', { name: rubro, exact: true }).click();
+    await page.getByRole('dialog').last().getByPlaceholder('Buscar rubro…').fill(rubro);
+    await page.getByRole('dialog').last().getByRole('button', { name: rubro, exact: true }).click();
   }
   await page.getByRole('button', { name: /^Guardar \d+ gastos/ }).click();
   await page.getByText(/gastos guardados/).waitFor();
@@ -239,13 +264,13 @@ async function run(scheme) {
   await page.getByRole('button', { name: /^Metas/ }).click();
   await page.getByRole('button', { name: 'Nueva meta' }).first().click();
   await page.getByPlaceholder('Vacaciones').fill('Vacaciones');
-  const amounts = page.getByRole('dialog').locator('input[inputmode=decimal]');
+  const amounts = page.getByRole('dialog').last().locator('input[inputmode=decimal]');
   await amounts.nth(0).fill('30000'); // Necesito
   await amounts.nth(1).fill('24500'); // Ya tengo
   await page.getByRole('button', { name: 'Guardar' }).click();
   await page.getByRole('button', { name: 'Sumar', exact: true }).click();
-  await page.getByRole('dialog').locator('input').fill('5500');
-  await page.getByRole('dialog').getByRole('button', { name: /^Sumar a «/ }).click();
+  await page.getByRole('dialog').last().locator('input').fill('5500');
+  await page.getByRole('dialog').last().getByRole('button', { name: /^Sumar a «/ }).click();
   await page.getByRole('button', { name: '¡Bien!' }).waitFor();
   await shot('21-meta-cumplida');
   await page.getByRole('button', { name: '¡Bien!' }).click();
@@ -254,11 +279,163 @@ async function run(scheme) {
   await page.getByRole('button', { name: /Ajustes/ }).click();
   await page.getByRole('button', { name: 'Borrar todo' }).click();
   await shot('20-borrar-todo');
-  await page.getByRole('dialog').getByRole('button', { name: 'Borrar todo' }).click();
+  await page.getByRole('dialog').last().getByRole('button', { name: 'Borrar todo' }).click();
   await page.getByRole('button', { name: 'Comenzar' }).waitFor();
   await ctx.close();
 }
 
+// Bloqueo con Face ID: con el iPhone simulado (scripts/native-mock.mjs) y los datos de ejemplo
+async function runLock() {
+  const names = ['30-bloqueo', '31-ajustes-privacidad'];
+  if (only && !names.some((n) => n.startsWith(only))) return;
+  const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, colorScheme: 'light', locale: 'es-UY', hasTouch: true });
+  await mockFx(ctx);
+  await mockNative(ctx);
+  const page = await ctx.newPage();
+  page.on('pageerror', (e) => console.error('pageerror', e.message));
+  const shot = async (name) => {
+    if (only && !name.startsWith(only)) return;
+    await page.waitForTimeout(350);
+    await page.screenshot({ path: join(out, `${name}.png`), animations: 'disabled' });
+    console.log('✓', name);
+  };
+  const answer = async (code) => {
+    await page.waitForFunction(() => window.__lock.pending);
+    await page.evaluate((c) => window.__lock.answer(c), code);
+  };
+  await page.goto(url);
+  await page.getByRole('button', { name: 'Mirar con datos de ejemplo' }).click();
+  await page.getByText('Estás viendo datos de ejemplo (inventados).').first().waitFor({ timeout: 20000 });
+  await page.getByRole('navigation').getByRole('button', { name: 'Más' }).click();
+  await page.getByRole('button', { name: /Ajustes/ }).click();
+  await page.getByRole('switch', { name: 'Pedir Face ID al abrir' }).click();
+  await answer('ok');
+  await page.getByRole('group', { name: 'Al volver a la app' }).getByRole('button', { name: '1 minuto' }).click();
+  await page.waitForTimeout(4200); // que se vaya el aviso
+  // La sección entera, debajo del encabezado
+  await page.getByRole('heading', { name: 'Privacidad' }).evaluate((el) => window.scrollTo(0, el.getBoundingClientRect().top + window.scrollY - 76));
+  await shot('31-ajustes-privacidad');
+  // Al abrir de nuevo: bloqueada, con el botón (se canceló el Face ID que pide solo)
+  await page.reload();
+  await answer('cancel');
+  await page.getByRole('button', { name: 'Desbloquear con Face ID' }).waitFor();
+  await shot('30-bloqueo');
+  await ctx.close();
+}
+
+// Respaldo automático: con el iPhone simulado (sin iCloud: la carpeta de la app en Archivos) y datos propios
+async function runBackup() {
+  const name = '32-respaldo-automatico';
+  if (only && !name.startsWith(only)) return;
+  const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, colorScheme: 'light', locale: 'es-UY', hasTouch: true });
+  await mockFx(ctx);
+  await mockNative(ctx);
+  const page = await ctx.newPage();
+  page.on('pageerror', (e) => console.error('pageerror', e.message));
+  await page.clock.setFixedTime(new Date(new Date().setHours(9, 12, 0, 0)));
+  await page.goto(url);
+  await page.getByRole('button', { name: 'Comenzar' }).click();
+  await page.getByPlaceholder('Tu nombre').fill('Ana');
+  await page.getByRole('button', { name: 'Empezar de cero' }).click();
+  await page.getByRole('navigation').waitFor();
+  // Al pasar a segundo plano hace el del día
+  await page.evaluate(() => window.__app.emit('pause'));
+  await page.waitForFunction(() => window.__backup.writes.length > 0);
+  await page.getByRole('navigation').getByRole('button', { name: 'Más' }).click();
+  await page.getByRole('button', { name: /Ajustes/ }).click();
+  await page.getByRole('heading', { name: 'Respaldo automático' }).evaluate((el) => window.scrollTo(0, el.getBoundingClientRect().top + window.scrollY - 76));
+  await page.waitForTimeout(350);
+  await page.screenshot({ path: join(out, `${name}.png`), animations: 'disabled' });
+  console.log('✓', name);
+  await ctx.close();
+}
+
+// Hogar compartido: dos pestañas (Ana y Bruno, cada una otro iPhone simulado) contra el servidor de mentira del
+// navegador. Arma la build de prueba en dist-fake (scripts/fake-remote.mjs; nunca va al iPhone)
+async function runHousehold() {
+  const names = ['33-hogar', '34-hogar-crear', '35-hogar-codigo', '36-hogar-unirse', '37-hogar-reemplazar', '38-hogar-integrantes', '39-anotado-por'];
+  if (only && !names.some((n) => n.startsWith(only))) return;
+  await buildFake();
+  const fake = serve(fakeDist);
+  const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, colorScheme: 'light', locale: 'es-UY', hasTouch: true });
+  await mockFx(ctx);
+  await mockNative(ctx);
+  const open = async (phone) => {
+    const page = await ctx.newPage();
+    page.on('pageerror', (e) => console.error('pageerror', phone, e.message));
+    await page.goto(`${fake.url}?telefono=${phone}`);
+    return page;
+  };
+  const shot = async (page, name, full = false) => {
+    if (only && !name.startsWith(only)) return;
+    await page.waitForTimeout(350);
+    await page.screenshot({ path: join(out, `${name}.png`), fullPage: full, animations: 'disabled' });
+    console.log('✓', name);
+  };
+  const tab = (page, name) => page.getByRole('navigation').getByRole('button', { name }).click();
+  const openHousehold = async (page) => {
+    await tab(page, 'Más');
+    await page.getByRole('button', { name: /Hogar compartido/ }).click();
+  };
+  const expense = async (page, amount, rubro) => {
+    await tab(page, 'Inicio');
+    await page.getByRole('button', { name: 'Gasto', exact: true }).click();
+    await page.getByLabel('Monto').fill(amount);
+    await page.getByPlaceholder('Buscar rubro…').fill(rubro);
+    await page.getByRole('button', { name: rubro, exact: true }).click();
+    await page.getByRole('button', { name: 'Guardar' }).click();
+  };
+  // Ana, con su planilla y un gasto de hoy, crea el hogar
+  const ana = await open('ana');
+  await ana.getByRole('button', { name: 'Comenzar' }).click();
+  await ana.getByPlaceholder('Tu nombre').fill('Ana');
+  await ana.locator('input[type=file][accept*=".xlsx"]').setInputFiles(join(root, 'datos/ejemplo.xlsx'));
+  await ana.getByRole('button', { name: 'Importar', exact: true }).click();
+  await ana.getByRole('navigation').waitFor();
+  await expense(ana, '1240', 'Supermercado');
+  await ana.waitForTimeout(4200); // que se vaya el aviso
+  await openHousehold(ana);
+  await shot(ana, '33-hogar');
+  await ana.getByRole('button', { name: 'Crear un hogar' }).click();
+  await ana.getByLabel('Nombre del hogar').fill('Casa');
+  await shot(ana, '34-hogar-crear');
+  await ana.getByRole('button', { name: 'Crear el hogar' }).click();
+  await ana.getByRole('dialog', { name: 'Hogar creado' }).waitFor({ timeout: 20000 });
+  const code = (await ana.getByRole('dialog').last().locator('p.font-mono [aria-hidden="true"]').innerText()).replace(/\s/g, '');
+  await shot(ana, '35-hogar-codigo');
+  await ana.getByRole('dialog').last().getByRole('button', { name: 'Listo' }).click();
+  // Bruno ya había empezado: unirse le avisa que sus datos se reemplazan
+  const bruno = await open('bruno');
+  await bruno.getByRole('button', { name: 'Comenzar' }).click();
+  await bruno.getByPlaceholder('Tu nombre').fill('Bruno');
+  await bruno.getByRole('button', { name: 'Empezar de cero' }).click();
+  await openHousehold(bruno);
+  await bruno.getByRole('button', { name: 'Unirme con un código' }).click();
+  await bruno.getByLabel('Código del hogar').fill(code);
+  await shot(bruno, '36-hogar-unirse');
+  await bruno.getByRole('dialog').last().getByRole('button', { name: 'Unirme' }).click();
+  await bruno.getByRole('dialog', { name: '¿Reemplazar tus datos?' }).waitFor();
+  await shot(bruno, '37-hogar-reemplazar');
+  await bruno.getByRole('dialog', { name: '¿Reemplazar tus datos?' }).getByRole('button', { name: 'Unirme' }).click();
+  await bruno.getByText(/Listo: estás en «Casa»/).waitFor({ timeout: 20000 });
+  await expense(bruno, '980', 'Comer afuera');
+  // A Ana le llegan Bruno y su gasto
+  await ana.getByText('Bruno').waitFor({ timeout: 10000 });
+  await ana.waitForTimeout(4200);
+  // Entera, con la ventana del alto de la pantalla (fullPage dejaría la barra de pestañas por la mitad)
+  await ana.setViewportSize({ width: 390, height: await ana.evaluate(() => document.documentElement.scrollHeight) });
+  await shot(ana, '38-hogar-integrantes');
+  await ana.setViewportSize({ width: 390, height: 844 });
+  await tab(ana, 'Movimientos');
+  await ana.getByText(/Anotado por Bruno/).waitFor({ timeout: 10000 });
+  await shot(ana, '39-anotado-por');
+  await ctx.close();
+  fake.close();
+}
+
 await run('light');
+await runLock();
+await runBackup();
+await runHousehold();
 await browser.close();
 server.close();

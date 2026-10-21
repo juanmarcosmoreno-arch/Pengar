@@ -134,7 +134,7 @@ export function templateData(): Pick<Data, 'categories' | 'rubros'> {
 export const DATA_VERSION = 2;
 
 export function emptyData(): Data {
-  return { version: DATA_VERSION, categories: [], rubros: [], movements: [], invoices: [], goals: [], recurring: [], settings: defaultSettings() };
+  return { version: DATA_VERSION, datasetId: newId('d'), categories: [], rubros: [], movements: [], invoices: [], goals: [], recurring: [], settings: defaultSettings() };
 }
 
 /** Completa lo que falte en datos de una versión anterior (lo guardado en el teléfono o un respaldo viejo) */
@@ -143,30 +143,51 @@ export function normalizeData(d: Partial<Omit<Data, 'version'>> & { version?: nu
   const old = (d.version ?? 1) < 2;
   // Una sola vez: las categorías con íconos de línea pasan a las ilustraciones del suricata, y «Colegio y cursos» de la
   // plantilla deja la palabra «cuota» (agarraba todas las compras en cuotas de la tarjeta)
-  const categories = (d.categories ?? []).map((c) => (old && LEGACY_ICON_TO_ART[c.icon] ? { ...c, icon: LEGACY_ICON_TO_ART[c.icon] } : c));
+  const categories = (d.categories ?? []).map((c) => {
+    const { ledger, ...rest } = c;
+    const icon = old && LEGACY_ICON_TO_ART[c.icon] ? LEGACY_ICON_TO_ART[c.icon] : c.icon;
+    const valid = validLedger(ledger);
+    return valid ? { ...rest, icon, ledger: valid } : { ...rest, icon };
+  });
   const rubros = (d.rubros ?? []).map((r) => (old && r.name === 'Colegio y cursos' && r.keywords.includes('cuota') ? { ...r, keywords: r.keywords.filter((k) => k !== 'cuota') } : r));
-  const s = d.settings;
+  // `reportReminder` (el aviso del día 1) pasó a los ajustes de este teléfono: lib/db lo migra y acá se saca
+  const { reportReminder: _moved, ...s } = (d.settings ?? {}) as Partial<Settings> & { reportReminder?: unknown };
   return {
     ...base,
     ...d,
     version: DATA_VERSION,
+    // Unos datos sin id (de antes) quedan sin id: inventarle uno acá cambiaría con cada lectura
+    datasetId: typeof d.datasetId === 'string' && d.datasetId ? d.datasetId : undefined,
     categories,
     rubros,
     movements: d.movements ?? [],
-    // `kind` desconocido (de una versión futura o un respaldo roto) cuenta como factura
-    invoices: (d.invoices ?? []).map((i) => (i.kind && i.kind !== 'factura' && i.kind !== 'estado' ? { ...i, kind: undefined } : i)),
+    // Un `kind` desconocido (de una versión futura) queda como vino: la app lo muestra como factura, y en un hogar
+    // compartido no se le borra a la versión que lo entiende
+    invoices: d.invoices ?? [],
     goals: d.goals ?? [],
     recurring: d.recurring ?? [],
     settings: {
       ...base.settings,
       ...s,
-      ai: { ...base.settings.ai, ...s?.ai },
-      currency: { ...base.settings.currency, ...s?.currency },
-      learned: s?.learned ?? {},
-      example: s?.example === true || undefined,
-      usdRate: typeof s?.usdRate === 'number' && Number.isFinite(s.usdRate) && s.usdRate > 0 ? s.usdRate : undefined,
+      ai: { ...base.settings.ai, ...s.ai },
+      currency: { ...base.settings.currency, ...s.currency },
+      learned: s.learned ?? {},
+      example: s.example === true || undefined,
+      usdRate: typeof s.usdRate === 'number' && Number.isFinite(s.usdRate) && s.usdRate > 0 ? s.usdRate : undefined,
+      lastReportSeen: isMonth(s.lastReportSeen) ? s.lastReportSeen : undefined,
+      sharedExtra: s.sharedExtra && typeof s.sharedExtra === 'object' && !Array.isArray(s.sharedExtra) ? s.sharedExtra : undefined,
     },
   };
+}
+
+const isMonth = (v: unknown): v is string => typeof v === 'string' && /^\d{4}-(0[1-9]|1[0-2])$/.test(v);
+
+/** La cuenta del diezmo con un mes que no es mes se descarta; un saldo que no es número cuenta como 0 */
+function validLedger(l: unknown): Category['ledger'] {
+  if (!l || typeof l !== 'object') return undefined;
+  const { from, opening } = l as { from?: unknown; opening?: unknown };
+  if (!isMonth(from)) return undefined;
+  return { from, opening: typeof opening === 'number' && Number.isFinite(opening) ? opening : 0 };
 }
 
 /**

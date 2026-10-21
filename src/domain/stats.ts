@@ -220,10 +220,13 @@ export interface MonthSummary {
   rows: CategoryCompare[];
 }
 
-/** Lo que entró en el mes; si todavía no entró nada, lo del mes anterior (para estimar los «% del ingreso») */
-export function incomeFor(data: Data, month: string): { amount: number; estimated: boolean } {
+/**
+ * Lo que entró en el mes. Solo en el mes en curso (`current`), si todavía no entró nada, lo del mes anterior (para
+ * estimar los «% del ingreso»): un mes cerrado sin ingresos espera 0, como el diezmo acumulado (domain/ledger)
+ */
+export function incomeFor(data: Data, month: string, current?: string): { amount: number; estimated: boolean } {
   const real = sum(incomes(data, { from: month, to: month }));
-  if (real > 0) return { amount: real, estimated: false };
+  if (real > 0 || month !== current) return { amount: real, estimated: false };
   const prev = addMonths(month, -1);
   return { amount: sum(incomes(data, { from: prev, to: prev })), estimated: true };
 }
@@ -234,14 +237,15 @@ export function budgetAmount(c: Category, income: number): number {
   return 0;
 }
 
-export function monthSummary(data: Data, ix: Index, month: string, includeSavings: boolean): MonthSummary {
+/** El mes contra el presupuesto. Con `current` (el mes en curso), los «% del ingreso» se estiman como en incomeFor */
+export function monthSummary(data: Data, ix: Index, month: string, includeSavings: boolean, current?: string): MonthSummary {
   const f: Filter = { from: month, to: month, includeSavings };
   const real = new Map<string, number>();
   for (const m of expenses(data, ix, f)) {
     const c = ix.categoryOf(m);
     if (c) real.set(c.id, (real.get(c.id) ?? 0) + m.amount);
   }
-  const { amount: income } = incomeFor(data, month);
+  const { amount: income } = incomeFor(data, month, current);
   const rows: CategoryCompare[] = data.categories
     .filter((c) => c.kind === 'gasto' && (includeSavings || !c.savings))
     .map((category) => {
@@ -301,9 +305,9 @@ export interface PercentCard {
   diff: number;
 }
 
-/** Categorías presupuestadas como porcentaje del ingreso (por ejemplo, el diezmo: 10% de lo que entra) */
-export function percentCards(data: Data, ix: Index, month: string): PercentCard[] {
-  const { amount: income, estimated } = incomeFor(data, month);
+/** Categorías presupuestadas como porcentaje del ingreso (por ejemplo, el diezmo: 10% de lo que entra). `current`: ver incomeFor */
+export function percentCards(data: Data, ix: Index, month: string, current?: string): PercentCard[] {
+  const { amount: income, estimated } = incomeFor(data, month, current);
   return data.categories
     .filter((c) => c.budget.type === 'percentIncome')
     .map((category) => {

@@ -47,14 +47,22 @@ export function recurringDate(r: Pick<Recurring, 'day'>, month: string, todayISO
   return date > todayISO ? todayISO : date;
 }
 
+/**
+ * El id del movimiento de un fijo en un mes: siempre el mismo. En un hogar compartido, si dos teléfonos lo anotan
+ * antes de recibir lo del otro, escriben el mismo registro (no queda dos veces)
+ */
+export const recurringMovementId = (recurringId: string, month: string) => `m-${recurringId}-${month}`;
+
 /** Los movimientos de todos los fijos vencidos de `month`, con su monto estimado (y de qué fijo sale cada uno) */
 export function dueMovements(data: Data, month: string, todayISO: string, now = Date.now()): { recurringId: string; movement: Movement }[] {
+  // Si ya hay uno con ese id (se anotó y después se le cambió el rubro), otro id: nunca dos movimientos con el mismo
+  const taken = new Set(data.movements.map((m) => m.id));
   return pendingRecurring(data, month, todayISO)
     .filter((p) => p.due && p.amount > 0)
     .map((p) => ({
       recurringId: p.id,
       movement: {
-        id: newId('m'),
+        id: taken.has(recurringMovementId(p.id, month)) ? newId('m') : recurringMovementId(p.id, month),
         date: recurringDate(p, month, todayISO),
         amount: p.amount,
         kind: p.kind,
@@ -104,6 +112,22 @@ export function suggestRecurring(data: Data, todayISO: string): SuggestedRecurri
   }
   return out.sort((a, b) => b.amount - a.amount).slice(0, 20);
 }
+
+/** Los meses salteados que se guardan en cada fijo (para el resumen): los últimos dos años */
+const KEEP_SKIPPED = 24;
+
+/** «Saltar» un fijo en `month`: queda hecho hasta ese mes y anotado que ese mes se salteó */
+export function skipRecurring(r: Recurring, month: string): Recurring {
+  const skipped = [...new Set([...(Array.isArray(r.skipped) ? r.skipped : []), month])].sort().slice(-KEEP_SKIPPED);
+  return { ...r, doneThrough: !r.doneThrough || r.doneThrough < month ? month : r.doneThrough, skipped };
+}
+
+/**
+ * ¿Se salteó en `month`? Con la lista de salteados, lo que diga; los fijos de antes (sin lista) solo saben el último
+ * mes hecho: si es ese mismo mes y no hay movimiento, se salteó
+ */
+export const wasSkipped = (r: Recurring, month: string): boolean =>
+  Array.isArray(r.skipped) ? r.skipped.includes(month) : r.doneThrough === month;
 
 /** Un fijo nuevo empieza a pedirse desde el mes en curso */
 export function newRecurring(fields: Omit<Recurring, 'id' | 'createdAt' | 'doneThrough'> & { doneThrough?: string }, todayISO: string): Recurring {

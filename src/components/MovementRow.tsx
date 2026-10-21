@@ -2,6 +2,7 @@ import { CreditCard, Paperclip } from 'lucide-react';
 import { monthLabel } from '../domain/dates';
 import { NBSP } from '../domain/money';
 import type { Movement } from '../domain/types';
+import { authorLabel, useAuthors } from '../lib/sync';
 import { useMoney } from '../lib/useMoney';
 import { useStore } from '../store/store';
 import { CategoryBubble } from './Icon';
@@ -9,9 +10,14 @@ import { CategoryBubble } from './Icon';
 export function MovementRow({ m, onClick }: { m: Movement; onClick?: () => void }) {
   const { ix } = useStore();
   const { money } = useMoney();
+  // En un hogar compartido: «Anotado por Ana» si lo anotó otra persona
+  const author = authorLabel(useAuthors(), m.createdBy);
   const rubro = ix.rubro.get(m.rubroId);
   const cat = ix.categoryOf(m);
-  const detail = m.monthly ? `Total de ${monthLabel(m.date.slice(0, 7)).toLowerCase()}` : [m.merchant, m.note].filter(Boolean).join(' · ') || cat?.name;
+  const detail = [
+    author,
+    m.monthly ? `Total de ${monthLabel(m.date.slice(0, 7)).toLowerCase()}` : [m.merchant, m.note].filter(Boolean).join(' · ') || cat?.name,
+  ].filter(Boolean).join(' · ');
   return (
     <button className="flex w-full items-center gap-3 py-2.5 text-left" onClick={onClick}>
       <CategoryBubble icon={cat?.icon ?? 'tag'} color={cat?.color ?? '#8A9894'} size={44} />

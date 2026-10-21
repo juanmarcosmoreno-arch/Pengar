@@ -29,8 +29,9 @@ export interface StatementDraft {
   period?: { from: string; to: string };
   /** «OCA», «Visa BROU»… si aparece */
   card?: string;
-  /** Cotización del dólar: la del estado de cuenta o, si no trae, la última que se usó */
+  /** Cotización del dólar: la del estado de cuenta o, si no trae, la última que se escribió a mano */
   usdRate?: number;
+  usdRateFrom?: 'estado' | 'ultima';
   source: 'pdf' | 'planilla' | 'foto' | 'ejemplo';
 }
 
@@ -96,9 +97,16 @@ export async function readStatement(file: File, data: Data, onProgress: (msg: st
   return finish({ file: stored, fileName: fileName || (source === 'pdf' ? 'estado-de-cuenta.pdf' : 'estado-de-cuenta'), mime, txs, source }, text, data);
 }
 
-function finish(draft: Omit<StatementDraft, 'period' | 'card' | 'usdRate'>, text: string, data: Data): StatementDraft {
+function finish(draft: Omit<StatementDraft, 'period' | 'card' | 'usdRate' | 'usdRateFrom'>, text: string, data: Data): StatementDraft {
   const info = statementInfo(text);
-  return { ...draft, period: statementPeriod(draft.txs, info), card: info.card, usdRate: info.usdRate ?? data.settings.usdRate };
+  const usdRate = info.usdRate ?? data.settings.usdRate;
+  return {
+    ...draft,
+    period: statementPeriod(draft.txs, info),
+    card: info.card,
+    usdRate,
+    ...(usdRate ? { usdRateFrom: info.usdRate ? 'estado' : 'ultima' } : {}),
+  };
 }
 
 /** El estado de cuenta de ejemplo (para los datos de ejemplo): se guarda como texto */
