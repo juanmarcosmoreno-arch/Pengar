@@ -139,3 +139,34 @@ for r, row in enumerate(TILES2):
             tile = tile.transpose(Image.FLIP_LEFT_RIGHT)
         tile.resize((192, 192), Image.LANCZOS).save(os.path.join(OUT, 'cat', f'{name}.webp'), 'WEBP', quality=86, method=6)
 print('categorías (segundo juego)', sum(len(r) for r in TILES2))
+
+# Tercer juego (docs/marca/suricata-categorias-3.webp): nueve por fila, otra versión de las de antes («-3», o «-2» si
+# no tenían) y categorías nuevas (diezmo, donaciones, cuidado personal…). Cada fila con su alto y su radio: los
+# círculos de abajo son más chicos y el texto queda pegado
+TILES3 = [
+    (106, 77, [(96, 'mant-casa-3'), (263, 'comida-3'), (419, 'super-3'), (589, 'mant-auto-3'), (755, 'educacion-3'), (919, 'regalos-3'),
+               (1083, 'limpieza-3'), (1247, 'ropa-3'), (1417, 'cuidado-personal')]),
+    (309, 77, [(102, 'ahorro-3'), (273, 'servicios-3'), (437, 'salud-3'), (601, 'deporte-3'), (764, 'viajes-3'), (936, 'entretenimiento-3'),
+               (1111, 'restaurantes-3'), (1272, 'telefonia-2'), (1435, 'tecnologia-3')]),
+    (515, 75, [(104, 'libros-3'), (265, 'mascotas-3'), (430, 'vivienda-3'), (591, 'seguros-3'), (755, 'jardin-3'), (929, 'vacaciones'),
+               (1112, 'familia-3'), (1283, 'impuestos-2'), (1444, 'inversiones-3')]),
+    (716, 75, [(107, 'diezmo'), (273, 'donaciones'), (428, 'medio-ambiente'), (595, 'mejoras-hogar'), (765, 'planificacion'),
+               (934, 'metas-financieras'), (1102, 'compras-online-2'), (1270, 'cursos'), (1438, 'hobbies')]),
+    (904, 62, [(90, 'trabajo'), (238, 'jubilacion'), (394, 'compra-vivienda'), (553, 'alquileres'), (715, 'imprevistos-2'), (876, 'deudas'),
+               (1043, 'lista-deseos'), (1272, 'otros-3'), (1434, 'logros')]),
+]
+# Espejadas: las que no tienen letras, números, $ ni logos
+FLIP3 = {'comida-3', 'mant-auto-3', 'regalos-3', 'ropa-3', 'salud-3', 'deporte-3', 'restaurantes-3', 'mascotas-3', 'jardin-3', 'vacaciones',
+         'familia-3', 'donaciones', 'medio-ambiente', 'hobbies', 'trabajo', 'otros-3', 'logros'}
+cats3 = Image.open(IMG + 'suricata-categorias-3.webp').convert('RGB')
+for cy, r3, row in TILES3:
+    for cx, name in row:
+        tile = cats3.crop((cx - r3, cy - r3, cx + r3, cy + r3)).convert('RGBA')
+        mask = Image.new('L', (r3 * 8, r3 * 8), 0)
+        ImageDraw.Draw(mask).ellipse((8, 8, r3 * 8 - 8, r3 * 8 - 8), fill=255)
+        mask = mask.resize((r3 * 2, r3 * 2), Image.LANCZOS).filter(ImageFilter.GaussianBlur(1))
+        tile.putalpha(mask)
+        if name in FLIP3:
+            tile = tile.transpose(Image.FLIP_LEFT_RIGHT)
+        tile.resize((192, 192), Image.LANCZOS).save(os.path.join(OUT, 'cat', f'{name}.webp'), 'WEBP', quality=86, method=6)
+print('categorías (tercer juego)', sum(len(r) for _, _, r in TILES3))
