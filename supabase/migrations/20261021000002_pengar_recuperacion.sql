@@ -1,5 +1,5 @@
 -- =============================================================================
--- Pengar — hogar compartido, tercera parte: volver a entrar desde otro teléfono (va después de
+-- Pengar, hogar compartido (tercera parte): volver a entrar desde otro teléfono (va después de
 -- 20261021000001_pengar_revision.sql; se pega igual, en el SQL Editor; se puede correr más de una vez)
 --
 -- * Cada integrante tiene un id que no cambia (member_id): es el de «Anotado por» (Movement.createdBy). Los que ya

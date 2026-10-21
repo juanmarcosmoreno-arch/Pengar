@@ -55,7 +55,7 @@ public class PengarAIPlugin: CAPPlugin, CAPBridgedPlugin {
     @objc func classify(_ call: CAPPluginCall) {
         let items: [(id: String, text: String)] = (call.getArray("items", JSObject.self) ?? []).compactMap { item in
             guard let id = item["id"] as? String, let text = item["text"] as? String else { return nil }
-            return (id, text)
+            return (id: id, text: text)
         }
         let options = (call.getArray("options", String.self) ?? []).filter { !$0.isEmpty }
         let hint = call.getString("hint") ?? ""

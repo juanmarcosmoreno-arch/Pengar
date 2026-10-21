@@ -2,6 +2,9 @@
 
 # Pengar
 
+[![CI](https://github.com/juanmarcosmoreno-arch/Pengar/actions/workflows/ci.yml/badge.svg)](https://github.com/juanmarcosmoreno-arch/Pengar/actions/workflows/ci.yml)
+[![iOS](https://github.com/juanmarcosmoreno-arch/Pengar/actions/workflows/ios.yml/badge.svg)](https://github.com/juanmarcosmoreno-arch/Pengar/actions/workflows/ios.yml)
+
 **Tu dinero, más simple.** Con un suricata que te acompaña. App de iPhone para anotar gastos en dos toques, escanear facturas y tickets (foto o PDF), subir el estado de
 cuenta de la tarjeta (aprende el rubro de cada comercio) y ver cómo se mueve la plata en el tiempo. Todo queda en el teléfono
 o, si querés, compartido con tu casa (cada uno anota en el suyo).
@@ -322,6 +325,28 @@ npm run e2e:demo     # modo demo con el iPhone simulado y el hogar de mentira: e
 npm run icons        # íconos a partir del suricata principal
 ```
 
+### Compilación automática
+
+GitHub Actions corre dos workflows (`.github/workflows`); el resultado se ve en la pestaña **Actions** del repositorio
+y en los dos distintivos de arriba.
+
+- **CI** (`ci.yml`), en cada push y pull request, en Ubuntu:
+  - **Web**: `npm ci`, los tipos (`npx tsc -b`), las pruebas (`npx vitest run`), la build de la app (`npx vite build`)
+    y la de la vista previa (`npm run build:preview`).
+  - **Base del hogar compartido**: `npm run test:db` contra un Postgres 16 del propio workflow (un servicio
+    `postgres:16`). `supabase/tests/run-local.sh` usa ese servidor porque recibe `PENGAR_TEST_DB` (los datos de
+    conexión, como `host=localhost port=5432 user=postgres password=postgres`): arma una base nueva para la corrida y la
+    borra al terminar. Sin la variable, como en la compu, levanta su propio Postgres efímero.
+- **iOS** (`ios.yml`), en cada push que toca `ios/`, `src/`, `package.json`, `package-lock.json`,
+  `capacitor.config.ts` o el propio workflow (y a mano, con **Run workflow**), en una Mac de GitHub con Xcode 26
+  (`macos-26`; para un repositorio público es gratis): `npm ci`, `npm run build`, `npx cap sync ios` y
+  `xcodebuild` para el simulador, sin firmar (`CODE_SIGNING_ALLOWED=NO`), con el esquema compartido
+  `ios/App/App.xcodeproj/xcshareddata/xcschemes/App.xcscheme`. Compila el código Swift de los plugins propios
+  (PengarOCR, PengarAI, PengarLock, PengarBackup) y los de Capacitor; si el Xcode de la Mac no trae el SDK de iOS 26,
+  falla enseguida y lo dice. No firma, no instala en un iPhone ni sube a TestFlight. Si no compila, el resumen del
+  job lista los errores (archivo, línea y mensaje) y el log completo de `xcodebuild` con el `.xcresult` quedan en el
+  artifact `ios-build-log`. Si compila, el resumen muestra los avisos del compilador en el código propio.
+
 ### Probar el hogar compartido (sin Supabase)
 
 ```bash
@@ -486,6 +511,7 @@ app, ese teléfono vuelve a entrar con el código (y vuelven los datos).
 |---|---|
 | `src/domain` | Lógica pura, con pruebas: modelo, modo demo (`demo.ts`: dónde se guarda cada juego de datos, el armado de los inventados y el ticket en PDF), hogar compartido (`sync.ts`: los datos como registros, qué cambió, cómo se mezcla lo recibido, cómo se suma lo de acá al unirse y la llave para volver a entrar), importar planillas, estadísticas, lectura de facturas (`invoice.ts`) y de tickets del súper (`receipt.ts`, de Kvar; `ocrLines.ts` arma los renglones de la foto) y de estados de cuenta de la tarjeta (`statement.ts`, `statementReview.ts`), e-Tickets de la DGI y el ticket oficial del súper (`cfe.ts`), rubros sugeridos, diezmo acumulado (`ledger.ts`), resumen del mes (`report.ts`) y la respuesta del BCU (`fx.ts`, probada con respuestas reales) |
 | `src/lib` | Teléfono: guardado (IndexedDB; los datos de verdad y los del modo demo, aparte), ajustes de este teléfono que no se comparten (`device.ts`, también si está el modo demo), lector de fotos (Vision / Tesseract), PDF (pdf.js), Claude, Apple Intelligence, rubros sugeridos (`suggest.ts`), archivos, aviso del día 1 (`reportReminder.ts`), bloqueo con Face ID (`lock.ts`; cuándo bloquear, en `src/domain/lock.ts`), cotización del dólar del BCU con su caché (`fx.ts`), respaldo automático (`autoBackup.ts`; cuándo y cuáles quedan, en `src/domain/autoBackup.ts`), hogar compartido (`remote.ts`: Supabase y el servidor en memoria de las pruebas; `sync.ts`: el motor; `fakeRemote.ts` y `fakePhone.ts`: el servidor de mentira entre pestañas, solo con `VITE_FAKE_REMOTE=1`) |
+| `.github/workflows` | La compilación automática en GitHub Actions: `ci.yml` (la web y la base) e `ios.yml` (la app de iPhone para el simulador, con Xcode 26) |
 | `supabase/` | La base del hogar compartido (`migrations/`, en orden: la primera, la revisión y la de la llave para volver a entrar) y su prueba en un Postgres local (`tests/`, `npm run test:db`) |
 | `src/screens`, `src/components` | Pantallas y piezas de la interfaz (gráficas en SVG propio, con d3-shape) |
 | `ios/App/App/PengarOCRPlugin.swift` | Plugin nativo: texto y QR de una foto con Vision, y el ticket oficial del súper (`fetchCfe`: Rondanet y Tienda Inglesa) |
@@ -506,7 +532,9 @@ son una paleta validada para daltonismo; pasadas las 8 más grandes, se juntan e
 
 ## Pendiente / ideas
 
-- No probé la compilación en Xcode (no hay Mac en este entorno): los plugins Swift siguen el mismo patrón que los de Kvar
+- GitHub Actions compila la app de iPhone para el simulador en cada push (`ios.yml`, Xcode 26; el distintivo «iOS» de
+  arriba dice si pasó), pero nunca se abrió en Xcode ni se instaló en un iPhone (no hay Mac en este entorno): los
+  plugins Swift siguen el mismo patrón que los de Kvar
   (PengarAI usa Foundation Models como KvarVoice; el QR y `fetchCfe` de PengarOCR son los de KvarOCR, que allá se probaron con
   tickets reales de Disco, Devoto, Géant y Tienda Inglesa). El pedido al BCU con `CapacitorHttp` está probado contra el web
   service real con curl y con el BCU simulado en Playwright (`npm run e2e:dolar`), no desde un iPhone. `PengarLock` y la tapa

@@ -6,8 +6,8 @@ import UIKit
 /// Con iCloud (la app compilada con la capability iCloud → iCloud Documents, que pide la cuenta paga, y iCloud Drive
 /// prendido en el iPhone) es <contenedor de iCloud>/Documents/Respaldos, con NSFileCoordinator para no chocar con la
 /// sincronización. Si no, Documents/Respaldos de la app: se ve en Archivos → En mi iPhone → Pengar
-/// (UIFileSharingEnabled en Info.plist) y entra en el respaldo del iPhone en iCloud. El proyecto no trae el
-/// entitlement de iCloud (con un Apple ID gratis no firma): cómo activarlo, en el README.
+/// (UIFileSharingEnabled en Info.plist) y entra en el respaldo del iPhone en iCloud. El proyecto trae el entitlement
+/// de iCloud (App.entitlements, para la cuenta paga): con un Apple ID gratis no firma y hay que sacarlo (README).
 @objc(PengarBackupPlugin)
 public class PengarBackupPlugin: CAPPlugin, CAPBridgedPlugin {
     public let identifier = "PengarBackupPlugin"
@@ -284,7 +284,8 @@ public class PengarBackupPlugin: CAPPlugin, CAPBridgedPlugin {
         NSFileCoordinator(filePresenter: nil).coordinate(writingItemAt: url, options: options, error: &coordinatorError) { target in
             do { try work(target) } catch { workError = error }
         }
-        if let error = coordinatorError ?? workError { throw error }
+        if let error = coordinatorError { throw error }
+        if let error = workError { throw error }
     }
 
     private func coordinate(reading url: URL) throws -> Data {

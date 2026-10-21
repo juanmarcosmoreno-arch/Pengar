@@ -1,0 +1,75 @@
+# La web y la base del hogar compartido, en cada push y pull request (README → «Compilación automática»)
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  web:
+    name: Web (tipos, pruebas y builds)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Instalar dependencias
+        run: npm ci
+
+      - name: Tipos
+        run: npx tsc -b
+
+      - name: Pruebas
+        run: npx vitest run
+
+      - name: Build de la app
+        run: npx vite build
+
+      - name: Vista previa web
+        run: npm run build:preview
+
+  db:
+    name: Base del hogar compartido (Postgres 16)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      # supabase/tests/run-local.sh usa este servidor en lugar de levantar uno (arma una base nueva y la borra al final)
+      PENGAR_TEST_DB: host=localhost port=5432 user=postgres password=postgres
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cliente de Postgres
+        run: command -v psql || { sudo apt-get update && sudo apt-get install -y postgresql-client; }
+
+      - name: Migraciones y pruebas de la base
+        run: |
+          psql -X -d "$PENGAR_TEST_DB dbname=postgres" -Atc "select version()"
+          npm run test:db
