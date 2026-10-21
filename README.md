@@ -49,6 +49,9 @@ cuenta de la tarjeta (aprende el rubro de cada comercio) y ver cómo se mueve la
 - **A tu gusto**: categorías (nombre, ícono, color, presupuesto fijo o % del ingreso, si cuenta como ahorro) y rubros
   (nombre, categoría, palabras para reconocerlos en facturas; se pueden unir o archivar). Moneda y decimales.
 - **Metas** de ahorro, **importar** planillas de Excel/CSV, **exportar** a CSV y **respaldo** completo (con facturas).
+  Sumar otra vez la misma planilla (o la del mes siguiente) no duplica: los meses que ya estaban se reemplazan y los
+  movimientos repetidos se saltean; el resumen dice cuántos ya estaban. Los CSV se leen como texto, con el día primero
+  («05/10/2026») y la coma decimal («1.234,56»).
 
 ## Tus datos
 
@@ -70,7 +73,9 @@ Otra persona puede empezar **de cero** con categorías sugeridas, o importar su 
 
 ## Desarrollo
 
-Requisitos: Node 22+. Para el iPhone, una Mac con Xcode 16+.
+Requisitos: Node 22+. Para el iPhone, una Mac con **Xcode 26 o más nuevo** (el SDK de iOS 26: lo pide Capacitor 8 y
+trae Foundation Models; compilada con un SDK anterior, la app no tiene Apple Intelligence aunque el iPhone sí, y Ajustes
+lo dice).
 
 ```bash
 npm install
@@ -90,9 +95,12 @@ npm run build:preview   # dist-preview/pengar.html + files.json
 Una build para mirar la app en el navegador sin instalar nada, pensada para publicarse como página (artefacto):
 abre directo en Inicio con los datos de ejemplo. `scripts/build-artifact.mjs` arma `dist-preview/pengar.html` (sin
 `<html>`/`<head>`/`<body>`, porque quien la publica la envuelve en su propio esqueleto) y `dist-preview/files.json`, la
-lista de archivos que van al lado con su tipo (JS, CSS, fuentes, imágenes, `ejemplo.json`, el worker de pdf.js), todos
-con rutas relativas. En una pantalla ancha la app se ve dentro de un marco de teléfono y, desde 960 px, con una
-columna al lado que cuenta qué probar.
+mapa de archivos que van al lado con su tipo (JS, CSS, fuentes, imágenes, `ejemplo.json`, el worker de pdf.js), todos
+con rutas relativas. Tiene la forma que acepta la publicación tal cual (`files`), con las rutas desde la carpeta del
+proyecto: `{ "assets/index-ABC.js": { "from": "dist-preview/assets/index-ABC.js", "contentType": "text/javascript" } }`.
+Al republicar en la misma URL quedan también los archivos de builds anteriores (con otro hash): no molestan, y para
+sacarlos se listan los publicados y se mandan con `null`. En una pantalla ancha (y con alto: un teléfono acostado no)
+la app se ve dentro de un marco de teléfono y, desde 960 px, con una columna al lado que cuenta qué probar.
 
 Qué no funciona en la vista previa (sí en el iPhone):
 - **Fotos de tickets**: «Sacar una foto» y «Elegir de las fotos» quedan deshabilitados. Los **PDF con texto** se leen

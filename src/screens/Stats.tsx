@@ -1,5 +1,5 @@
 import { ChevronLeft, ChevronRight } from 'lucide-react';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { BudgetRows } from '../components/charts/BudgetRows';
 import { Donut } from '../components/charts/Donut';
 import { HBars } from '../components/charts/HBars';
@@ -13,6 +13,7 @@ import { formatPct } from '../domain/money';
 import {
   dataSpan, foldOthers, groupTotals, kpis, monthly, monthSummary, percentCards, stack, type Filter, type GroupBy,
 } from '../domain/stats';
+import { plural } from '../domain/text';
 import { useMoney } from '../lib/useMoney';
 import { useStore } from '../store/store';
 
@@ -83,7 +84,7 @@ function Trends() {
     <>
       <div className="no-scrollbar -mx-4 flex gap-2 overflow-x-auto px-4">
         {([['6', '6 meses'], ['12', '12 meses'], ['anio', 'Este año'], ['todo', 'Todo']] as [Period, string][]).map(([id, l]) => (
-          <button key={id} className={period === id ? 'chip-on' : 'chip'} onClick={() => setPeriod(id)}>{l}</button>
+          <button key={id} className={period === id ? 'chip-on' : 'chip'} aria-pressed={period === id} onClick={() => setPeriod(id)}>{l}</button>
         ))}
       </div>
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -102,12 +103,13 @@ function Trends() {
         <TimeChart
           series={[{ key: 'income', name: 'Ingresos', color: INCOME_COLOR }, { key: 'savings', name: 'Ahorro e inversión', color: SAVINGS_COLOR }]}
           rows={points.map((p) => ({ month: p.month, values: { income: p.income, savings: p.savings } }))}
+          emptyText="Todavía no hay ingresos ni ahorro en este período."
         />
         <Legend line series={[{ key: 'i', name: 'Ingresos', color: INCOME_COLOR }, { key: 's', name: 'Ahorro e inversión', color: SAVINGS_COLOR }]} />
       </Card>
 
       <Card title={`Gastos en el tiempo, por ${label}`} sub="Sin contar ahorro. Tocá un mes para ver el detalle.">
-        <TimeChart stacked series={st.series} rows={st.rows} height={240} />
+        <TimeChart stacked series={st.series} rows={st.rows} height={240} emptyText="Todavía no hay gastos en este período." />
         <Legend series={st.series} />
       </Card>
 
@@ -134,19 +136,23 @@ function Trends() {
         <ul className="mt-3 divide-y divide-line">
           {folded.map((g) => (
             <li key={g.key}>
+              {/* En un teléfono angosto (menos de 360 px) el porcentaje va debajo del nombre y sin ícono: si no, el nombre queda en 3 letras */}
               <button className={`flex w-full items-center gap-2.5 py-2 text-left ${active && active !== g.key ? 'opacity-50' : ''}`} onClick={() => setActive(active === g.key ? null : g.key)}>
                 <span className="h-3 w-3 shrink-0 rounded-full" style={{ background: g.color }} />
-                {by === 'category' && <Icon name={g.icon} size={18} className="text-muted" />}
-                <span className="min-w-0 flex-1 truncate">{g.name}</span>
-                <span className="w-12 text-right text-[15px] text-muted tabular">{formatPct(g.share)}</span>
-                <span className="w-24 text-right tabular">{money(g.total)}</span>
+                {by === 'category' && <Icon name={g.icon} size={18} className="text-muted max-[359px]:hidden" />}
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate">{g.name}</span>
+                  <span className="hidden text-[14px] text-muted tabular max-[359px]:block">{formatPct(g.share)}</span>
+                </span>
+                <span className="w-12 text-right text-[15px] text-muted tabular max-[359px]:hidden">{formatPct(g.share)}</span>
+                <span className="w-24 shrink-0 text-right tabular max-[359px]:w-auto">{money(g.total)}</span>
               </button>
             </li>
           ))}
         </ul>
       </Card>
 
-      <Card title={`Promedio por mes, por ${label}`} sub={`Total del período ÷ ${k.months || 1} meses con gastos`}>
+      <Card title={`Promedio por mes, por ${label}`} sub={`Total del período ÷ ${plural(k.months || 1, 'mes con gastos', 'meses con gastos')}`}>
         <HBars data={avg.map((g) => ({ key: g.key, label: g.name, value: g.average, color: g.color }))} />
       </Card>
 
@@ -167,6 +173,22 @@ function MonthView({ month, setMonth }: { month: string; setMonth: (m: string) =
   const { money } = useMoney();
   const [includeSavings, setIncludeSavings] = useState(true);
   const [open, setOpen] = useState<string | null>(null);
+  // Tocar una barra de «Real contra presupuesto» abre su detalle, más abajo, y lo trae a la vista
+  const jump = useRef(false);
+  const rowRefs = useRef(new Map<string, HTMLLIElement>());
+  const show = (id: string) => rowRefs.current.get(id)?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  useEffect(() => {
+    if (!jump.current || !open) return;
+    jump.current = false;
+    show(open);
+  }, [open]);
+  const select = (id: string) => {
+    if (open === id) show(id);
+    else {
+      jump.current = true;
+      setOpen(id);
+    }
+  };
   const s = monthSummary(data, ix, month, includeSavings);
   const cards = percentCards(data, ix, month);
   const over = s.rows.find((r) => r.status === 'over');
@@ -196,8 +218,19 @@ function MonthView({ month, setMonth }: { month: string; setMonth: (m: string) =
       <div className="grid grid-cols-2 gap-3">
         <Kpi label="Ingresos" value={money(s.income)} />
         <Kpi label="Gastos" value={money(s.expense)} />
-        <Kpi label="Presupuesto" value={money(s.budget)} />
-        <Kpi label={s.diff > 0 ? 'Pasado del presupuesto' : 'Debajo del presupuesto'} value={money(Math.abs(s.diff))} tone={s.diff > 0 ? 'danger' : 'ok'} />
+        {/* Contra el presupuesto va solo lo de las categorías que tienen */}
+        {s.budget > 0 ? (
+          <>
+            <Kpi label="Presupuesto" value={money(s.budget)} />
+            <Kpi label={s.diff > 0 ? 'Pasado del presupuesto' : 'Debajo del presupuesto'} value={money(Math.abs(s.diff))} tone={s.diff > 0 ? 'danger' : 'ok'} />
+          </>
+        ) : (
+          <div className="card col-span-2 px-4 py-3">
+            <div className="text-[15px] text-muted">Presupuesto</div>
+            <div className="text-2xl leading-tight">Sin presupuesto</div>
+            <div className="text-[15px] text-muted">Lo ponés en Más → Presupuesto.</div>
+          </div>
+        )}
       </div>
 
       {s.budget > 0 && (
@@ -212,7 +245,7 @@ function MonthView({ month, setMonth }: { month: string; setMonth: (m: string) =
       )}
 
       <Card title="Real contra presupuesto" sub="La barra es lo gastado; la rayita, el presupuesto de la categoría.">
-        {s.rows.length ? <BudgetRows rows={s.rows} onSelect={(id) => setOpen(open === id ? null : id)} /> : <p className="text-muted">No hay gastos ni presupuesto este mes.</p>}
+        {s.rows.length ? <BudgetRows rows={s.rows} onSelect={select} /> : <p className="text-muted">No hay gastos ni presupuesto este mes.</p>}
       </Card>
 
       {cards.map((c) => (
@@ -236,7 +269,14 @@ function MonthView({ month, setMonth }: { month: string; setMonth: (m: string) =
       <Card title="Detalle del mes" sub="Por categoría y rubro">
         <ul className="divide-y divide-line">
           {s.rows.filter((r) => r.real > 0).map((r) => (
-            <li key={r.category.id}>
+            <li
+              key={r.category.id}
+              className="scroll-mb-24"
+              ref={(el) => {
+                if (el) rowRefs.current.set(r.category.id, el);
+                else rowRefs.current.delete(r.category.id);
+              }}
+            >
               <button className="flex w-full items-center gap-2 py-2.5 text-left" onClick={() => setOpen(open === r.category.id ? null : r.category.id)}>
                 <Icon name={r.category.icon} size={18} className="text-muted" />
                 <span className="flex-1">{r.category.name}</span>

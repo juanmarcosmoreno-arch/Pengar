@@ -29,12 +29,22 @@ export async function makeBackup(data: Data): Promise<Blob> {
   return new Blob([JSON.stringify(backup)], { type: 'application/json' });
 }
 
-export async function readBackup(file: File): Promise<Data> {
+export interface ReadBackup {
+  data: Data;
+  files: Backup['files'];
+}
+
+/** Lee el respaldo sin guardar nada: los archivos se escriben recién al confirmar (restoreFiles) */
+export async function readBackup(file: File): Promise<ReadBackup> {
   const parsed = JSON.parse(await file.text()) as Partial<Backup>;
   if (parsed.pengar !== 1 || !parsed.data?.categories) throw new Error('Este archivo no es un respaldo de Pengar.');
-  for (const [id, f] of Object.entries(parsed.files ?? {})) {
+  return { data: normalizeData(parsed.data), files: parsed.files ?? {} };
+}
+
+/** Guarda en el teléfono los archivos de un respaldo (antes de reemplazar los datos) */
+export async function restoreFiles(files: Backup['files']): Promise<void> {
+  for (const [id, f] of Object.entries(files)) {
     const bytes = Uint8Array.from(atob(f.base64), (ch) => ch.charCodeAt(0));
     await saveFile(id, new Blob([bytes], { type: f.mime }));
   }
-  return normalizeData(parsed.data);
 }

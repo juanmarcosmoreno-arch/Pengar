@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { MovementSheet, type MovementPreset } from './components/MovementSheet';
+import { Suricata } from './components/Suricata';
 import { TabBar, type Tab } from './components/TabBar';
 import { ToastProvider } from './components/Toast';
 import { currentMonth, monthOf, today } from './domain/dates';
@@ -24,8 +25,30 @@ import { useStore } from './store/store';
 
 type Editing = { movement?: Movement; kind?: Kind; preset?: MovementPreset; onSaved?: () => void } | null;
 
+/** No se pudieron leer los datos: ni la bienvenida ni nada que los pise, hasta que se puedan leer */
+function LoadError({ onRetry }: { onRetry: () => void }) {
+  return (
+    <div className="flex min-h-full flex-col items-center justify-center gap-3 px-8 text-center">
+      <Suricata pose="cara-preocupado" size={120} />
+      <h1 className="text-3xl">No pude leer tus datos</h1>
+      <p className="text-lg text-muted">Siguen guardados en el teléfono. Probá de nuevo; si sigue igual, cerrá la app del todo y volvé a abrirla.</p>
+      <button className="btn-primary mt-2 w-full max-w-xs" onClick={onRetry}>Probar de nuevo</button>
+    </div>
+  );
+}
+
+/** El último cambio no se pudo guardar (poco lugar, la conexión con el almacenamiento se cortó): se avisa y se reintenta */
+function SaveError({ onRetry }: { onRetry: () => void }) {
+  return (
+    <div role="alert" className="fixed inset-x-3 top-[calc(env(safe-area-inset-top)+8px)] z-50 flex items-center gap-3 rounded-2xl border border-danger/50 bg-surface px-4 py-2 shadow-lg">
+      <p className="flex-1 text-[16px] leading-snug text-danger">No se pudo guardar en el teléfono. Lo último que hiciste se puede perder.</p>
+      <button className="min-h-tap shrink-0 px-2 text-primary" onClick={onRetry}>Reintentar</button>
+    </div>
+  );
+}
+
 export default function App() {
-  const { data, ready, markRecurring } = useStore();
+  const { data, ready, loadError, retryLoad, saveError, saveNow, markRecurring } = useStore();
   const [tab, setTab] = useState<Tab>('inicio');
   const [page, setPage] = useState<MorePage | null>(null);
   const [editing, setEditing] = useState<Editing>(null);
@@ -45,7 +68,8 @@ export default function App() {
   }, [onboarded]);
 
   if (!ready) return null;
-  if (!data.settings.onboarded) return <ToastProvider><Welcome /></ToastProvider>;
+  if (loadError) return <LoadError onRetry={retryLoad} />;
+  if (!data.settings.onboarded) return <ToastProvider>{saveError && <SaveError onRetry={saveNow} />}<Welcome /></ToastProvider>;
 
   const back = () => setPage(null);
   const go = (t: Tab) => {
@@ -96,6 +120,7 @@ export default function App() {
 
   return (
     <ToastProvider>
+      {saveError && <SaveError onRetry={saveNow} />}
       <main className="mx-auto max-w-xl pb-[calc(env(safe-area-inset-bottom)+76px)]">{content}</main>
       <TabBar tab={tab} onChange={go} />
       {editing && <MovementSheet movement={editing.movement} kind={editing.kind} preset={editing.preset} onSaved={editing.onSaved} onClose={() => setEditing(null)} />}

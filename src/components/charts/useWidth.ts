@@ -15,12 +15,12 @@ export function useWidth<T extends HTMLElement>(initial = 320) {
   return [ref, width] as const;
 }
 
-/** Marcas «limpias» para el eje: 0, 25 mil, 50 mil… */
+/** Marcas «limpias» para el eje: 0, 25 mil, 50 mil… De a 1 como mínimo: los montos van sin decimales ($ 1, $ 1, $ 1) */
 export function niceTicks(max: number, count = 4): number[] {
   if (max <= 0) return [0];
   const raw = max / count;
   const mag = 10 ** Math.floor(Math.log10(raw));
-  const step = [1, 2, 2.5, 5, 10].map((s) => s * mag).find((s) => s >= raw) ?? raw;
+  const step = Math.max(1, [1, 2, 2.5, 5, 10].map((s) => s * mag).find((s) => s >= raw) ?? raw);
   const ticks: number[] = [];
   for (let v = 0; v <= max + step * 0.001; v += step) ticks.push(v);
   if (ticks[ticks.length - 1] < max) ticks.push(ticks[ticks.length - 1] + step);

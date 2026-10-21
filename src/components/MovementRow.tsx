@@ -1,5 +1,6 @@
 import { CreditCard, Paperclip } from 'lucide-react';
 import { monthLabel } from '../domain/dates';
+import { NBSP } from '../domain/money';
 import type { Movement } from '../domain/types';
 import { useMoney } from '../lib/useMoney';
 import { useStore } from '../store/store';
@@ -22,7 +23,7 @@ export function MovementRow({ m, onClick }: { m: Movement; onClick?: () => void 
         </div>
       </div>
       <div className={`shrink-0 text-lg tabular ${m.kind === 'ingreso' ? 'text-ok' : ''}`}>
-        {m.kind === 'ingreso' ? '+ ' : '- '}{money(m.amount).replace(/^- /, '')}
+        {m.kind === 'ingreso' ? '+' : '-'}{NBSP}{money(Math.abs(m.amount))}
       </div>
     </button>
   );

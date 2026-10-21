@@ -11,9 +11,9 @@
  * (y opcionalmente tipo y nota). Es el mismo que exporta Pengar.
  */
 import { monthOf } from './dates';
-import { parseAmount } from './money';
+import { parseAmount, round2 } from './money';
 import { newId, OTHER_COLOR, PALETTE, templateKeywords } from './template';
-import type { Budget, Category, Kind, Movement, Rubro } from './types';
+import type { Budget, Category, Data, Kind, Movement, Rubro } from './types';
 
 export type Cell = string | number | boolean | Date | null | undefined;
 
@@ -72,13 +72,25 @@ export function guessIcon(name: string): string {
   return rules.find(([re]) => re.test(n))?.[1] ?? 'm:otros';
 }
 
+const pad2 = (n: number) => String(n).padStart(2, '0');
+
+/**
+ * Fecha YYYY-MM-DD de una celda Date de SheetJS. SheetJS la arma a la medianoche de la hora local, así que se lee con
+ * la hora local (con la de UTC, en una zona UTC+13 el día 1 caería en el mes anterior).
+ */
+export function sheetDate(v: Date): string | null {
+  if (Number.isNaN(v.getTime())) return null;
+  return `${v.getFullYear()}-${pad2(v.getMonth() + 1)}-${pad2(v.getDate())}`;
+}
+
+/** ¿Existe el día? (31/06 o 31/02 no) */
+export function validDay(y: number, m: number, d: number): boolean {
+  return m >= 1 && m <= 12 && d >= 1 && new Date(Date.UTC(y, m - 1, d)).getUTCMonth() === m - 1;
+}
+
 /** Fecha de un encabezado: Date, número de serie de Excel (45597), «2024-11», «11/2024», «nov 2024» */
 export function headerMonth(v: Cell): string | null {
-  if (v instanceof Date && !Number.isNaN(v.getTime())) {
-    // SheetJS arma la fecha en UTC: se suman unas horas para no caer en el día anterior
-    const d = new Date(v.getTime() + 12 * 3600_000);
-    return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`;
-  }
+  if (v instanceof Date) return sheetDate(v)?.slice(0, 7) ?? null;
   if (typeof v === 'number' && v > 30000 && v < 80000) {
     const d = new Date(Date.UTC(1899, 11, 30) + v * 86400_000);
     return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`;
@@ -107,21 +119,32 @@ function num(v: Cell): number | null {
 
 const str = (v: Cell) => (v == null ? '' : String(v).trim());
 
+/**
+ * Columnas con un mes en una fila (posible encabezado). La primera columna es el rubro, así que no cuenta; y si la fila
+ * ya trae fechas, sus números son montos y no fechas de Excel (un alquiler de 35.000 en un CSV de movimientos).
+ */
+function monthColumns(r: Cell[]): { col: number; month: string }[] {
+  const hasDate = r.some((c) => c instanceof Date);
+  const out: { col: number; month: string }[] = [];
+  r.forEach((c, col) => {
+    if (col < 1 || (hasDate && typeof c === 'number')) return;
+    const month = headerMonth(c);
+    if (month) out.push({ col, month });
+  });
+  return out;
+}
+
 /** ¿Es una planilla con un mes por columna? */
 export function isMonthlySheet(rows: Cell[][]): boolean {
-  return rows.slice(0, 5).some((r) => r.filter((c) => headerMonth(c)).length >= 2);
+  return rows.slice(0, 5).some((r) => monthColumns(r).length >= 2);
 }
 
 export function importMonthlySheet(rows: Cell[][]): ImportResult {
   const warnings: string[] = [];
-  const headerIndex = rows.findIndex((r) => r.filter((c) => headerMonth(c)).length >= 2);
+  const headerIndex = rows.findIndex((r) => monthColumns(r).length >= 2);
   if (headerIndex < 0) throw new Error('No encontré los meses en el encabezado de la planilla.');
   const header = rows[headerIndex];
-  const monthCols: { col: number; month: string }[] = [];
-  header.forEach((c, col) => {
-    const month = headerMonth(c);
-    if (month && col >= 1) monthCols.push({ col, month });
-  });
+  const monthCols = monthColumns(header);
   const projectedCol = header.findIndex((c) => /^(proyectado|presupuesto|basico|básico)$/i.test(str(c)));
 
   // Tabla de categorías (letra, nombre, presupuesto) a la izquierda de PROYECTADO
@@ -234,15 +257,17 @@ export function isMovementSheet(rows: Cell[][]): boolean {
   return h.some((c) => COLS.date.test(c)) && h.some((c) => COLS.amount.test(c));
 }
 
+/** Fecha de una fila: Date, número de serie de Excel, «2026-10-05» o «05/10/2026» (día primero). Las imposibles (31/02), null */
 function parseDate(v: Cell): string | null {
-  if (v instanceof Date) return new Date(v.getTime() + 12 * 3600_000).toISOString().slice(0, 10);
+  if (v instanceof Date) return sheetDate(v);
   if (typeof v === 'number' && v > 30000 && v < 80000) return new Date(Date.UTC(1899, 11, 30) + v * 86400_000).toISOString().slice(0, 10);
   const s = str(v);
   let m = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
-  if (m) return `${m[1]}-${m[2]}-${m[3]}`;
+  if (m) return validDay(+m[1], +m[2], +m[3]) ? `${m[1]}-${m[2]}-${m[3]}` : null;
   m = s.match(/^(\d{1,2})[/.-](\d{1,2})[/.-](\d{2,4})$/);
-  if (m) return `${m[3].length === 2 ? '20' + m[3] : m[3]}-${m[2].padStart(2, '0')}-${m[1].padStart(2, '0')}`;
-  return null;
+  if (!m) return null;
+  const y = m[3].length === 2 ? `20${m[3]}` : m[3];
+  return validDay(+y, +m[2], +m[1]) ? `${y}-${m[2].padStart(2, '0')}-${m[1].padStart(2, '0')}` : null;
 }
 
 /**
@@ -301,15 +326,43 @@ export function importMovementSheet(rows: Cell[][], existing: { categories: Cate
   return { categories: newCategories, rubros: newRubros, movements, months, warnings };
 }
 
+export interface MergeResult extends ImportResult {
+  /** Montos de la planilla que ya estaban cargados: no se suman otra vez */
+  repeated: number;
+  /** Totales mensuales (mes y rubro) que ya estaban con otro monto: se cambian por los de la planilla */
+  updated: number;
+  /** Movimientos que salen (los totales mensuales que se reemplazan) */
+  replaceIds: string[];
+}
+
+/** Palabras de 4 letras o más de un nombre («Inversión / Ahorro» → inversion, ahorro) */
+const nameWords = (name: string) => new Set(norm(name).split(/[^a-z0-9]+/).filter((w) => w.length >= 4));
+
 /**
- * Suma lo importado a lo que ya hay: las categorías y rubros con el mismo nombre se unen (no se duplican)
- * y los movimientos pasan a apuntar a los existentes.
+ * ¿La categoría de la planilla es la misma que una que ya está? Por el nombre, o por la letra si las dos cuentan (o
+ * no) como ahorro y los nombres se parecen («Inversión / Ahorro» y «Ahorro e inversión»). La letra sola no alcanza:
+ * I = Impuestos no es «Ahorro e inversión». Una «Categoría X» (sin nombre en la planilla) va por la letra.
  */
-export function mergeImport(existing: { categories: Category[]; rubros: Rubro[] }, res: ImportResult): ImportResult {
+function sameCategory(x: Category, c: Category): boolean {
+  if (x.kind !== c.kind) return false;
+  if (norm(x.name) === norm(c.name)) return true;
+  if (!c.code || x.code !== c.code) return false;
+  if (/^categoria \S+$/.test(norm(c.name))) return true;
+  const words = nameWords(x.name);
+  return !!x.savings === !!c.savings && [...nameWords(c.name)].some((w) => words.has(w));
+}
+
+/**
+ * Suma lo importado a lo que ya hay: las categorías y rubros iguales se unen (no se duplican) y los movimientos pasan
+ * a apuntar a los existentes. Volver a importar la misma planilla (o una más nueva) no duplica: los totales mensuales
+ * de un mes y rubro que ya estaba se reemplazan, y de los movimientos sueltos se saltean los que ya están (contando
+ * cuántas veces aparece cada uno, así dos compras iguales del mismo día no se pierden).
+ */
+export function mergeImport(existing: Pick<Data, 'categories' | 'rubros' | 'movements'>, res: ImportResult): MergeResult {
   const catMap = new Map<string, string>();
   const categories: Category[] = [];
   for (const c of res.categories) {
-    const same = existing.categories.find((x) => x.kind === c.kind && (norm(x.name) === norm(c.name) || (!!c.code && x.code === c.code)));
+    const same = existing.categories.find((x) => sameCategory(x, c));
     if (same) catMap.set(c.id, same.id);
     else categories.push({ ...c, order: existing.categories.length + categories.length });
   }
@@ -321,8 +374,61 @@ export function mergeImport(existing: { categories: Category[]; rubros: Rubro[] 
     if (same) rubroMap.set(r.id, same.id);
     else rubros.push({ ...r, categoryId });
   }
-  const movements = res.movements.map((m) => ({ ...m, rubroId: rubroMap.get(m.rubroId) ?? m.rubroId }));
-  return { ...res, categories, rubros, movements };
+  const mapped = res.movements.map((m) => ({ ...m, rubroId: rubroMap.get(m.rubroId) ?? m.rubroId }));
+
+  const monthKey = (m: Movement) => `${m.rubroId}|${m.kind}|${monthOf(m.date)}`;
+  const looseKey = (m: Movement) => [m.date, m.kind, m.rubroId, round2(m.amount), m.note ?? '', m.merchant ?? ''].join('|');
+  const oldMonthly = new Map<string, Movement[]>();
+  const oldLoose = new Map<string, number>();
+  for (const m of existing.movements) {
+    if (m.monthly) oldMonthly.set(monthKey(m), [...(oldMonthly.get(monthKey(m)) ?? []), m]);
+    else oldLoose.set(looseKey(m), (oldLoose.get(looseKey(m)) ?? 0) + 1);
+  }
+  const newMonthly = new Map<string, Movement[]>();
+  const movements: Movement[] = [];
+  const replaceIds: string[] = [];
+  let repeated = 0;
+  let updated = 0;
+  for (const m of mapped) {
+    if (m.monthly) {
+      newMonthly.set(monthKey(m), [...(newMonthly.get(monthKey(m)) ?? []), m]);
+      continue;
+    }
+    const k = looseKey(m);
+    const left = oldLoose.get(k) ?? 0;
+    if (left > 0) {
+      oldLoose.set(k, left - 1);
+      repeated++;
+    } else movements.push(m);
+  }
+  const total = (ms: Movement[]) => round2(ms.reduce((s, m) => s + m.amount, 0));
+  for (const [k, ms] of newMonthly) {
+    const old = oldMonthly.get(k);
+    if (old && Math.abs(total(old) - total(ms)) < 0.01) {
+      repeated += ms.length;
+      continue;
+    }
+    if (old) {
+      updated++;
+      replaceIds.push(...old.map((m) => m.id));
+    }
+    movements.push(...ms);
+  }
+  return { ...res, categories, rubros, movements, repeated, updated, replaceIds };
+}
+
+/**
+ * Reemplazar todo por la planilla: sus categorías y rubros nuevos, más los que ya había y la planilla usa (un CSV de
+ * movimientos, como el que exporta Pengar, reusa los rubros existentes por nombre).
+ */
+export function replaceImport(existing: Pick<Data, 'categories' | 'rubros'>, res: ImportResult): Pick<Data, 'categories' | 'rubros'> {
+  const used = new Set(res.movements.map((m) => m.rubroId));
+  const fresh = new Set(res.rubros.map((r) => r.id));
+  const keptRubros = existing.rubros.filter((r) => used.has(r.id) && !fresh.has(r.id));
+  const keptCats = new Set(keptRubros.map((r) => r.categoryId));
+  const freshCats = new Set(res.categories.map((c) => c.id));
+  const categories = [...existing.categories.filter((c) => keptCats.has(c.id) && !freshCats.has(c.id)), ...res.categories];
+  return { categories, rubros: [...keptRubros, ...res.rubros] };
 }
 
 /**

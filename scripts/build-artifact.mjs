@@ -2,7 +2,9 @@
 // Uso: npm run build:preview  → dist-preview/pengar.html (la página) y dist-preview/files.json (los archivos de al lado).
 // La página se publica dentro de un esqueleto (<!doctype><html><head><body>), así que no los trae: solo el título,
 // los estilos, los scripts y el contenido. Todo con rutas relativas.
-import { copyFileSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+// files.json es el mapa que acepta la publicación tal cual, desde la carpeta del proyecto:
+// { "assets/index-ABC.js": { "from": "dist-preview/assets/index-ABC.js", "contentType": "text/javascript" }, … }
+import { readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { join, relative, resolve, sep } from 'node:path';
 
 const root = resolve(import.meta.dirname, '..');
@@ -20,14 +22,18 @@ for (const t of tags) {
   if (/(src|href)="\//.test(t)) throw new Error(`Ruta absoluta en ${t}: la build tiene que usar base './'`);
 }
 
-// El suricata de la vitrina, al lado de la página
-copyFileSync(join(root, 'src/assets/suricata/principal.webp'), join(dist, 'vitrina.webp'));
+// El suricata de la vitrina es el mismo de la bienvenida, que ya está en assets (no se copia otro)
+const principal = readdirSync(join(dist, 'assets')).find((n) => /^principal-[\w-]+\.webp$/.test(n));
+if (!principal) throw new Error('No encontré assets/principal-*.webp en dist-preview');
 
+// La vitrina entra en la ventana (con su propio scroll si hace falta): html y body no scrollean desde los 760 px.
+// Necesita el mismo alto que el marco de teléfono (index.css): un teléfono acostado no la muestra
 const vitrinaStyle = `
 .vitrina { display: none; }
-@media (min-width: 960px) {
-  .vitrina { display: block; flex: none; width: 300px; color: #22302C; font-family: 'Patrick Hand', ui-rounded, system-ui, sans-serif; }
-  .vitrina img { display: block; height: 180px; width: auto; margin-left: -6px; }
+@media (min-width: 960px) and (min-height: 500px) {
+  .vitrina { display: block; flex: none; width: 300px; max-height: calc(100vh - 48px); overflow-y: auto; scrollbar-width: none; color: #22302C; font-family: 'Patrick Hand', ui-rounded, system-ui, sans-serif; }
+  .vitrina::-webkit-scrollbar { display: none; }
+  .vitrina img { display: block; height: min(180px, 20vh); width: auto; margin-left: -6px; }
   .vitrina h1 { margin: 6px 0 0; font-size: 58px; line-height: 1; font-weight: 400; }
   .vitrina .lema { margin: 6px 0 0; font-size: 23px; color: #176B60; }
   .vitrina h2 { margin: 30px 0 6px; font-size: 21px; font-weight: 400; }
@@ -39,10 +45,14 @@ const vitrinaStyle = `
     color: #176B60; background: #F5F3EE; font-size: 16px;
   }
   .vitrina .nota { margin: 26px 0 0; padding-top: 14px; border-top: 1px solid rgb(34 48 44 / 0.15); font-size: 15px; line-height: 1.35; color: rgb(34 48 44 / 0.68); }
+}
+@media (min-width: 960px) and (max-height: 640px) {
+  .vitrina img { display: none; }
 }`;
 
-const vitrina = `<aside class="vitrina" aria-label="Sobre esta vista previa">
-  <img src="vitrina.webp" alt="" width="129" height="180">
+// loading="lazy": con la vitrina oculta (en el teléfono) la imagen no se baja
+const vitrina = `<aside class="vitrina" lang="es" aria-label="Sobre esta vista previa">
+  <img src="assets/${principal}" alt="" width="129" height="180" loading="lazy">
   <h1>Pengar</h1>
   <p class="lema">Tu dinero, más simple.</p>
   <h2>Para probar</h2>
@@ -82,7 +92,8 @@ const TYPES = {
   '.svg': 'image/svg+xml',
   '.webmanifest': 'application/manifest+json',
 };
-const SKIP = new Set(['pengar.html', 'index.html', 'files.json']);
+// Lo que la vista previa no usa: index.html (la página es pengar.html) y los íconos, que solo nombra index.html
+const SKIP = new Set(['pengar.html', 'index.html', 'files.json', 'favicon.png', 'icons/apple-touch-icon.png', 'icons/icon-512.png']);
 const walk = (dir) => readdirSync(dir).flatMap((n) => (statSync(join(dir, n)).isDirectory() ? walk(join(dir, n)) : [join(dir, n)]));
 const files = walk(dist)
   .map((abs) => ({ abs, path: relative(dist, abs).split(sep).join('/') }))
@@ -94,7 +105,7 @@ const files = walk(dist)
     if (!contentType) throw new Error(`No sé el tipo de ${path}: agregalo a TYPES en scripts/build-artifact.mjs`);
     return { path, from: relative(root, abs).split(sep).join('/'), contentType };
   });
-writeFileSync(join(dist, 'files.json'), JSON.stringify(files, null, 2) + '\n');
+writeFileSync(join(dist, 'files.json'), JSON.stringify(Object.fromEntries(files.map(({ path, from, contentType }) => [path, { from, contentType }])), null, 2) + '\n');
 
 // La publicación no acepta caracteres de control crudos en archivos de texto (pdf.js y xlsx traen algunos dentro de
 // cadenas y expresiones regulares): se pasan a su secuencia de escape \xHH, que significa lo mismo

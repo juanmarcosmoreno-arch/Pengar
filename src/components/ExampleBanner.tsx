@@ -23,7 +23,11 @@ export function ExampleBanner({ className = '' }: { className?: string }) {
           title="¿Empezar con tus datos?"
           message="Se borran los datos de ejemplo y volvés a la bienvenida para cargar tu planilla o empezar de cero."
           confirmLabel="Empezar"
-          onConfirm={() => replaceAll(emptyData())}
+          onConfirm={() => {
+            // La clave de Claude no es parte del ejemplo: queda
+            const e = emptyData();
+            replaceAll({ ...e, settings: { ...e.settings, ai: data.settings.ai } });
+          }}
           onClose={() => setAsking(false)}
         />
       )}

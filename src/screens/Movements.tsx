@@ -47,6 +47,9 @@ export function Movements({ onAdd, onEdit, month, setMonth }: {
     return out;
   }, [list]);
 
+  // Se puede avanzar hasta el mes del movimiento más lejano (un gasto planificado con fecha futura)
+  const lastMonth = useMemo(() => data.movements.reduce((max, m) => (monthOf(m.date) > max ? monthOf(m.date) : max), currentMonth()), [data.movements]);
+
   const spent = list.filter((m) => m.kind === 'gasto').reduce((s, m) => s + m.amount, 0);
   const earned = list.filter((m) => m.kind === 'ingreso').reduce((s, m) => s + m.amount, 0);
 
@@ -56,18 +59,18 @@ export function Movements({ onAdd, onEdit, month, setMonth }: {
       <div className="space-y-3 px-4">
         <div className="relative">
           <Search size={18} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-muted" />
-          <input className="field rounded-full pl-10" placeholder="Buscar…" value={q} onChange={(e) => setQ(e.target.value)} />
+          <input className="field rounded-full pl-10" placeholder="Buscar…" aria-label="Buscar movimientos" value={q} onChange={(e) => setQ(e.target.value)} />
         </div>
         {!q && (
           <div className="flex items-center justify-between">
             <button className="flex min-h-tap min-w-tap items-center justify-center" onClick={() => setMonth(addMonths(month, -1))} aria-label="Mes anterior"><ChevronLeft /></button>
             <div className="text-xl">{monthLabel(month)}</div>
-            <button className="flex min-h-tap min-w-tap items-center justify-center disabled:opacity-30" disabled={month >= currentMonth()} onClick={() => setMonth(addMonths(month, 1))} aria-label="Mes siguiente"><ChevronRight /></button>
+            <button className="flex min-h-tap min-w-tap items-center justify-center disabled:opacity-30" disabled={month >= lastMonth} onClick={() => setMonth(addMonths(month, 1))} aria-label="Mes siguiente"><ChevronRight /></button>
           </div>
         )}
         <div className="flex gap-2">
           {(['todos', 'gasto', 'ingreso'] as KindFilter[]).map((k) => (
-            <button key={k} className={kind === k ? 'chip-on' : 'chip'} onClick={() => setKind(k)}>
+            <button key={k} className={kind === k ? 'chip-on' : 'chip'} aria-pressed={kind === k} onClick={() => setKind(k)}>
               {k === 'todos' ? 'Todos' : k === 'gasto' ? 'Gastos' : 'Ingresos'}
             </button>
           ))}

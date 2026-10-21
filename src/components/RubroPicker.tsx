@@ -1,5 +1,5 @@
 import { Plus, Search } from 'lucide-react';
-import { useMemo, useState } from 'react';
+import { useId, useMemo, useState } from 'react';
 import { norm } from '../domain/importSheet';
 import { newId } from '../domain/template';
 import type { Kind, Rubro } from '../domain/types';
@@ -14,6 +14,8 @@ export function RubroPicker({ kind, value, onChange }: { kind: Kind; value?: str
   const cats = data.categories.filter((c) => c.kind === kind).sort((a, b) => a.order - b.order);
   const catIds = new Set(cats.map((c) => c.id));
   const rubros = data.rubros.filter((r) => !r.archived && catIds.has(r.categoryId));
+  // El elegido se muestra aunque esté archivado (un gasto fijo o un movimiento viejo): si no, no se vería ninguno
+  const archived = value ? data.rubros.find((r) => r.id === value && r.archived) : undefined;
 
   const frequent = useMemo(() => {
     const counts = new Map<string, number>();
@@ -26,7 +28,7 @@ export function RubroPicker({ kind, value, onChange }: { kind: Kind; value?: str
   const filtered = q ? rubros.filter((r) => norm(r.name).includes(norm(q))) : null;
 
   const chip = (r: Rubro) => (
-    <button key={r.id} type="button" className={value === r.id ? 'chip-on' : 'chip'} onClick={() => onChange(r.id)}>
+    <button key={r.id} type="button" className={value === r.id ? 'chip-on' : 'chip'} aria-pressed={value === r.id} onClick={() => onChange(r.id)}>
       {r.name}
     </button>
   );
@@ -35,8 +37,14 @@ export function RubroPicker({ kind, value, onChange }: { kind: Kind; value?: str
     <div className="space-y-3">
       <div className="relative">
         <Search size={18} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-muted" />
-        <input className="field pl-10" placeholder="Buscar rubro…" value={q} onChange={(e) => setQ(e.target.value)} />
+        <input className="field pl-10" placeholder="Buscar rubro…" aria-label="Buscar rubro" value={q} onChange={(e) => setQ(e.target.value)} />
       </div>
+      {archived && (
+        <div>
+          <div className="label">Elegido (archivado)</div>
+          <div className="flex flex-wrap gap-2">{chip(archived)}</div>
+        </div>
+      )}
       {filtered ? (
         <div className="flex flex-wrap gap-2">
           {filtered.map(chip)}
@@ -89,15 +97,16 @@ function NewRubro({ kind, initialName, onCreate, onCancel }: { kind: Kind; initi
   const cats = data.categories.filter((c) => c.kind === kind).sort((a, b) => a.order - b.order);
   const [name, setName] = useState(initialName);
   const [cat, setCat] = useState(cats[0]?.id ?? '');
+  const id = useId();
   return (
     <div className="card space-y-3 p-4">
       <div>
-        <label className="label">Nombre del rubro</label>
-        <input className="field" autoFocus value={name} onChange={(e) => setName(e.target.value)} placeholder="Ej.: Veterinaria" />
+        <label className="label" htmlFor={`${id}-nombre`}>Nombre del rubro</label>
+        <input id={`${id}-nombre`} className="field" autoFocus value={name} onChange={(e) => setName(e.target.value)} placeholder="Ej.: Veterinaria" />
       </div>
       <div>
-        <label className="label">Categoría</label>
-        <select className="field" value={cat} onChange={(e) => setCat(e.target.value)}>
+        <label className="label" htmlFor={`${id}-categoria`}>Categoría</label>
+        <select id={`${id}-categoria`} className="field" value={cat} onChange={(e) => setCat(e.target.value)}>
           {cats.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
         </select>
       </div>

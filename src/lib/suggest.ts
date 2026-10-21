@@ -116,7 +116,8 @@ async function fill(out: Map<string, RubroSuggestion>, items: SuggestItem[], dat
   }
 
   const { apiKey, model } = data.settings.ai;
-  if (ask.length && opts.claude !== false && apiKey && !isPreview) {
+  // En la vista previa no (y el isPreview primero saca el SDK de esa build)
+  if (!isPreview && ask.length && opts.claude !== false && apiKey) {
     try {
       opts.onProgress?.('Eligiendo los rubros con Claude…');
       const { classifyWithClaude } = await import('./ai');

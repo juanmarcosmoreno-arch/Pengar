@@ -25,7 +25,7 @@ public class PengarAIPlugin: CAPPlugin, CAPBridgedPlugin {
         call.resolve(["appleIntelligence": appleIntelligenceStatus()])
     }
 
-    /// available | notEnabled | notEligible | notReady | unsupported
+    /// available | notEnabled | notEligible | notReady | unsupported | sdk
     private func appleIntelligenceStatus() -> String {
         #if canImport(FoundationModels)
         if #available(iOS 26.0, *) {
@@ -41,8 +41,11 @@ public class PengarAIPlugin: CAPPlugin, CAPBridgedPlugin {
                 }
             }
         }
-        #endif
         return "unsupported"
+        #else
+        // Compilado sin el SDK de iOS 26 (Xcode 16 o anterior): la app no trae Apple Intelligence aunque el iPhone lo tenga
+        return "sdk"
+        #endif
     }
 
     // MARK: - Rubros

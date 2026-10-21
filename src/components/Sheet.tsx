@@ -1,5 +1,5 @@
 import { X } from 'lucide-react';
-import { useEffect, useRef, type ReactNode } from 'react';
+import { useEffect, useId, useRef, type ReactNode } from 'react';
 
 /** Hoja que sube desde abajo. Se cierra con la X, tocando afuera o con Escape (solo la de más arriba si hay dos). */
 export function Sheet({ title, onClose, children, footer, tall = false }: {
@@ -10,6 +10,7 @@ export function Sheet({ title, onClose, children, footer, tall = false }: {
   tall?: boolean;
 }) {
   const ref = useRef<HTMLDivElement>(null);
+  const titleId = useId();
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const open = document.querySelectorAll('[role=dialog]');
@@ -19,11 +20,11 @@ export function Sheet({ title, onClose, children, footer, tall = false }: {
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose]);
   return (
-    <div ref={ref} className="fixed inset-0 z-40 flex flex-col justify-end" role="dialog" aria-modal="true">
+    <div ref={ref} className="fixed inset-0 z-40 flex flex-col justify-end" role="dialog" aria-modal="true" aria-labelledby={title ? titleId : undefined}>
       <button className="absolute inset-0 bg-black/30 animate-fade" aria-label="Cerrar" onClick={onClose} />
       <div className={`relative flex max-h-[92%] flex-col rounded-t-[28px] bg-bg shadow-2xl animate-sheet ${tall ? 'h-[92%]' : ''}`}>
         <div className="flex items-center gap-2 px-5 pt-4 pb-2">
-          <div className="min-w-0 flex-1 truncate text-2xl">{title}</div>
+          <div id={titleId} className="min-w-0 flex-1 truncate text-2xl">{title}</div>
           <button className="-mr-2 flex min-h-tap min-w-tap items-center justify-center text-muted" onClick={onClose} aria-label="Cerrar">
             <X size={24} />
           </button>

@@ -3,6 +3,7 @@ import {
   Heart, House, Landmark, Music, PawPrint, PiggyBank, Pill, Plane, Receipt, Shirt, ShoppingCart, Smartphone, Sofa, Sparkles, Tag,
   Target, TreePalm, Tv, Utensils, Wifi, Wrench, Zap, type LucideIcon,
 } from 'lucide-react';
+import { ART as ART_LIST } from '../domain/template';
 
 const ICONS: Record<string, LucideIcon> = {
   cart: ShoppingCart, home: House, car: Car, fuel: Fuel, bus: Bus, heart: Heart, pill: Pill, graduation: GraduationCap,
@@ -11,6 +12,26 @@ const ICONS: Record<string, LucideIcon> = {
   gift: Gift, 'hand-heart': HandHeart, paw: PawPrint, baby: Baby, dumbbell: Dumbbell, piggy: PiggyBank, coins: Coins,
   briefcase: Briefcase, landmark: Landmark, receipt: Receipt, tag: Tag, target: Target, more: Ellipsis,
 };
+
+const ART_NAMES = new Map(ART_LIST);
+const LINE_LABELS: Record<string, string> = {
+  cart: 'Carrito', home: 'Casa', car: 'Auto', fuel: 'Combustible', bus: 'Ómnibus', heart: 'Corazón', pill: 'Remedios',
+  graduation: 'Graduación', book: 'Libro', sparkles: 'Brillo', wrench: 'Herramienta', sofa: 'Sillón', shirt: 'Ropa', tv: 'Tele',
+  music: 'Música', wifi: 'Wifi', phone: 'Celular', zap: 'Rayo', droplet: 'Gota', flame: 'Llama', utensils: 'Cubiertos',
+  coffee: 'Café', plane: 'Avión', palm: 'Palmera', gift: 'Regalo', 'hand-heart': 'Mano con corazón', paw: 'Huella', baby: 'Bebé',
+  dumbbell: 'Pesas', piggy: 'Chanchito', coins: 'Monedas', briefcase: 'Valija', landmark: 'Banco', receipt: 'Recibo',
+  tag: 'Etiqueta', target: 'Diana', more: 'Más',
+};
+
+/** Nombre de un ícono para el lector de pantalla («Compras del súper, dibujo», «Chanchito, ícono»), no su id interno */
+export function iconLabel(name: string): string {
+  if (name.startsWith('m:')) {
+    const base = name.slice(2).replace(/-2$/, '');
+    const label = ART_NAMES.get(base) ?? base.replace(/-/g, ' ');
+    return `${label}, ${name.endsWith('-2') ? 'otro dibujo' : 'dibujo'}`;
+  }
+  return `${LINE_LABELS[name] ?? name}, ícono`;
+}
 
 /** Ilustraciones del suricata (categorías): «m:super», «m:salud»… */
 const ART = import.meta.glob<string>('../assets/suricata/cat/*.webp', { eager: true, query: '?url', import: 'default' });

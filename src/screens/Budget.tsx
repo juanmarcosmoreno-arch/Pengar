@@ -4,7 +4,7 @@ import { PageHeader } from '../components/Sheet';
 import { Suricata } from '../components/Suricata';
 import { currentMonth } from '../domain/dates';
 import { parseAmount } from '../domain/money';
-import { budgetAmount, incomeFor } from '../domain/stats';
+import { budgetAmount, convertBudget, incomeFor } from '../domain/stats';
 import type { Budget as BudgetT, Category } from '../domain/types';
 import { useMoney } from '../lib/useMoney';
 import { useStore } from '../store/store';
@@ -42,21 +42,28 @@ function BudgetRow({ c, income }: { c: Category; income: number }) {
   const { money, symbol } = useMoney();
   const value = c.budget.type === 'fixed' ? String(c.budget.amount) : c.budget.type === 'percentIncome' ? String(c.budget.pct) : '';
   const [text, setText] = useState(value);
-  const type = c.budget.type === 'none' ? 'fixed' : c.budget.type;
+  // El tipo elegido va aparte del presupuesto guardado: se puede elegir «%» antes de escribir el número
+  const [type, setType] = useState<'fixed' | 'percentIncome'>(c.budget.type === 'percentIncome' ? 'percentIncome' : 'fixed');
   const commit = (t: string, kind: 'fixed' | 'percentIncome' = type) => {
     const n = parseAmount(t);
     const budget: BudgetT = n == null || n <= 0 ? { type: 'none' } : kind === 'fixed' ? { type: 'fixed', amount: n } : { type: 'percentIncome', pct: n };
     upsertCategory({ ...c, budget });
   };
+  // Al cambiar de tipo, el número se pasa con el ingreso del mes ($ 20.000 → 10 %); sin ingreso, queda vacío
+  const switchType = () => {
+    const next = type === 'fixed' ? 'percentIncome' : 'fixed';
+    const converted = convertBudget(parseAmount(text), next, income);
+    const t = converted == null ? '' : String(converted);
+    setType(next);
+    setText(t);
+    commit(t, next);
+  };
   return (
     <div className="flex items-center gap-3 py-3">
       <Icon name={c.icon} size={22} className="shrink-0 text-muted" />
       <div className="min-w-0 flex-1">
-        <div className="truncate text-lg">{c.name}</div>
-        <button
-          className="text-[14px] text-primary"
-          onClick={() => commit(text, type === 'fixed' ? 'percentIncome' : 'fixed')}
-        >
+        <div className="line-clamp-2 break-words text-lg leading-tight">{c.name}</div>
+        <button className="min-h-tap text-left text-[14px] text-primary" onClick={switchType}>
           {type === 'fixed' ? 'Monto fijo · cambiar a % del ingreso' : `% del ingreso (≈ ${money((income * (parseAmount(text) ?? 0)) / 100)}) · cambiar a monto`}
         </button>
       </div>

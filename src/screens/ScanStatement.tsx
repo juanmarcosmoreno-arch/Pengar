@@ -1,5 +1,6 @@
 import { Camera, CreditCard, FileSpreadsheet, FileText, Sparkles, TriangleAlert } from 'lucide-react';
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
+import { ConfirmSheet } from '../components/ConfirmSheet';
 import { RubroPicker } from '../components/RubroPicker';
 import { PageHeader, Sheet } from '../components/Sheet';
 import { Suricata } from '../components/Suricata';
@@ -7,8 +8,8 @@ import { useToast } from '../components/Toast';
 import { Toggle } from '../components/Toggle';
 import { suggestRubro } from '../domain/classify';
 import { MONTHS, monthOf } from '../domain/dates';
-import { parseAmount, round2 } from '../domain/money';
-import { findDuplicates, isSpend, planillaMonths, toLocal, type StatementTx } from '../domain/statement';
+import { NBSP, parseDecimal, round2 } from '../domain/money';
+import { findDuplicates, isSpend, planillaMonths, toLocal, withoutInstallment, type StatementTx } from '../domain/statement';
 import {
   applyCredits,
   creditTargets,
@@ -22,6 +23,8 @@ import {
   usd,
   type MerchantGroup,
 } from '../domain/statementReview';
+import { capital, joinAnd, plural } from '../domain/text';
+import { PdfPasswordError } from '../lib/pdf';
 import { isNative, isPreview } from '../lib/platform';
 import { exampleStatement, readStatement, type StatementDraft } from '../lib/readStatement';
 import { suggestRubros, type SuggestReason } from '../lib/suggest';
@@ -35,10 +38,8 @@ const DEFAULT_USD_RATE = 40;
 
 const SHEETS = '.csv,.xlsx,.xls,.ods,text/csv,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
 
-/** «uno», «uno y dos», «uno, dos y tres» */
-const joinAnd = (list: string[]) => (list.length > 1 ? `${list.slice(0, -1).join(', ')} y ${list.at(-1)}` : list[0] ?? '');
-const capital = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
-const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
+/** La cotización que se acepta (la misma de statementInfo): un número fuera de esto es un error de tipeo */
+const validUsdRate = (v: number) => v > 10 && v < 200;
 
 /** Estado de cuenta de la tarjeta (PDF, planilla o foto) → revisar por comercio → un gasto por compra */
 export function ScanStatement({ onClose }: { onClose: () => void }) {
@@ -46,6 +47,12 @@ export function ScanStatement({ onClose }: { onClose: () => void }) {
   const [draft, setDraft] = useState<StatementDraft | null>(null);
   const [progress, setProgress] = useState('');
   const [error, setError] = useState('');
+  // Un PDF con contraseña espera que la escriban; y si hay cambios en la revisión, salir pide confirmar
+  const [locked, setLocked] = useState<{ file: File; wrong: boolean } | null>(null);
+  const [password, setPassword] = useState('');
+  const dirty = useRef(false);
+  const [leaving, setLeaving] = useState<'cerrar' | 'otro' | null>(null);
+  const passwordId = useId();
   const pdf = useRef<HTMLInputElement>(null);
   const sheet = useRef<HTMLInputElement>(null);
   const camera = useRef<HTMLInputElement>(null);
@@ -55,15 +62,19 @@ export function ScanStatement({ onClose }: { onClose: () => void }) {
     else setError('No encontré compras en el archivo. Probá con el PDF que te manda el banco (no una captura de pantalla) o con la planilla que exporta.');
   };
 
-  const onFile = async (file: File | undefined) => {
+  const onFile = async (file: File | undefined, pass?: string) => {
     if (!file) return;
     setError('');
+    if (!pass) setLocked(null);
     setProgress('Leyendo el estado de cuenta…');
     try {
-      open(await readStatement(file, data, setProgress));
+      open(await readStatement(file, data, setProgress, pass));
+      setLocked(null);
+      setPassword('');
     } catch (e) {
       console.error(e);
-      setError(isPreview
+      if (e instanceof PdfPasswordError) setLocked({ file, wrong: e.wrong });
+      else setError(isPreview
         ? 'No pude leer el archivo. En la vista web se leen los PDF con texto y las planillas (los escaneados, en el iPhone).'
         : 'No pude leer el archivo. Probá con el PDF que te manda el banco o con la planilla que exporta.');
     } finally {
@@ -89,9 +100,16 @@ export function ScanStatement({ onClose }: { onClose: () => void }) {
     </button>
   );
 
+  const doLeave = (to: 'cerrar' | 'otro') => {
+    dirty.current = false;
+    if (to === 'cerrar') onClose();
+    else setDraft(null);
+  };
+  const leave = (to: 'cerrar' | 'otro') => (draft && dirty.current ? setLeaving(to) : doLeave(to));
+
   return (
     <div className="fixed inset-0 z-30 overflow-y-auto bg-bg">
-      <PageHeader title={draft ? 'Revisar compras' : 'Estado de cuenta'} onBack={onClose} />
+      <PageHeader title={draft ? 'Revisar compras' : 'Estado de cuenta'} onBack={() => leave('cerrar')} />
       {input(pdf, 'application/pdf,.pdf')}
       {input(sheet, SHEETS)}
       {isNative && input(camera, 'image/*', true)}
@@ -102,10 +120,26 @@ export function ScanStatement({ onClose }: { onClose: () => void }) {
           <div className="h-6 w-6 animate-spin rounded-full border-[3px] border-soft border-t-primary" />
         </div>
       ) : draft ? (
-        <Review key={draft.fileName + draft.txs.length} draft={draft} onDone={onClose} onRetry={() => setDraft(null)} />
+        <Review key={draft.fileName + draft.txs.length} draft={draft} onDone={onClose} onRetry={() => leave('otro')} onDirty={(d) => { dirty.current = d; }} />
       ) : (
         <div className="space-y-3 px-4 pb-10">
           <div className="flex justify-center"><Suricata pose="lista" size={150} /></div>
+          {locked && (
+            <form className="card space-y-3 p-4" onSubmit={(e) => { e.preventDefault(); void onFile(locked.file, password); }}>
+              <p className="text-xl">Este PDF tiene contraseña</p>
+              <p className="text-muted">
+                {locked.wrong ? 'La contraseña no es correcta: probá de nuevo.' : 'Muchos bancos le ponen tu cédula. Escribila para abrirlo; no se guarda.'}
+              </p>
+              <div>
+                <label className="label" htmlFor={passwordId}>Contraseña del PDF</label>
+                <input id={passwordId} className="field" type="password" autoComplete="off" autoFocus value={password} onChange={(e) => setPassword(e.target.value)} />
+              </div>
+              <div className="flex gap-2">
+                <button type="button" className="btn-ghost" onClick={() => { setLocked(null); setPassword(''); }}>Cancelar</button>
+                <button className="btn-primary flex-1" disabled={!password}>Abrir</button>
+              </div>
+            </form>
+          )}
           <p className="px-1 text-lg text-muted">
             Subí el estado de cuenta de tu tarjeta. Pengar junta las compras por comercio: la primera vez le decís de qué rubro es cada uno y después se acuerda.
           </p>
@@ -120,6 +154,16 @@ export function ScanStatement({ onClose }: { onClose: () => void }) {
           {error && <p className="px-1 text-danger">{error}</p>}
         </div>
       )}
+      {leaving && (
+        <ConfirmSheet
+          title="¿Salir sin guardar?"
+          message="Se pierden los rubros que elegiste en esta revisión."
+          confirmLabel="Salir"
+          danger
+          onConfirm={() => doLeave(leaving)}
+          onClose={() => setLeaving(null)}
+        />
+      )}
     </div>
   );
 }
@@ -133,7 +177,7 @@ interface Choice {
 
 const KIND_LABEL: Partial<Record<StatementTx['kind'], string>> = { pago: 'Pago de la tarjeta', saldo: 'Saldo', credito: 'Devolución o reintegro' };
 
-function Review({ draft, onDone, onRetry }: { draft: StatementDraft; onDone: () => void; onRetry: () => void }) {
+function Review({ draft, onDone, onRetry, onDirty }: { draft: StatementDraft; onDone: () => void; onRetry: () => void; onDirty: (dirty: boolean) => void }) {
   const { data, ix, saveStatement } = useStore();
   const { money } = useMoney();
   const toast = useToast();
@@ -141,8 +185,13 @@ function Review({ draft, onDone, onRetry }: { draft: StatementDraft; onDone: () 
   const firstRate = draft.usdRate ?? DEFAULT_USD_RATE;
   const hasUsd = txs.some((t) => t.currency === 'usd' && (isSpend(t) || t.kind === 'credito'));
   const [rateText, setRateText] = useState(String(firstRate).replace('.', ','));
-  const rate = parseAmount(rateText) ?? 0;
+  // Con decimales siempre: «39,875» es la cotización, no 39.875 pesos (parseAmount lo leería como miles)
+  const parsedRate = parseDecimal(rateText);
+  const rate = parsedRate != null && validUsdRate(parsedRate) ? parsedRate : 0;
   const validRate = !hasUsd || rate > 0;
+  // Algo que eligió la persona (no las sugerencias): salir sin guardar lo pierde
+  const [touched, setTouched] = useState(false);
+  useEffect(() => onDirty(touched), [touched]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Lo que no cambia mientras se revisa: repetidos, meses de la planilla y en qué sección va cada comercio
   const [fixed] = useState(() => {
@@ -232,8 +281,12 @@ function Review({ draft, onDone, onRetry }: { draft: StatementDraft; onDone: () 
   const others = txs.map((t, i) => [t, i] as const).filter(([t]) => !isSpend(t) && KIND_LABEL[t.kind]);
   const groupTotal = (g: MerchantGroup) => round2(g.idx.reduce((s, i) => s + local(i), 0));
 
-  const exclude = (key: string) => setExcluded((s) => new Set(s).add(key));
+  const exclude = (key: string) => {
+    setTouched(true);
+    setExcluded((s) => new Set(s).add(key));
+  };
   const include = (g: MerchantGroup) => {
+    setTouched(true);
     setExcluded((s) => {
       const next = new Set(s);
       next.delete(g.key);
@@ -242,17 +295,19 @@ function Review({ draft, onDone, onRetry }: { draft: StatementDraft; onDone: () 
     // Venía como «no es un gasto»: pasa a los nuevos, con el rubro de las palabras clave si hay
     if (section[g.key] === 'excluido') {
       setSection((s) => ({ ...s, [g.key]: 'nuevo' }));
-      const s = suggestRubro(g.description, g.merchant, spendRubros(data.rubros, data.categories), {});
+      const s = suggestRubro(withoutInstallment(g.description), g.merchant, spendRubros(data.rubros, data.categories), {});
       if (s && !choice[g.key]?.rubroId) setChoice((c) => ({ ...c, [g.key]: s }));
     }
   };
-  const toggleIn = (set: (fn: (s: Set<number>) => Set<number>) => void, i: number, on: boolean) =>
+  const toggleIn = (set: (fn: (s: Set<number>) => Set<number>) => void, i: number, on: boolean) => {
+    setTouched(true);
     set((s) => {
       const next = new Set(s);
       if (on) next.add(i);
       else next.delete(i);
       return next;
     });
+  };
 
   const save = async () => {
     setSaving(true);
@@ -264,7 +319,7 @@ function Review({ draft, onDone, onRetry }: { draft: StatementDraft; onDone: () 
         if (excluded.has(g.key)) learned[key] = NOT_SPEND;
         else if (choice[g.key]?.rubroId) learned[key] = choice[g.key].rubroId!;
       }
-      const { count, undo } = await saveStatement({
+      const { count, undo, fileKept } = await saveStatement({
         file: draft.file,
         fileName: draft.fileName,
         mime: draft.mime,
@@ -274,8 +329,13 @@ function Review({ draft, onDone, onRetry }: { draft: StatementDraft; onDone: () 
         learned,
         usdRate: hasUsd ? rate : undefined,
       });
-      toast(count ? plural(count, 'gasto guardado', 'gastos guardados') : 'Estado de cuenta guardado', { label: 'Deshacer', run: undo });
+      const saved = count ? plural(count, 'gasto guardado', 'gastos guardados') : 'Estado de cuenta guardado';
+      toast(fileKept ? saved : `${saved}; el archivo no se pudo guardar en este navegador`, { label: 'Deshacer', run: undo });
       onDone();
+    } catch (e) {
+      // El archivo no se pudo guardar (poco lugar en el teléfono): no se guarda nada y se puede probar de nuevo
+      console.error(e);
+      toast('No se pudo guardar en el teléfono. Probá de nuevo.');
     } finally {
       setSaving(false);
     }
@@ -286,14 +346,21 @@ function Review({ draft, onDone, onRetry }: { draft: StatementDraft; onDone: () 
     const c = choice[g.key];
     const rubroId = off ? undefined : c?.rubroId;
     const list = g.idx.map((i) => txs[i]);
-    const skipped = g.idx.filter(skipMonth).length;
+    // Los meses de la planilla de este comercio (no todos los de la planilla)
+    const skippedIdx = g.idx.filter(skipMonth);
+    const skipped = skippedIdx.length;
+    const skipMonths = [...new Set(skippedIdx.map((i) => monthOf(txs[i].date)))].sort();
+    const skipText = joinAnd(skipMonths.map(monthName));
+    const n = skipped > 1 ? 'n' : '';
     const usdSum = round2(list.filter((t) => t.currency === 'usd').reduce((s, t) => s + t.amount, 0));
     const cuotas = [...new Set(list.map((t) => t.installment).filter(Boolean))];
     const detail = [
       list.every((t) => t.kind === 'cargo') ? plural(list.length, 'cargo', 'cargos') : plural(list.length, 'compra', 'compras'),
       usdSum > 0 && usd(usdSum),
       cuotas.length > 0 && `cuota ${cuotas.join(', ')}`,
-      skipped > 0 && (skipped === list.length ? `no se guarda: ${capital(monthsText)} ya está en la planilla` : `${skipped} de ${monthsText} no se guarda`),
+      skipped > 0 && (skipped === list.length
+        ? `no se guarda${n} (${skipText} ya ${skipMonths.length > 1 ? 'están' : 'está'} en la planilla)`
+        : `${plural(skipped, 'compra', 'compras')} de ${skipText} no se guarda${n}`),
     ].filter(Boolean).join(' · ');
     const ai = c?.reason ? AI_NAME[c.reason] : undefined;
     return (
@@ -306,7 +373,7 @@ function Review({ draft, onDone, onRetry }: { draft: StatementDraft; onDone: () 
         {off ? (
           <div className="flex items-center gap-2 text-[15px] text-muted">
             No es un gasto: no se guarda
-            <button className="ml-auto min-h-tap shrink-0 px-1 text-primary" onClick={() => include(g)}>Es un gasto</button>
+            <button className="ml-auto min-h-tap shrink-0 px-2 text-primary" onClick={() => include(g)}>Es un gasto</button>
           </div>
         ) : (
           <div className="mt-2 flex items-start gap-2">
@@ -320,7 +387,7 @@ function Review({ draft, onDone, onRetry }: { draft: StatementDraft; onDone: () 
                 </div>
               )}
             </div>
-            <button className="ml-auto min-h-[38px] shrink-0 px-1 text-[15px] text-muted" onClick={() => exclude(g.key)}>No es un gasto</button>
+            <button className="ml-auto min-h-tap shrink-0 px-2 text-[15px] text-muted" onClick={() => exclude(g.key)}>No es un gasto</button>
           </div>
         )}
       </div>
@@ -344,7 +411,7 @@ function Review({ draft, onDone, onRetry }: { draft: StatementDraft; onDone: () 
             <div className="truncate text-xl">{draft.card ?? 'Tarjeta'}</div>
             <div className="truncate text-[15px] text-muted">{draft.source === 'ejemplo' ? 'De ejemplo (inventado)' : draft.fileName}</div>
           </div>
-          <button className="min-h-tap shrink-0 px-1 text-primary" onClick={onRetry}>Otro</button>
+          <button className="min-h-tap min-w-tap shrink-0 px-2 text-primary" onClick={onRetry} aria-label="Elegir otro estado de cuenta">Elegir otro</button>
         </div>
         <p className="mt-3 text-lg leading-snug">
           {plural(spends.length, 'movimiento', 'movimientos')} de {plural(new Set(spends.map(([t]) => t.key)).size, 'comercio', 'comercios')} · {money(spendTotal)}
@@ -360,7 +427,7 @@ function Review({ draft, onDone, onRetry }: { draft: StatementDraft; onDone: () 
               {usdSpends.length ? `${plural(usdSpends.length, 'compra', 'compras')}: ${usd(usdTotal)}${rate > 0 ? ` = ${money(usdTotal * rate)}` : ''}` : 'Para los créditos en dólares'}
             </div>
           </div>
-          <input id="usd-rate" className="field w-[84px] shrink-0 px-3 text-right tabular" inputMode="decimal" value={rateText} onChange={(e) => setRateText(e.target.value)} />
+          <input id="usd-rate" className="field w-[84px] shrink-0 px-3 text-right tabular" inputMode="decimal" value={rateText} onChange={(e) => { setTouched(true); setRateText(e.target.value); }} />
         </div>
       )}
 
@@ -372,7 +439,7 @@ function Review({ draft, onDone, onRetry }: { draft: StatementDraft; onDone: () 
               {capital(monthsText)} ya {fixed.months.length === 1 ? 'tiene' : 'tienen'} los totales de tu planilla: si guardás estos gastos se van a contar dos veces.
             </span>
           </p>
-          <Toggle checked={skipPlanilla} onChange={setSkipPlanilla} label={`No guardar las compras de ${monthsText}`} />
+          <Toggle checked={skipPlanilla} onChange={(v) => { setTouched(true); setSkipPlanilla(v); }} label={`No guardar las compras de ${monthsText}`} />
         </div>
       )}
 
@@ -398,7 +465,7 @@ function Review({ draft, onDone, onRetry }: { draft: StatementDraft; onDone: () 
         <section>
           <div className="flex items-baseline justify-between px-1">
             <h2 className="section-title">Ya los conozco</h2>
-            <button className="min-h-tap text-primary" aria-expanded={showKnown} onClick={() => setShowKnown((v) => !v)}>
+            <button className="min-h-tap px-2 text-primary" aria-expanded={showKnown} onClick={() => setShowKnown((v) => !v)}>
               {showKnown ? 'Ocultar' : 'Ver y cambiar'}
             </button>
           </div>
@@ -441,7 +508,7 @@ function Review({ draft, onDone, onRetry }: { draft: StatementDraft; onDone: () 
         <section>
           <div className="flex items-baseline justify-between px-1">
             <h2 className="section-title">No son gastos</h2>
-            <button className="min-h-tap text-primary" aria-expanded={showOther} onClick={() => setShowOther((v) => !v)}>
+            <button className="min-h-tap min-w-tap px-2 text-primary" aria-expanded={showOther} onClick={() => setShowOther((v) => !v)}>
               {showOther ? 'Ocultar' : 'Ver'}
             </button>
           </div>
@@ -455,7 +522,7 @@ function Review({ draft, onDone, onRetry }: { draft: StatementDraft; onDone: () 
                   <div key={i} role="group" aria-label={t.merchant} className="space-y-1 py-3">
                     <div className="flex items-baseline gap-3">
                       <div className="min-w-0 flex-1 truncate text-lg leading-tight">{t.merchant}</div>
-                      <div className="shrink-0 text-lg tabular">{t.currency === 'usd' ? `${t.amount < 0 ? '- ' : ''}${usd(Math.abs(t.amount))}` : money(t.amount)}</div>
+                      <div className="shrink-0 text-lg tabular">{t.currency === 'usd' ? `${t.amount < 0 ? `-${NBSP}` : ''}${usd(Math.abs(t.amount))}` : money(t.amount)}</div>
                     </div>
                     <div className="text-[15px] text-muted">{dayMonth(t.date)} · {KIND_LABEL[t.kind]}</div>
                     {t.kind === 'credito' && (
@@ -477,7 +544,7 @@ function Review({ draft, onDone, onRetry }: { draft: StatementDraft; onDone: () 
       <div className="fixed inset-x-0 bottom-0 z-10 border-t border-line bg-bg/95 px-4 pt-3 pb-[max(1rem,env(safe-area-inset-bottom))] backdrop-blur">
         {(missing > 0 || !validRate) && (
           <p className="pb-2 text-center text-[16px] text-danger">
-            {missing > 0 ? `Faltan ${plural(missing, 'comercio', 'comercios')}` : 'Falta la cotización del dólar'}
+            {missing > 0 ? `Faltan ${plural(missing, 'comercio', 'comercios')}` : rateText.trim() ? 'Revisá la cotización del dólar (por ejemplo, 40,10)' : 'Falta la cotización del dólar'}
           </p>
         )}
         <button className="btn-primary w-full" disabled={missing > 0 || !validRate || saving} onClick={save}>
@@ -492,6 +559,7 @@ function Review({ draft, onDone, onRetry }: { draft: StatementDraft; onDone: () 
             kind="gasto"
             value={choice[picking.key]?.rubroId}
             onChange={(id) => {
+              setTouched(true);
               setChoice((c) => ({ ...c, [picking.key]: { rubroId: id } }));
               setPicking(null);
             }}

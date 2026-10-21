@@ -17,9 +17,11 @@ export function BudgetRows({ rows, onSelect }: { rows: CategoryCompare[]; onSele
         const spentW = (Math.min(r.real, r.hasBudget ? r.budget : r.real) / max) * 100;
         const overW = r.hasBudget ? (Math.max(0, r.real - r.budget) / max) * 100 : 0;
         const budgetX = (r.budget / max) * 100;
+        // Sin gasto no hay detalle que mostrar: la fila no se toca
+        const Row = onSelect && r.real > 0 ? 'button' : 'div';
         return (
           <li key={r.category.id}>
-            <button className="w-full py-3 text-left" onClick={() => onSelect?.(r.category.id)}>
+            <Row className="block w-full py-3 text-left" {...(Row === 'button' ? { onClick: () => onSelect!(r.category.id) } : {})}>
               <div className="flex items-center gap-2">
                 <Icon name={r.category.icon} size={18} className="text-muted" />
                 <span className="min-w-0 flex-1 truncate">{r.category.name}</span>
@@ -39,7 +41,7 @@ export function BudgetRows({ rows, onSelect }: { rows: CategoryCompare[]; onSele
                 {r.status === 'none' && <><CircleDashed size={14} /><span>Sin presupuesto</span></>}
                 {r.hasBudget && <span className="ml-auto tabular">de {money(r.budget)}{r.pct != null && r.budget > 0 ? ` · ${formatPct(r.real / r.budget)}` : ''}</span>}
               </div>
-            </button>
+            </Row>
           </li>
         );
       })}

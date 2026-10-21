@@ -18,17 +18,20 @@ function nf(locale: string, decimals: number, compact = false): Intl.NumberForma
   return f;
 }
 
+/** Espacio que no se corta: el «$» nunca queda en un renglón y el número en el siguiente */
+export const NBSP = '\u00a0';
+
 /** «$ 28.450» (con signo menos si es negativo) */
 export function formatMoney(n: number, c: Currency = DEFAULT_CURRENCY, opts: { sign?: boolean } = {}): string {
   const abs = nf(c.locale, c.decimals).format(Math.abs(n));
-  const sign = n < 0 ? '- ' : opts.sign && n > 0 ? '+ ' : '';
-  return `${sign}${c.symbol} ${abs}`;
+  const sign = n < 0 ? `-${NBSP}` : opts.sign && n > 0 ? `+${NBSP}` : '';
+  return `${sign}${c.symbol}${NBSP}${abs}`;
 }
 
 /** Para ejes y etiquetas chicas: «$ 28 mil», «$ 1,2 M» */
 export function formatCompact(n: number, c: Currency = DEFAULT_CURRENCY): string {
-  if (Math.abs(n) < 1000) return `${c.symbol} ${Math.round(n)}`;
-  return `${c.symbol} ${nf(c.locale, 0, true).format(n)}`;
+  if (Math.abs(n) < 1000) return `${c.symbol}${NBSP}${Math.round(n)}`;
+  return `${c.symbol}${NBSP}${nf(c.locale, 0, true).format(n)}`;
 }
 
 export function formatPct(x: number, decimals = 0): string {
@@ -68,6 +71,16 @@ export function parseAmount(raw: string): number | null {
   const n = Number(normalized);
   if (!Number.isFinite(n)) return null;
   return negative ? -n : n;
+}
+
+/**
+ * Lee un número con decimales, como una cotización («39,875»): un solo separador, «,» o «.», siempre es decimal.
+ * Con los dos («1.234,56») vale lo mismo que parseAmount.
+ */
+export function parseDecimal(raw: string): number | null {
+  const s = raw.trim();
+  if (/^-?\d+(?:[.,]\d+)?$/.test(s)) return Number(s.replace(',', '.'));
+  return parseAmount(s);
 }
 
 export const round2 = (n: number) => Math.round(n * 100) / 100;

@@ -3,6 +3,7 @@
  * No depende del formato de ningún comercio: busca montos al final de cada renglón y descarta los que son
  * totales, impuestos o datos del pago.
  */
+import { validDay } from './importSheet';
 import { round2 } from './money';
 
 export interface ParsedInvoice {
@@ -12,18 +13,25 @@ export interface ParsedInvoice {
   items: { description: string; amount: number }[];
 }
 
-const AMOUNT_AT_END = /(-?\s?\$?\s?(?:\d{1,3}(?:[.,\s]\d{3})+|\d+)(?:[.,]\d{1,2})?)\s*-?$/;
+// Los miles van con punto o coma, no con espacio: en «HUEVOS X 12 189,00» el 12 es del producto
+const AMOUNT_AT_END = /(-?\s?\$?\s?(?:\d{1,3}(?:[.,]\d{3})+|\d+)(?:[.,]\d{1,2})?)\s*-?$/;
 
-/** Renglones que no son productos ni servicios */
+/**
+ * Renglones que no son productos ni servicios. Cada palabra va entera (con su plural): «cabal» no es «CABALLA» ni
+ * «lote» es «LOTERIA». «Nº», «No.» o «No» suelto es un número de comprobante, no «NORTEÑA».
+ */
 const NOT_ITEM = new RegExp(
   [
     'total', 'sub ?total', 'iva', 'impuesto', 'tasa', 'cambio', 'vuelto', 'efectivo', 'tarjeta', 'pago', 'pagado', 'cobrado',
-    'r\\.?u\\.?[ct]', 'c\\.?i\\.?\\b', 'fecha', 'hora', 'serie', 'n[ºo°]', 'nro', 'numero', 'cfe', 'e-?ticket', 'e-?factura',
-    'redondeo', 'gravado', 'exento', 'no gravado', 'neto', 'base', 'cuota', 'saldo', 'vencimiento', 'vence', 'cliente', 'consumo final',
-    'caja', 'cajero', 'ticket', 'telefono', 'tel\\b', 'direccion', 'codigo', 'cod\\.? seg', 'monto', 'importe', 'debito', 'credito',
-    'visa', 'master', 'oca', 'cabal', 'amex', 'transaccion', 'autorizacion', 'lote', 'terminal', 'comprobante', 'dgi', 'ley',
-    'descuento ley', 'devolucion iva', 'resolucion', 'puntos', 'ahorraste', 'items?\\b', 'articulos', 'cantidad',
-  ].map((w) => `\\b${w}`).join('|'),
+    'r\\.?u\\.?[ct]', 'c\\.?i\\.?\\b', 'fecha', 'hora', 'serie', 'n[º°]', 'no\\.', 'no$', 'nro', 'numero', 'cfe', 'e-?ticket',
+    'e-?factura', 'redondeo', 'gravado', 'exento', 'no gravado', 'neto', 'base', 'cuota', 'saldo', 'vencimiento', 'vence', 'cliente',
+    'consumo final', 'caja', 'cajero', 'ticket', 'telefono', 'tel\\b', 'direccion', 'codigo', 'monto', 'importe', 'debito', 'credito',
+    'visa', 'master', 'master ?card', 'oca', 'cabal', 'amex', 'transaccion', 'autorizacion', 'lote', 'terminal', 'comprobante', 'dgi',
+    'ley', 'descuento ley', 'devolucion iva', 'resolucion', 'puntos', 'ahorraste', 'items?\\b', 'articulos', 'cantidad',
+  ].map((w) => `\\b(?:${w})(?:e?s)?(?![a-z])`)
+    // Abreviatura: «COD SEGURIDAD»
+    .concat('\\bcod\\.? seg')
+    .join('|'),
   'i',
 );
 
@@ -62,14 +70,13 @@ export function findDate(text: string): string | undefined {
   const candidates: string[] = [];
   for (const m of text.matchAll(/\b(\d{1,2})[/.-](\d{1,2})[/.-](\d{4}|\d{2})\b/g)) {
     const y = m[3].length === 2 ? `20${m[3]}` : m[3];
-    const mo = Number(m[2]);
-    const d = Number(m[1]);
-    if (mo >= 1 && mo <= 12 && d >= 1 && d <= 31) candidates.push(`${y}-${pad(m[2])}-${pad(m[1])}`);
+    // Las imposibles (31/06, 31/02: el lector de fotos a veces lee mal un número) no cuentan
+    if (validDay(+y, +m[2], +m[1])) candidates.push(`${y}-${pad(m[2])}-${pad(m[1])}`);
   }
-  for (const m of text.matchAll(/\b(\d{4})-(\d{2})-(\d{2})\b/g)) candidates.push(`${m[1]}-${m[2]}-${m[3]}`);
+  for (const m of text.matchAll(/\b(\d{4})-(\d{2})-(\d{2})\b/g)) if (validDay(+m[1], +m[2], +m[3])) candidates.push(`${m[1]}-${m[2]}-${m[3]}`);
   for (const m of plain(text).matchAll(/\b(\d{1,2})\s+(?:de\s+)?([a-z]{3})[a-z]*\.?\s+(?:de\s+)?(\d{4})\b/g)) {
     const i = months.indexOf(m[2] === 'sep' ? 'set' : m[2]);
-    if (i >= 0) candidates.push(`${m[3]}-${pad(String(i + 1))}-${pad(m[1])}`);
+    if (i >= 0 && validDay(+m[3], i + 1, +m[1])) candidates.push(`${m[3]}-${pad(String(i + 1))}-${pad(m[1])}`);
   }
   // La primera fecha razonable (no muy vieja ni en el futuro lejano: las facturas de servicios traen el vencimiento)
   const now = new Date();

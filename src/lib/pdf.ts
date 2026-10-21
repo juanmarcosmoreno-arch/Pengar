@@ -16,12 +16,32 @@ async function pdfjs() {
   return lib;
 }
 
-/** Abre el PDF, hace lo que haga falta y lo cierra (libera el worker) */
-async function withPdf<T>(file: Blob, fn: (doc: PDFDocumentProxy) => Promise<T>): Promise<T> {
+/** El PDF tiene contraseña (varios bancos mandan el estado de cuenta así, con la cédula). `wrong`: la que se puso no es */
+export class PdfPasswordError extends Error {
+  constructor(public wrong: boolean) {
+    super(wrong ? 'La contraseña no es correcta' : 'El PDF tiene contraseña');
+    this.name = 'PdfPasswordError';
+  }
+}
+
+async function openPdf(file: Blob, password?: string) {
   const lib = await pdfjs();
-  const task = lib.getDocument({ data: new Uint8Array(await file.arrayBuffer()) });
+  const task = lib.getDocument({ data: new Uint8Array(await file.arrayBuffer()), password });
   try {
-    return await fn(await task.promise);
+    return { task, doc: await task.promise };
+  } catch (e) {
+    void task.destroy();
+    // pdf.js: code 1 = falta la contraseña, 2 = no es la correcta
+    if ((e as { name?: string })?.name === 'PasswordException') throw new PdfPasswordError((e as { code?: number }).code === 2);
+    throw e;
+  }
+}
+
+/** Abre el PDF, hace lo que haga falta y lo cierra (libera el worker) */
+async function withPdf<T>(file: Blob, fn: (doc: PDFDocumentProxy) => Promise<T>, password?: string): Promise<T> {
+  const { task, doc } = await openPdf(file, password);
+  try {
+    return await fn(doc);
   } finally {
     void task.destroy();
   }
@@ -43,19 +63,29 @@ async function pageBoxes(page: PDFPageProxy): Promise<{ boxes: TextBox[]; aspect
 
 const textLength = (boxes: TextBox[]) => boxes.map((b) => b.text).join('').replace(/\s/g, '').length;
 
-/** La página dibujada como foto, para leerla con el lector de fotos (PDF escaneado) */
+/**
+ * La página dibujada como foto, para leerla con el lector de fotos (PDF escaneado). Hasta 2800 px de lado, lo que usa
+ * el lector igual: en el iPhone un canvas de más de 16,7 MP (una foto pasada a PDF a 72 dpi, al doble) queda en blanco.
+ */
 async function pageImage(page: PDFPageProxy): Promise<Blob> {
-  const viewport = page.getViewport({ scale: 2 });
+  const base = page.getViewport({ scale: 1 });
+  const viewport = page.getViewport({ scale: Math.min(2, 2800 / Math.max(base.width, base.height)) });
   const canvas = document.createElement('canvas');
-  canvas.width = viewport.width;
-  canvas.height = viewport.height;
-  await page.render({ canvas, canvasContext: canvas.getContext('2d')!, viewport }).promise;
-  return new Promise<Blob>((res) => canvas.toBlob((b) => res(b!), 'image/jpeg', 0.9));
+  canvas.width = Math.floor(viewport.width);
+  canvas.height = Math.floor(viewport.height);
+  const ctx = canvas.getContext('2d');
+  if (!ctx) throw new Error('No se pudo dibujar la página');
+  await page.render({ canvas, canvasContext: ctx, viewport }).promise;
+  const blob = await new Promise<Blob | null>((res) => canvas.toBlob(res, 'image/jpeg', 0.9));
+  // Libera la memoria del canvas enseguida (en el iPhone también hay un tope para todos juntos)
+  canvas.width = canvas.height = 0;
+  if (!blob) throw new Error('No se pudo dibujar la página');
+  return blob;
 }
 
 const MAX_PAGES = 4;
 
-export async function readPdfText(file: Blob, onProgress?: (msg: string) => void): Promise<string> {
+export async function readPdfText(file: Blob, onProgress?: (msg: string) => void, password?: string): Promise<string> {
   return withPdf(file, async (doc) => {
     const pages = Math.min(doc.numPages, MAX_PAGES);
     const out: string[] = [];
@@ -71,7 +101,7 @@ export async function readPdfText(file: Blob, onProgress?: (msg: string) => void
       texts.push(await readImageText(await pageImage(await doc.getPage(p)), onProgress));
     }
     return texts.join('\n');
-  });
+  }, password);
 }
 
 /** Los estados de cuenta son más largos que una factura */
@@ -82,7 +112,7 @@ const STATEMENT_PAGES = 10;
  * pesos o en la de dólares). Si es un escaneo: en el iPhone con las cajas de Vision; en la web, el texto de
  * Tesseract sin posiciones.
  */
-export async function readPdfRows(file: Blob, onProgress?: (msg: string) => void): Promise<StatementRow[]> {
+export async function readPdfRows(file: Blob, onProgress?: (msg: string) => void, password?: string): Promise<StatementRow[]> {
   return withPdf(file, async (doc) => {
     const pages = Math.min(doc.numPages, STATEMENT_PAGES);
     const rows: StatementRow[] = [];
@@ -102,16 +132,18 @@ export async function readPdfRows(file: Blob, onProgress?: (msg: string) => void
       scanned.push(...((await readImageRows(image)) ?? rowsFromText(await readImageText(image, onProgress))));
     }
     return scanned;
-  });
+  }, password);
 }
 
-const VIEW_PAGES = 6;
+/** Páginas que se dibujan en el visor: en el iPhone, pocas por la memoria; en la vista previa web, todas las que haya hasta 30 */
+export const VIEW_PAGES = isPreview ? 30 : 6;
 
-/** Dibuja las primeras páginas de un PDF para verlo: cada una en un canvas de `cssWidth` px de ancho, nítido según la pantalla */
+/**
+ * Dibuja las primeras páginas de un PDF para verlo: cada una en un canvas de `cssWidth` px de ancho, nítido según la
+ * pantalla. Si el PDF tiene contraseña, tira PdfPasswordError.
+ */
 export async function renderPdfPages(file: Blob, cssWidth: number): Promise<{ pages: HTMLCanvasElement[]; total: number }> {
-  const lib = await pdfjs();
-  const task = lib.getDocument({ data: new Uint8Array(await file.arrayBuffer()) });
-  const doc = await task.promise;
+  const { task, doc } = await openPdf(file);
   // Tope de 3x: en el iPhone un canvas muy grande se queda en blanco
   const dpr = Math.min(window.devicePixelRatio || 1, 3);
   try {

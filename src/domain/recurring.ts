@@ -27,12 +27,13 @@ export const recurringOf = (data: Pick<Data, 'recurring'>, rubroId: string | und
   rubroId ? data.recurring.find((r) => r.rubroId === rubroId) : undefined;
 
 /**
- * Los fijos que faltan anotar en `month`: no pausados, con `doneThrough` anterior a ese mes y sin ningún movimiento
+ * Los fijos que faltan anotar en `month`: no pausados, de un rubro activo, con `doneThrough` anterior a ese mes y sin ningún movimiento
  * de su rubro en el mes (si ya lo anotaste a mano, con una factura o vino en la planilla, no se pide de nuevo).
  */
 export function pendingRecurring(data: Data, month: string, todayISO: string): PendingRecurring[] {
   const current = monthOf(todayISO);
-  const rubros = new Set(data.rubros.map((r) => r.id));
+  // Los de un rubro archivado no se piden (al anotarlo no se vería el rubro)
+  const rubros = new Set(data.rubros.filter((r) => !r.archived).map((r) => r.id));
   const recorded = new Set(data.movements.filter((m) => monthOf(m.date) === month).map((m) => `${m.rubroId}|${m.kind}`));
   return data.recurring
     .filter((r) => !r.paused && (!r.doneThrough || r.doneThrough < month) && rubros.has(r.rubroId) && !recorded.has(`${r.rubroId}|${r.kind}`))

@@ -37,7 +37,8 @@ export function Home({ onAdd, onScan, onStatement, onEdit, onRecord, onGo }: {
   const f = { from: month, to: month, includeSavings: false };
   const k = kpis(data, ix, f);
   const savings = monthly(data, ix, f)[0]?.savings ?? 0;
-  const change = expenseChange(data, ix, month);
+  // El mes en curso está incompleto: solo se avisa si ya gastaste más que en todo el mes anterior
+  const change = expenseChange(data, ix, month, false, month);
   const columns = monthly(data, ix, { from: addMonths(month, -6), to: month, includeSavings: false }).map((p) => ({
     key: p.month,
     label: monthLabel(p.month, { short: true, year: false }),
@@ -100,7 +101,7 @@ export function Home({ onAdd, onScan, onStatement, onEdit, onRecord, onGo }: {
       <section className="card p-5">
         <div className="flex items-baseline justify-between">
           <h2 className="section-title">Gastos por mes</h2>
-          <button className="text-primary" onClick={() => onGo('mes')}>Ver más</button>
+          <button className="-my-3 min-h-tap px-1 text-primary" onClick={() => onGo('mes')}>Ver más</button>
         </div>
         <div className="mt-1 text-3xl">{money(k.expense)}</div>
         <div className="text-[15px] text-muted">en {monthLabel(month, { year: false }).toLowerCase()}, sin contar ahorro</div>
@@ -113,9 +114,10 @@ export function Home({ onAdd, onScan, onStatement, onEdit, onRecord, onGo }: {
         <section className="card px-5 pt-4 pb-2">
           <div className="flex items-baseline justify-between">
             <h2 className="section-title">Presupuesto del mes</h2>
-            <button className="text-primary" onClick={() => onGo('mes')}>Ver todo</button>
+            <button className="-my-3 min-h-tap px-1 text-primary" onClick={() => onGo('mes')}>Ver todo</button>
           </div>
-          <div className="text-[15px] text-muted">Gastaste {money(summary.expense)} de {money(summary.budget)}</div>
+          {/* Solo lo de las categorías con presupuesto: el resto no tiene con qué compararse */}
+          <div className="text-[15px] text-muted">Gastaste {money(summary.budgetedExpense)} de {money(summary.budget)}</div>
           <BudgetRows rows={budgeted} onSelect={() => onGo('mes')} />
         </section>
       )}
@@ -123,7 +125,7 @@ export function Home({ onAdd, onScan, onStatement, onEdit, onRecord, onGo }: {
       <section className="card px-5 pt-4 pb-2">
         <div className="flex items-baseline justify-between">
           <h2 className="section-title">Últimos movimientos</h2>
-          <button className="text-primary" onClick={() => onGo('movimientos')}>Ver todos</button>
+          <button className="-my-3 min-h-tap px-1 text-primary" onClick={() => onGo('movimientos')}>Ver todos</button>
         </div>
         {recent.length ? (
           <div className="divide-y divide-line">{recent.map((m) => <MovementRow key={m.id} m={m} onClick={() => onEdit(m)} />)}</div>
@@ -181,24 +183,27 @@ function DueRecurring({ onRecord }: { onRecord: (r: Recurring) => void }) {
     <section className="card px-5 pt-4 pb-2">
       <div className="flex items-baseline justify-between">
         <h2 className="section-title">Para anotar este mes</h2>
-        {due.length > 1 && <button className="text-primary" onClick={recordAll}>Anotar todos</button>}
+        {due.length > 1 && <button className="-my-3 min-h-tap px-1 text-primary" onClick={recordAll}>Anotar todos</button>}
       </div>
       <div className="text-[15px] text-muted">Tus gastos fijos, con el monto estimado</div>
       <div className="divide-y divide-line">
         {due.map((r) => {
           const cat = ix.category.get(ix.rubro.get(r.rubroId)?.categoryId ?? '');
           return (
-            <div key={r.id} className="flex items-center gap-3 py-2">
+            // En un teléfono angosto los botones bajan a otro renglón: el monto estimado tiene que leerse entero
+            <div key={r.id} className="flex flex-wrap items-center gap-x-3 py-2">
               <CategoryBubble icon={cat?.icon ?? 'tag'} color={cat?.color ?? OTHER_COLOR} size={36} />
-              <div className="min-w-0 flex-1">
+              <div className="min-w-[7rem] flex-1">
                 <div className="truncate text-lg leading-tight">{name(r)}</div>
-                <div className="truncate text-[15px]">
+                <div className="whitespace-nowrap text-[15px]">
                   <span className="text-muted">el {r.day} · </span>
-                  <span className={`tabular ${r.kind === 'ingreso' ? 'text-ok' : ''}`}>{r.kind === 'ingreso' ? '+ ' : ''}{money(r.amount)}</span>
+                  <span className={`tabular ${r.kind === 'ingreso' ? 'text-ok' : ''}`}>{money(r.amount, { sign: r.kind === 'ingreso' })}</span>
                 </div>
               </div>
-              <button className="min-h-tap px-1 text-[16px] text-muted" onClick={() => skip(r)} aria-label={`Saltar ${name(r)}`}>Saltar</button>
-              <button className="chip text-primary" onClick={() => onRecord(original(r))} aria-label={`Anotar ${name(r)}`}>Anotar</button>
+              <div className="ml-auto flex shrink-0 items-center gap-3">
+                <button className="min-h-tap px-1 text-[16px] text-muted" onClick={() => skip(r)} aria-label={`Saltar ${name(r)}`}>Saltar</button>
+                <button className="chip text-primary" onClick={() => onRecord(original(r))} aria-label={`Anotar ${name(r)}`}>Anotar</button>
+              </div>
             </div>
           );
         })}

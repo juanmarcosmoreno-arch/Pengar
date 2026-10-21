@@ -17,7 +17,7 @@ import {
 } from '../domain/statement';
 import type { Data } from '../domain/types';
 import { readSpreadsheet } from './files';
-import { readImageRows, readImageText, toJpeg } from './ocr';
+import { jpegName, readImageRows, readImageText, toJpeg } from './ocr';
 import { readPdfRows } from './pdf';
 
 export interface StatementDraft {
@@ -52,10 +52,12 @@ function fromRows(rows: StatementRow[]): { txs: StatementTx[]; text: string } {
   return { txs: txs.filter(isSpend).length < FEW ? better(txs, parseStatementText(text)) : txs, text };
 }
 
-export async function readStatement(file: File, data: Data, onProgress: (msg: string) => void): Promise<StatementDraft> {
+/** `password`: la del PDF, si tiene (ver PdfPasswordError) */
+export async function readStatement(file: File, data: Data, onProgress: (msg: string) => void, password?: string): Promise<StatementDraft> {
   let txs: StatementTx[] = [];
   let text = '';
   let stored: Blob = file;
+  let fileName = file.name;
   let mime = file.type || 'application/octet-stream';
   let source: StatementDraft['source'];
 
@@ -63,12 +65,12 @@ export async function readStatement(file: File, data: Data, onProgress: (msg: st
     source = 'pdf';
     mime = 'application/pdf';
     onProgress('Leyendo el estado de cuenta…');
-    ({ txs, text } = fromRows(await readPdfRows(file, onProgress)));
+    ({ txs, text } = fromRows(await readPdfRows(file, onProgress, password)));
   } else if (isSheet(file)) {
     source = 'planilla';
     onProgress('Leyendo la planilla…');
     // De todas las hojas, la que tiene más movimientos
-    for (const sheet of await readSpreadsheet(file, { text: true })) {
+    for (const sheet of await readSpreadsheet(file)) {
       const found = parseStatementTable(sheet.rows);
       if (found.length && better(txs, found) === found) {
         txs = found;
@@ -81,6 +83,7 @@ export async function readStatement(file: File, data: Data, onProgress: (msg: st
     const image = await toJpeg(file);
     stored = image.blob;
     mime = 'image/jpeg';
+    fileName = jpegName(file.name, 'estado-de-cuenta');
     onProgress('Leyendo la foto…');
     const rows = await readImageRows(image.blob);
     if (rows) ({ txs, text } = fromRows(rows));
@@ -90,8 +93,7 @@ export async function readStatement(file: File, data: Data, onProgress: (msg: st
     }
   }
 
-  const fileName = file.name || (source === 'pdf' ? 'estado-de-cuenta.pdf' : 'estado-de-cuenta.jpg');
-  return finish({ file: stored, fileName, mime, txs, source }, text, data);
+  return finish({ file: stored, fileName: fileName || (source === 'pdf' ? 'estado-de-cuenta.pdf' : 'estado-de-cuenta'), mime, txs, source }, text, data);
 }
 
 function finish(draft: Omit<StatementDraft, 'period' | 'card' | 'usdRate'>, text: string, data: Data): StatementDraft {

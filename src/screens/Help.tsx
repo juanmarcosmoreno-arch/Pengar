@@ -9,7 +9,7 @@ const TOPICS: [string, string][] = [
   ['Rubros y categorías', 'Los rubros son lo que elegís al anotar (Feria, UTE, Netflix). Cada uno pertenece a una categoría (Alimentación, Fijos…), que es la que tiene presupuesto y color en las gráficas. Todo se cambia en Más → Categorías y rubros. Las «palabras para las facturas» de cada rubro sirven para reconocerlo solo.'],
   ['Presupuesto', 'En Más → Presupuesto ponés cuánto pensás gastar por mes en cada categoría: un monto fijo o un porcentaje de lo que entra (como un diezmo del 10%). En Estadísticas → Mes ves lo real contra lo presupuestado.'],
   ['Estadísticas', '«Mes»: ingresos, gastos, presupuesto y el detalle de un mes. «Tendencias»: cómo cambian tus ingresos, tu ahorro y tus gastos en el tiempo, la distribución por categoría o por rubro, los promedios y los rubros que más pesan. «Incluir ahorro» suma o saca la categoría de ahorro de los gastos.'],
-  ['Tu planilla', 'En Más → Ajustes → Importar podés traer una planilla de Excel: con un mes por columna (como presupuesto.xlsx) o con un movimiento por fila. Los meses importados aparecen como «totales de la planilla».'],
+  ['Tu planilla', 'En Más → Ajustes → Importar podés traer una planilla de Excel: con un mes por columna (como presupuesto.xlsx) o con un movimiento por fila. Los meses importados aparecen como «totales de la planilla». Si la volvés a importar con «Sumar a lo que ya tengo» (por ejemplo, el mes siguiente), lo que ya estaba no se duplica: los meses que cambiaron se actualizan.'],
   ['Respaldo', 'Los datos viven solo en tu teléfono. En Ajustes podés exportar los movimientos a Excel o guardar un respaldo completo (con las facturas) en Archivos o iCloud Drive.'],
 ];
 

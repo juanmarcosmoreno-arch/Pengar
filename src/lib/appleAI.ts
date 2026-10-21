@@ -5,7 +5,8 @@
 import { registerPlugin } from '@capacitor/core';
 import { isNative, isPreview } from './platform';
 
-export type AppleAIStatus = 'available' | 'notEnabled' | 'notEligible' | 'notReady' | 'unsupported';
+/** `sdk`: la app se compiló sin el SDK de iOS 26 (Xcode 26), así que no lo trae aunque el teléfono lo tenga */
+export type AppleAIStatus = 'available' | 'notEnabled' | 'notEligible' | 'notReady' | 'unsupported' | 'sdk';
 
 interface PengarAIPlugin {
   availability(): Promise<{ appleIntelligence: AppleAIStatus }>;
@@ -14,7 +15,7 @@ interface PengarAIPlugin {
 
 const PengarAI = registerPlugin<PengarAIPlugin>('PengarAI');
 
-const STATUSES: AppleAIStatus[] = ['available', 'notEnabled', 'notEligible', 'notReady', 'unsupported'];
+const STATUSES: AppleAIStatus[] = ['available', 'notEnabled', 'notEligible', 'notReady', 'unsupported', 'sdk'];
 let cached: AppleAIStatus | null = null;
 
 /**

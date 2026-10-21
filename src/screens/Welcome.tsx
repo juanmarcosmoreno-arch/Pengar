@@ -7,7 +7,7 @@ import { useStore } from '../store/store';
 
 /** Primera vez: bienvenida, nombre y cómo empezar (planilla propia o categorías sugeridas) */
 export function Welcome() {
-  const { startWithTemplate, startWithExample, replaceAll } = useStore();
+  const { startWithTemplate, startWithExample, restoreBackup } = useStore();
   const [step, setStep] = useState<'hola' | 'empezar'>('hola');
   const [name, setName] = useState('');
   const [error, setError] = useState('');
@@ -51,11 +51,18 @@ export function Welcome() {
             const f = e.target.files?.[0];
             e.target.value = '';
             if (!f) return;
+            let backup;
             try {
-              const d = await readBackup(f);
-              replaceAll({ ...d, settings: { ...d.settings, onboarded: true } });
+              backup = await readBackup(f);
             } catch (err) {
               setError(err instanceof Error ? err.message : 'No se pudo leer el respaldo.');
+              return;
+            }
+            try {
+              await restoreBackup(backup, { onboarded: true });
+            } catch (err) {
+              console.error(err);
+              setError('No se pudo guardar el respaldo en el teléfono.');
             }
           }}
         />

@@ -24,8 +24,9 @@ describe('montos', () => {
     expect(parseAmount('abc')).toBeNull();
   });
   it('formatea con miles', () => {
-    expect(formatMoney(28450)).toBe('$ 28.450');
-    expect(formatMoney(-1240)).toBe('- $ 1.240');
+    // Con espacios que no se cortan: el «$» no queda solo al final de un renglón
+    expect(formatMoney(28450)).toBe('$\u00a028.450');
+    expect(formatMoney(-1240)).toBe('-\u00a0$\u00a01.240');
   });
 });
 

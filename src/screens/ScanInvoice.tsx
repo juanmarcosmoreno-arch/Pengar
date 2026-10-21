@@ -1,5 +1,6 @@
 import { Camera, FileText, ImageIcon, Plus, Sparkles, Trash2 } from 'lucide-react';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useId, useMemo, useRef, useState } from 'react';
+import { ConfirmSheet } from '../components/ConfirmSheet';
 import { RubroPicker } from '../components/RubroPicker';
 import { PageHeader, Sheet } from '../components/Sheet';
 import { Suricata } from '../components/Suricata';
@@ -9,6 +10,7 @@ import { suggestRubro } from '../domain/classify';
 import { today } from '../domain/dates';
 import { distributeTotal } from '../domain/invoice';
 import { parseAmount, round2 } from '../domain/money';
+import { PdfPasswordError } from '../lib/pdf';
 import { isPreview } from '../lib/platform';
 import { readInvoice, type DraftItem, type InvoiceDraft } from '../lib/readInvoice';
 import { useMoney } from '../lib/useMoney';
@@ -33,19 +35,29 @@ export function ScanInvoice({ onClose }: { onClose: () => void }) {
   const [draft, setDraft] = useState<InvoiceDraft | null>(null);
   const [progress, setProgress] = useState('');
   const [error, setError] = useState('');
+  // Un PDF con contraseña espera que la escriban; y si hay cambios en la revisión, salir pide confirmar
+  const [locked, setLocked] = useState<{ file: File; wrong: boolean } | null>(null);
+  const [password, setPassword] = useState('');
+  const dirty = useRef(false);
+  const [leaving, setLeaving] = useState<'cerrar' | 'otra' | null>(null);
+  const passwordId = useId();
   const camera = useRef<HTMLInputElement>(null);
   const gallery = useRef<HTMLInputElement>(null);
   const pdf = useRef<HTMLInputElement>(null);
 
-  const onFile = async (file: File | undefined) => {
+  const onFile = async (file: File | undefined, pass?: string) => {
     if (!file) return;
     setError('');
+    if (!pass) setLocked(null);
     setProgress('Leyendo la factura…');
     try {
-      setDraft(await readInvoice(file, data, setProgress));
+      setDraft(await readInvoice(file, data, setProgress, pass));
+      setLocked(null);
+      setPassword('');
     } catch (e) {
       console.error(e);
-      setError(isPreview
+      if (e instanceof PdfPasswordError) setLocked({ file, wrong: e.wrong });
+      else setError(isPreview
         ? 'No pude leer el PDF. En la vista web se leen los PDF con texto (los escaneados, en el iPhone). Probá con otro o cargá el gasto a mano.'
         : 'No pude leer el archivo. Probá con otra foto (bien derecha y con luz) o cargá el gasto a mano.');
     } finally {
@@ -64,9 +76,16 @@ export function ScanInvoice({ onClose }: { onClose: () => void }) {
     />
   );
 
+  const doLeave = (to: 'cerrar' | 'otra') => {
+    dirty.current = false;
+    if (to === 'cerrar') onClose();
+    else setDraft(null);
+  };
+  const leave = (to: 'cerrar' | 'otra') => (draft && dirty.current ? setLeaving(to) : doLeave(to));
+
   return (
     <div className="fixed inset-0 z-30 overflow-y-auto bg-bg">
-      <PageHeader title={draft ? 'Revisar factura' : 'Escanear factura'} onBack={onClose} />
+      <PageHeader title={draft ? 'Revisar factura' : 'Escanear factura'} onBack={() => leave('cerrar')} />
       {input(camera, 'image/*', true)}
       {input(gallery, 'image/*')}
       {input(pdf, 'application/pdf,.pdf')}
@@ -77,10 +96,24 @@ export function ScanInvoice({ onClose }: { onClose: () => void }) {
           <div className="h-6 w-6 animate-spin rounded-full border-[3px] border-soft border-t-primary" />
         </div>
       ) : draft ? (
-        <Review draft={draft} onDone={onClose} onRetry={() => setDraft(null)} />
+        <Review draft={draft} onDone={onClose} onRetry={() => leave('otra')} onDirty={(d) => { dirty.current = d; }} />
       ) : (
         <div className="space-y-3 px-4 pb-10">
           <div className="flex justify-center"><Suricata pose="lista" size={150} /></div>
+          {locked && (
+            <form className="card space-y-3 p-4" onSubmit={(e) => { e.preventDefault(); void onFile(locked.file, password); }}>
+              <p className="text-xl">Este PDF tiene contraseña</p>
+              <p className="text-muted">{locked.wrong ? 'La contraseña no es correcta: probá de nuevo.' : 'Escribila para abrirlo; no se guarda.'}</p>
+              <div>
+                <label className="label" htmlFor={passwordId}>Contraseña del PDF</label>
+                <input id={passwordId} className="field" type="password" autoComplete="off" autoFocus value={password} onChange={(e) => setPassword(e.target.value)} />
+              </div>
+              <div className="flex gap-2">
+                <button type="button" className="btn-ghost" onClick={() => { setLocked(null); setPassword(''); }}>Cancelar</button>
+                <button className="btn-primary flex-1" disabled={!password}>Abrir</button>
+              </div>
+            </form>
+          )}
           <p className="px-1 text-lg text-muted">
             Sacale una foto a un ticket o subí el PDF de una factura. Pengar lee el comercio, la fecha, el total y cada renglón, y le pone el rubro.
           </p>
@@ -105,14 +138,28 @@ export function ScanInvoice({ onClose }: { onClose: () => void }) {
           )}
         </div>
       )}
+      {leaving && (
+        <ConfirmSheet
+          title="¿Salir sin guardar?"
+          message="Se pierde lo que cambiaste en esta factura."
+          confirmLabel="Salir"
+          danger
+          onConfirm={() => doLeave(leaving)}
+          onClose={() => setLeaving(null)}
+        />
+      )}
     </div>
   );
 }
 
-function Review({ draft, onDone, onRetry }: { draft: InvoiceDraft; onDone: () => void; onRetry: () => void }) {
+function Review({ draft, onDone, onRetry, onDirty }: { draft: InvoiceDraft; onDone: () => void; onRetry: () => void; onDirty: (dirty: boolean) => void }) {
   const { data, ix, saveInvoice } = useStore();
   const { money, symbol } = useMoney();
   const toast = useToast();
+  const id = useId();
+  // Algo que cambió la persona: salir sin guardar lo pierde
+  const [touched, setTouched] = useState(false);
+  useEffect(() => onDirty(touched), [touched]); // eslint-disable-line react-hooks/exhaustive-deps
   const [merchant, setMerchant] = useState(draft.merchant);
   const [date, setDate] = useState(draft.date ?? today());
   const itemsSum = draft.items.reduce((s, i) => s + i.amount, 0);
@@ -156,7 +203,7 @@ function Review({ draft, onDone, onRetry }: { draft: InvoiceDraft; onDone: () =>
   const save = async () => {
     setSaving(true);
     try {
-      const n = await saveInvoice({
+      const { count: n, fileKept } = await saveInvoice({
         file: draft.file,
         fileName: draft.fileName,
         mime: draft.mime,
@@ -167,14 +214,22 @@ function Review({ draft, onDone, onRetry }: { draft: InvoiceDraft; onDone: () =>
         mode,
         rubroId: singleRubro,
       });
-      toast(n === 1 ? 'Factura guardada' : `Factura guardada en ${n} rubros`);
+      if (fileKept) toast(n === 1 ? 'Factura guardada' : `Factura guardada en ${n} rubros`);
+      else toast(`${n === 1 ? 'Gasto guardado' : `${n} gastos guardados`}; el archivo no se pudo guardar en este navegador`);
       onDone();
+    } catch (e) {
+      // El archivo no se pudo guardar (poco lugar en el teléfono): no se guarda nada y se puede probar de nuevo
+      console.error(e);
+      toast('No se pudo guardar en el teléfono. Probá de nuevo.');
     } finally {
       setSaving(false);
     }
   };
 
-  const setRow = (key: number, patch: Partial<Row>) => setRows((rs) => rs.map((r) => (r.key === key ? { ...r, ...patch } : r)));
+  const setRow = (key: number, patch: Partial<Row>) => {
+    setTouched(true);
+    setRows((rs) => rs.map((r) => (r.key === key ? { ...r, ...patch } : r)));
+  };
 
   return (
     <div className="space-y-4 px-4 pb-[calc(env(safe-area-inset-bottom)+110px)]">
@@ -187,47 +242,55 @@ function Review({ draft, onDone, onRetry }: { draft: InvoiceDraft; onDone: () =>
         <div className="min-w-0 flex-1 text-[15px] text-muted">
           <div className="truncate">{draft.fileName}</div>
           <div>{draft.source === 'ia' ? 'Leída con Claude' : isPreview ? 'Leída en el navegador' : 'Leída en el teléfono'} · revisá que esté bien</div>
-          <button className="text-primary" onClick={onRetry}>Probar con otra</button>
+          <button className="-ml-1 min-h-tap px-1 text-primary" onClick={onRetry}>Probar con otra</button>
         </div>
       </div>
       {draft.notice && <p className="text-[15px] text-muted">{draft.notice}</p>}
 
       <div className="card space-y-3 p-4">
         <div>
-          <label className="label">Comercio</label>
-          <input className="field" value={merchant} onChange={(e) => setMerchant(e.target.value)} placeholder="¿Dónde fue?" />
+          <label className="label" htmlFor={`${id}-comercio`}>Comercio</label>
+          <input id={`${id}-comercio`} className="field" value={merchant} onChange={(e) => { setTouched(true); setMerchant(e.target.value); }} placeholder="¿Dónde fue?" />
         </div>
         <div className="grid grid-cols-2 gap-3">
           <div>
-            <label className="label">Fecha</label>
-            <input type="date" className="field" value={date} onChange={(e) => setDate(e.target.value)} />
+            <label className="label" htmlFor={`${id}-fecha`}>Fecha</label>
+            <input id={`${id}-fecha`} type="date" className="field" value={date} onChange={(e) => { setTouched(true); setDate(e.target.value); }} />
           </div>
           <div>
-            <label className="label">Total ({symbol})</label>
-            <input className="field text-right tabular" inputMode="decimal" value={totalText} onChange={(e) => setTotalText(e.target.value)} />
+            <label className="label" htmlFor={`${id}-total`}>Total ({symbol})</label>
+            <input id={`${id}-total`} className="field text-right tabular" inputMode="decimal" value={totalText} onChange={(e) => { setTouched(true); setTotalText(e.target.value); }} />
           </div>
         </div>
       </div>
 
-      <Segmented value={mode} onChange={setMode} options={[{ id: 'split', label: 'Separar por rubro' }, { id: 'single', label: 'Un solo gasto' }]} />
+      <Segmented value={mode} onChange={(m) => { setTouched(true); setMode(m); }} options={[{ id: 'split', label: 'Separar por rubro' }, { id: 'single', label: 'Un solo gasto' }]} />
 
       {mode === 'single' ? (
         <div className="card p-4">
           <div className="mb-2 text-xl">¿De qué rubro es?</div>
-          <RubroPicker kind="gasto" value={singleRubro} onChange={setSingleRubro} />
+          <RubroPicker kind="gasto" value={singleRubro} onChange={(r) => { setTouched(true); setSingleRubro(r); }} />
         </div>
       ) : (
         <>
           <div className="card divide-y divide-line px-4">
-            {rows.map((r) => (
+            {rows.map((r, n) => (
               <div key={r.key} className="space-y-2 py-3">
                 <div className="flex gap-2">
-                  <input className="field min-h-[40px] flex-1 px-3 text-base" value={r.description} onChange={(e) => setRow(r.key, { description: e.target.value })} />
+                  <input
+                    className="field min-h-[40px] flex-1 px-3 text-base"
+                    value={r.description}
+                    onChange={(e) => setRow(r.key, { description: e.target.value })}
+                    placeholder="Qué es"
+                    aria-label={`Descripción del renglón ${n + 1}`}
+                  />
                   <input
                     className="field min-h-[40px] w-28 px-3 text-right text-base tabular"
                     inputMode="decimal"
                     value={r.amountText}
                     onChange={(e) => setRow(r.key, { amountText: e.target.value })}
+                    placeholder="0"
+                    aria-label={`Monto del renglón ${n + 1}`}
                   />
                 </div>
                 <div className="flex items-center gap-2">
@@ -241,14 +304,14 @@ function Review({ draft, onDone, onRetry }: { draft: InvoiceDraft; onDone: () =>
                       </div>
                     )}
                   </div>
-                  <button className="ml-auto flex min-h-tap min-w-tap items-center justify-center text-muted" onClick={() => setRows((rs) => rs.filter((x) => x.key !== r.key))} aria-label="Quitar renglón">
+                  <button className="ml-auto flex min-h-tap min-w-tap items-center justify-center text-muted" onClick={() => { setTouched(true); setRows((rs) => rs.filter((x) => x.key !== r.key)); }} aria-label={`Quitar el renglón ${n + 1}`}>
                     <Trash2 size={18} />
                   </button>
                 </div>
               </div>
             ))}
             {!rows.length && <p className="py-4 text-muted">No encontré renglones. Agregalos o guardá un solo gasto.</p>}
-            <button className="flex w-full items-center gap-2 py-3 text-primary" onClick={() => setRows((rs) => [...rs, toRow({ description: '', amount: 0 })])}>
+            <button className="flex w-full items-center gap-2 py-3 text-primary" onClick={() => { setTouched(true); setRows((rs) => [...rs, toRow({ description: '', amount: 0 })]); }}>
               <Plus size={18} /> Agregar renglón
             </button>
           </div>
@@ -280,6 +343,7 @@ function Review({ draft, onDone, onRetry }: { draft: InvoiceDraft; onDone: () =>
             kind="gasto"
             value={picking === 'single' ? singleRubro : rows.find((r) => r.key === picking)?.rubroId}
             onChange={(id) => {
+              setTouched(true);
               if (picking === 'single') setSingleRubro(id);
               else setRow(picking, { rubroId: id, reason: undefined });
               setPicking(null);

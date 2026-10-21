@@ -1,5 +1,5 @@
 import { Plus } from 'lucide-react';
-import { useMemo, useState } from 'react';
+import { useId, useMemo, useState } from 'react';
 import { CategoryBubble } from '../components/Icon';
 import { RubroPicker } from '../components/RubroPicker';
 import { PageHeader, Sheet } from '../components/Sheet';
@@ -10,6 +10,7 @@ import { today } from '../domain/dates';
 import { parseAmount } from '../domain/money';
 import { newRecurring, recurringOf, suggestRecurring } from '../domain/recurring';
 import { OTHER_COLOR } from '../domain/template';
+import { plural } from '../domain/text';
 import type { Kind, Recurring } from '../domain/types';
 import { useMoney } from '../lib/useMoney';
 import { useStore } from '../store/store';
@@ -22,7 +23,7 @@ function useRubro() {
   return (rubroId: string) => {
     const rubro = ix.rubro.get(rubroId);
     const cat = ix.category.get(rubro?.categoryId ?? '');
-    return { name: rubro?.name ?? 'Sin rubro', icon: cat?.icon ?? 'tag', color: cat?.color ?? OTHER_COLOR };
+    return { name: rubro?.name ?? 'Sin rubro', icon: cat?.icon ?? 'tag', color: cat?.color ?? OTHER_COLOR, archived: !!rubro?.archived };
   };
 }
 
@@ -43,7 +44,10 @@ export function RecurringScreen({ onBack }: { onBack: () => void }) {
     const items = suggested.map((s) => newRecurring(s, now));
     const ids = new Set(items.map((r) => r.id));
     add(items);
-    toast(`Agregaste ${items.length} gastos fijos`, { label: 'Deshacer', run: () => update((d) => ({ ...d, recurring: d.recurring.filter((r) => !ids.has(r.id)) })) });
+    // Entre los sugeridos puede haber ingresos (el sueldo)
+    const incomes = items.filter((r) => r.kind === 'ingreso').length;
+    const text = incomes ? `${plural(items.length - incomes, 'gasto', 'gastos')} y ${plural(incomes, 'ingreso', 'ingresos')} fijos` : plural(items.length, 'gasto fijo', 'gastos fijos');
+    toast(`Agregaste ${text}`, { label: 'Deshacer', run: () => update((d) => ({ ...d, recurring: d.recurring.filter((r) => !ids.has(r.id)) })) });
   };
 
   return (
@@ -79,12 +83,13 @@ export function RecurringScreen({ onBack }: { onBack: () => void }) {
                 {items.map((r) => {
                   const rb = rubroOf(r.rubroId);
                   return (
-                    <button key={r.id} className={`flex w-full items-center gap-3 py-2.5 text-left ${r.paused ? 'opacity-60' : ''}`} onClick={() => setEdit(r)}>
-                      <CategoryBubble icon={rb.icon} color={rb.color} size={44} />
+                    <button key={r.id} className="flex w-full items-center gap-3 py-2.5 text-left" onClick={() => setEdit(r)}>
+                      {/* En pausa se atenúa solo el ícono: el texto tiene que seguir leyéndose */}
+                      <span className={r.paused || rb.archived ? 'opacity-50' : ''}><CategoryBubble icon={rb.icon} color={rb.color} size={44} /></span>
                       <div className="min-w-0 flex-1">
                         <div className="truncate text-lg leading-tight">{rb.name}</div>
                         <div className="truncate text-[15px] text-muted">
-                          todos los {r.day}{r.paused ? ' · En pausa' : ''}{r.note ? ` · ${r.note}` : ''}
+                          todos los {r.day}{r.paused ? ' · En pausa' : ''}{rb.archived ? ' · Rubro archivado: no se pide' : ''}{r.note ? ` · ${r.note}` : ''}
                         </div>
                       </div>
                       <div className={`shrink-0 text-lg tabular ${kind === 'ingreso' ? 'text-ok' : ''}`}>{money(r.amount)}</div>
@@ -137,10 +142,11 @@ export function RecurringScreen({ onBack }: { onBack: () => void }) {
 }
 
 function DayField({ value, onChange }: { value: number; onChange: (day: number) => void }) {
+  const id = useId();
   return (
     <div>
-      <label className="label">Día del mes</label>
-      <select className="field" value={value} onChange={(e) => onChange(Number(e.target.value))} aria-label="Día del mes">
+      <label className="label" htmlFor={id}>Día del mes</label>
+      <select id={id} className="field" value={value} onChange={(e) => onChange(Number(e.target.value))}>
         {DAYS.map((d) => <option key={d} value={d}>{d}</option>)}
       </select>
     </div>
@@ -149,10 +155,11 @@ function DayField({ value, onChange }: { value: number; onChange: (day: number) 
 
 function AmountField({ value, onChange, autoFocus }: { value: string; onChange: (v: string) => void; autoFocus?: boolean }) {
   const { symbol } = useMoney();
+  const id = useId();
   return (
     <div>
-      <label className="label">Monto estimado ({symbol})</label>
-      <input className="field tabular" inputMode="decimal" value={value} onChange={(e) => onChange(e.target.value)} placeholder="0" autoFocus={autoFocus} aria-label="Monto estimado" />
+      <label className="label" htmlFor={id}>Monto estimado ({symbol})</label>
+      <input id={id} className="field tabular" inputMode="decimal" value={value} onChange={(e) => onChange(e.target.value)} placeholder="0" autoFocus={autoFocus} />
     </div>
   );
 }
@@ -167,6 +174,7 @@ function EditRecurring({ value, onClose }: { value: Recurring; onClose: () => vo
   const [note, setNote] = useState(value.note ?? '');
   const [paused, setPaused] = useState(!!value.paused);
   const [confirming, setConfirming] = useState(false);
+  const noteId = useId();
   const amount = parseAmount(amountText);
   const valid = amount != null && amount > 0;
 
@@ -212,13 +220,14 @@ function EditRecurring({ value, onClose }: { value: Recurring; onClose: () => vo
           <CategoryBubble icon={rb.icon} color={rb.color} size={44} />
           <span className="text-[16px] text-muted">{value.kind === 'gasto' ? 'Gasto' : 'Ingreso'} de todos los meses</span>
         </div>
+        {rb.archived && <p className="text-[15px] text-muted">Su rubro está archivado: no te lo pide en Inicio hasta que lo vuelvas a activar en Categorías y rubros.</p>}
         <div className="grid grid-cols-2 gap-3">
           <AmountField value={amountText} onChange={setAmountText} />
           <DayField value={day} onChange={setDay} />
         </div>
         <div>
-          <label className="label">Nota</label>
-          <input className="field" value={note} onChange={(e) => setNote(e.target.value)} placeholder="Opcional" />
+          <label className="label" htmlFor={noteId}>Nota</label>
+          <input id={noteId} className="field" value={note} onChange={(e) => setNote(e.target.value)} placeholder="Opcional" />
         </div>
         <div>
           <Toggle checked={paused} onChange={setPaused} label="En pausa" />
@@ -252,7 +261,7 @@ function AddRecurring({ onClose }: { onClose: () => void }) {
           disabled={!valid}
           onClick={() => {
             upsertRecurring(existing ? { ...existing, amount: amount!, day } : newRecurring({ rubroId: rubroId!, kind, amount: amount!, day }, today()));
-            toast(existing ? 'Gasto fijo actualizado' : 'Gasto fijo agregado');
+            toast(`${kind === 'gasto' ? 'Gasto' : 'Ingreso'} fijo ${existing ? 'actualizado' : 'agregado'}`);
             onClose();
           }}
         >

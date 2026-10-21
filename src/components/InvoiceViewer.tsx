@@ -5,7 +5,9 @@ import { dayMonth } from '../domain/statementReview';
 import type { Invoice } from '../domain/types';
 import { loadFile } from '../lib/db';
 import { NO_DOWNLOADS, saveOrShare } from '../lib/files';
-import { renderPdfPages } from '../lib/pdf';
+import { jpegName } from '../lib/ocr';
+import { PdfPasswordError, renderPdfPages } from '../lib/pdf';
+import { isPreview } from '../lib/platform';
 import { useMoney } from '../lib/useMoney';
 import { useStore } from '../store/store';
 import { Sheet } from './Sheet';
@@ -32,7 +34,7 @@ export function InvoiceViewer({ invoice, onClose }: { invoice: Invoice; onClose:
   const toast = useToast();
   const [file, setFile] = useState<Blob | null>(null);
   const [imageUrl, setImageUrl] = useState<string>();
-  const [status, setStatus] = useState<'cargando' | 'listo' | 'error'>('cargando');
+  const [status, setStatus] = useState<'cargando' | 'listo' | 'error' | 'clave'>('cargando');
   const [hidden, setHidden] = useState(0);
   const pagesBox = useRef<HTMLDivElement>(null);
   const isPdf = invoice.mime === 'application/pdf' || /\.pdf$/i.test(invoice.fileName);
@@ -61,7 +63,7 @@ export function InvoiceViewer({ invoice, onClose }: { invoice: Invoice; onClose:
       setStatus('listo');
     })().catch((e) => {
       console.error(e);
-      if (alive) setStatus('error');
+      if (alive) setStatus(e instanceof PdfPasswordError ? 'clave' : 'error');
     });
     return () => {
       alive = false;
@@ -69,15 +71,19 @@ export function InvoiceViewer({ invoice, onClose }: { invoice: Invoice; onClose:
     };
   }, [invoice.id, isPdf, isImage]);
 
+  // Las fotos se guardan como JPEG: si el nombre es otro («IMG_1234.PNG», de antes), se comparte como .jpg
+  const shareName = invoice.mime === 'image/jpeg' && !/\.jpe?g$/i.test(invoice.fileName) ? jpegName(invoice.fileName, 'factura') : invoice.fileName;
   const share = async () => {
     if (!file) return;
     try {
-      if (!(await saveOrShare(file, invoice.fileName))) toast(NO_DOWNLOADS);
+      if (!(await saveOrShare(file, shareName))) toast(NO_DOWNLOADS);
     } catch (e) {
-      // En el iPhone, cerrar «Compartir» sin elegir nada también llega como error
-      if (!/cancel/i.test(String(e))) toast('No se pudo compartir el archivo');
+      console.error(e);
+      toast('No se pudo compartir el archivo');
     }
   };
+  // En la vista previa no se descarga nada: el visor no manda a «Compartir o guardar»
+  const where = isPreview ? 'en este navegador' : 'en este teléfono';
 
   const details = [invoice.date && shortDate(invoice.date), invoice.total != null && money(invoice.total)].filter(Boolean);
   // La planilla o el texto: lo que se guardó, sin esperar al archivo
@@ -106,18 +112,28 @@ export function InvoiceViewer({ invoice, onClose }: { invoice: Invoice; onClose:
             Abriendo {noun}…
           </div>
         )}
-        {status === 'error' && !table && (
+        {(status === 'error' || status === 'clave') && !table && (
           <div className="flex flex-col items-center gap-2 px-4 py-12 text-center">
             <Suricata pose="cara-preocupado" size={90} />
-            <p className="text-xl">No se pudo abrir {noun}</p>
+            <p className="text-xl">{status === 'clave' ? 'Este PDF tiene contraseña' : `No se pudo abrir ${noun}`}</p>
             <p className="text-muted">
-              {file ? 'El archivo está guardado, pero no se puede mostrar acá. Probá con «Compartir o guardar».' : 'No se encontró el archivo en este teléfono.'}
+              {!file
+                ? `No se encontró el archivo ${where}.`
+                : isPreview
+                  ? 'El archivo está guardado, pero no se puede mostrar acá. En la app de iPhone lo podés compartir o guardar.'
+                  : status === 'clave'
+                    ? 'Para verlo, abrilo con «Compartir o guardar» (te pide la contraseña).'
+                    : 'El archivo está guardado, pero no se puede mostrar acá. Probá con «Compartir o guardar».'}
             </p>
           </div>
         )}
 
         {isPdf ? (
-          <div ref={pagesBox} className={`space-y-3 ${status === 'error' ? 'hidden' : ''}`} aria-label={`Páginas de ${noun}`} />
+          <div
+            ref={pagesBox}
+            className={`space-y-3 ${status === 'error' || status === 'clave' ? 'hidden' : ''}`}
+            aria-label={invoice.kind === 'estado' ? 'Páginas del estado de cuenta' : 'Páginas de la factura'}
+          />
         ) : isImage ? (
           imageUrl && status !== 'error' && <img src={imageUrl} alt={noun} className="w-full rounded-xl border border-line" onError={() => setStatus('error')} />
         ) : (
@@ -136,7 +152,10 @@ export function InvoiceViewer({ invoice, onClose }: { invoice: Invoice; onClose:
           </div>
         )}
         {hidden > 0 && status === 'listo' && (
-          <p className="text-center text-[15px] text-muted">Tiene {hidden} página{hidden === 1 ? '' : 's'} más. Para verla{hidden === 1 ? '' : 's'}, usá «Compartir o guardar».</p>
+          <p className="text-center text-[15px] text-muted">
+            Tiene {hidden} página{hidden === 1 ? '' : 's'} más.{' '}
+            {isPreview ? `En la app de iPhone se ve${hidden === 1 ? '' : 'n'} con «Compartir o guardar».` : `Para verla${hidden === 1 ? '' : 's'}, usá «Compartir o guardar».`}
+          </p>
         )}
       </div>
     </Sheet>

@@ -58,7 +58,7 @@ const TEMPLATE: TemplateCategory[] = [
     ['Farmacia', ['farmacia', 'farmashop', 'san roque', 'medicamento']],
   ] },
   { code: 'E', name: 'Educación', icon: 'm:educacion', rubros: [
-    ['Colegio y cursos', ['colegio', 'escuela', 'liceo', 'universidad', 'curso', 'cuota']],
+    ['Colegio y cursos', ['colegio', 'escuela', 'liceo', 'universidad', 'curso']],
     ['Librería', ['libreria', 'papeleria', 'cuaderno']],
     ['Club y deportes', ['club', 'gimnasio', 'gym']],
   ] },
@@ -79,7 +79,7 @@ const TEMPLATE: TemplateCategory[] = [
     ['Streaming', ['netflix', 'spotify', 'hbo', 'max', 'disney', 'prime video', 'youtube', 'apple']],
   ] },
   { code: 'X', name: 'Salidas y extras', icon: 'm:salidas', rubros: [
-    ['Comer afuera', ['restaurante', 'restaurant', 'parrilla', 'pizzeria', 'cafe', 'bar ', 'pedidosya', 'rappi']],
+    ['Comer afuera', ['restaurante', 'restaurant', 'parrilla', 'pizzeria', 'cafe', 'cafeteria', 'bar ', 'pedidosya', 'rappi']],
     ['Paseos y viajes', ['hotel', 'pasaje', 'booking', 'airbnb', 'cine', 'entrada']],
     ['Regalos', ['regalo', 'jugueteria']],
   ] },
@@ -130,22 +130,28 @@ export function templateData(): Pick<Data, 'categories' | 'rubros'> {
   return { categories, rubros };
 }
 
+/** Versión de los datos: la 2 ya pasó los íconos de línea a las ilustraciones (los que se eligen después quedan) */
+export const DATA_VERSION = 2;
+
 export function emptyData(): Data {
-  return { version: 1, categories: [], rubros: [], movements: [], invoices: [], goals: [], recurring: [], settings: defaultSettings() };
+  return { version: DATA_VERSION, categories: [], rubros: [], movements: [], invoices: [], goals: [], recurring: [], settings: defaultSettings() };
 }
 
 /** Completa lo que falte en datos de una versión anterior (lo guardado en el teléfono o un respaldo viejo) */
-export function normalizeData(d: Partial<Data>): Data {
+export function normalizeData(d: Partial<Omit<Data, 'version'>> & { version?: number }): Data {
   const base = emptyData();
-  // Las categorías con íconos de línea pasan a las ilustraciones del suricata
-  const categories = (d.categories ?? []).map((c) => (LEGACY_ICON_TO_ART[c.icon] ? { ...c, icon: LEGACY_ICON_TO_ART[c.icon] } : c));
+  const old = (d.version ?? 1) < 2;
+  // Una sola vez: las categorías con íconos de línea pasan a las ilustraciones del suricata, y «Colegio y cursos» de la
+  // plantilla deja la palabra «cuota» (agarraba todas las compras en cuotas de la tarjeta)
+  const categories = (d.categories ?? []).map((c) => (old && LEGACY_ICON_TO_ART[c.icon] ? { ...c, icon: LEGACY_ICON_TO_ART[c.icon] } : c));
+  const rubros = (d.rubros ?? []).map((r) => (old && r.name === 'Colegio y cursos' && r.keywords.includes('cuota') ? { ...r, keywords: r.keywords.filter((k) => k !== 'cuota') } : r));
   const s = d.settings;
   return {
     ...base,
     ...d,
-    version: 1,
+    version: DATA_VERSION,
     categories,
-    rubros: d.rubros ?? [],
+    rubros,
     movements: d.movements ?? [],
     // `kind` desconocido (de una versión futura o un respaldo roto) cuenta como factura
     invoices: (d.invoices ?? []).map((i) => (i.kind && i.kind !== 'factura' && i.kind !== 'estado' ? { ...i, kind: undefined } : i)),

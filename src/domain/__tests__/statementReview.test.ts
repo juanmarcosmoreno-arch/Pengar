@@ -79,9 +79,9 @@ describe('restar créditos', () => {
 
 describe('nota del gasto', () => {
   it('tarjeta, cuota y la cuenta en dólares', () => {
-    expect(statementNote(tx('2026-10-01', 12.99, 'NETFLIX.COM', { currency: 'usd' }), 'OCA', 40)).toBe('OCA · U$S 12,99 × 40');
+    expect(statementNote(tx('2026-10-01', 12.99, 'NETFLIX.COM', { currency: 'usd' }), 'OCA', 40)).toBe('OCA · U$S\u00a012,99 × 40');
     expect(statementNote(tx('2026-10-01', 1500, 'FARMASHOP', { installment: '2/3' }), 'Visa BROU', 40.1)).toBe('Visa BROU · cuota 2/3');
-    expect(statementNote(tx('2026-10-01', 4.99, 'STEAM', { currency: 'usd' }), undefined, 40.25)).toBe('U$S 4,99 × 40,25');
+    expect(statementNote(tx('2026-10-01', 4.99, 'STEAM', { currency: 'usd' }), undefined, 40.25)).toBe('U$S\u00a04,99 × 40,25');
     expect(statementNote(tx('2026-10-01', 100, 'DISCO'), undefined, 40)).toBeUndefined();
     expect(dayMonth('2026-08-06')).toBe('6/8');
   });

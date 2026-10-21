@@ -29,6 +29,9 @@ function loadImage(file: Blob): Promise<HTMLImageElement> {
   });
 }
 
+/** Nombre de una foto guardada como JPEG: con su extensión («IMG_1234.PNG» → «IMG_1234.jpg») */
+export const jpegName = (name: string, fallback: string) => `${(name || fallback).replace(/\.[^./]+$/, '')}.jpg`;
+
 /** JPEG reducido (lado mayor hasta `max` px) y ya orientado */
 export async function toJpeg(file: Blob, max = 2800): Promise<{ base64: string; blob: Blob; width: number; height: number }> {
   const img = await loadImage(file);

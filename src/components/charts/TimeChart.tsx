@@ -16,11 +16,21 @@ export interface TimeRow {
   values: Record<string, number>;
 }
 
+/** Ancho de una etiqueta del eje («Set 26» a 12 px), para que no se pisen */
+const LABEL_W = 40;
+
 /**
  * Evolución mes a mes. `stacked`: áreas apiladas (gastos por categoría en el tiempo).
  * Si no: líneas con un lavado suave debajo (ingresos y ahorro). Tocar o deslizar muestra el detalle del mes.
+ * Si todo está en cero, en lugar del gráfico va `emptyText`.
  */
-export function TimeChart({ series, rows, stacked = false, height = 220 }: { series: Series[]; rows: TimeRow[]; stacked?: boolean; height?: number }) {
+export function TimeChart({ series, rows, stacked = false, height = 220, emptyText = 'Todavía no hay datos en este período.' }: {
+  series: Series[];
+  rows: TimeRow[];
+  stacked?: boolean;
+  height?: number;
+  emptyText?: string;
+}) {
   const [ref, width] = useWidth<HTMLDivElement>();
   const { money, compact } = useMoney();
   const [hover, setHover] = useState<number | null>(null);
@@ -49,6 +59,25 @@ export function TimeChart({ series, rows, stacked = false, height = 220 }: { ser
   const y = (v: number) => top + plotH - (v / yMax) * plotH;
 
   const labelEvery = Math.max(1, Math.ceil(n / Math.max(2, Math.floor(plotW / 46))));
+  // La última siempre (va alineada a la derecha); las demás, si no se pisan con la anterior ni con la última
+  const anchor = (i: number) => (i === n - 1 && n > 1 ? 'end' : i === 0 && n > 1 ? 'start' : 'middle');
+  const extent = (i: number): [number, number] => {
+    const a = anchor(i);
+    return a === 'end' ? [x(i) - LABEL_W, x(i)] : a === 'start' ? [x(i), x(i) + LABEL_W] : [x(i) - LABEL_W / 2, x(i) + LABEL_W / 2];
+  };
+  const labels = new Set<number>();
+  if (n) {
+    const lastLeft = extent(n - 1)[0];
+    let prevRight = -Infinity;
+    for (let i = 0; i < n - 1; i += labelEvery) {
+      const [l, r] = extent(i);
+      if (l < prevRight + 4 || r > lastLeft - 4) continue;
+      labels.add(i);
+      prevRight = r;
+    }
+    labels.add(n - 1);
+  }
+  const empty = rows.every((r) => series.every((s) => !(r.values[s.key] ?? 0)));
 
   const onMove = (e: PointerEvent<SVGSVGElement>) => {
     const rect = e.currentTarget.getBoundingClientRect();
@@ -59,6 +88,8 @@ export function TimeChart({ series, rows, stacked = false, height = 220 }: { ser
 
   const hoverRow = hover != null ? rows[hover] : null;
   const total = hoverRow ? series.reduce((s, k) => s + (hoverRow.values[k.key] ?? 0), 0) : 0;
+
+  if (empty) return <div ref={ref}><p className="py-10 text-center text-muted">{emptyText}</p></div>;
 
   return (
     <div ref={ref} className="relative">
@@ -78,8 +109,8 @@ export function TimeChart({ series, rows, stacked = false, height = 220 }: { ser
             <text x={left - 6} y={y(t) + 4} textAnchor="end" className="fill-muted text-[12px] tabular">{compact(t)}</text>
           </g>
         ))}
-        {rows.map((r, i) => (i % labelEvery === 0 || i === n - 1) && (i === n - 1 || n - 1 - i >= labelEvery / 2) ? (
-          <text key={r.month} x={x(i)} y={height - 6} textAnchor={i === n - 1 && n > 1 ? 'end' : i === 0 && n > 1 ? 'start' : 'middle'} className="fill-muted text-[12px]">{monthLabel(r.month, { short: true })}</text>
+        {rows.map((r, i) => labels.has(i) ? (
+          <text key={r.month} x={x(i)} y={height - 6} textAnchor={anchor(i)} className="fill-muted text-[12px]">{monthLabel(r.month, { short: true })}</text>
         ) : null)}
 
         {stacked && layers && layers.map((layer, li) => {

@@ -8,13 +8,14 @@
   --surface: 255 253 248;
   --sunken: 237 234 226;
   --ink: 34 46 42;
-  --muted: 102 115 111;
+  /* muted, ok y danger: al menos 4,5:1 sobre el fondo, la tarjeta y el gris hundido */
+  --muted: 92 104 100;
   --line: 221 216 205;
   --primary: 23 107 96;     /* verde principal #176B60 */
   --soft: 127 196 172;      /* verde suave #7FC4AC */
   --on-primary: 255 255 255;
-  --ok: 31 138 91;
-  --danger: 194 69 63;
+  --ok: 24 117 76;
+  --danger: 178 58 52;
   /* Alto de la pantalla de la app: la del teléfono, o la del marco en pantallas anchas */
   --app-h: 100vh;
   color-scheme: light;
@@ -77,6 +78,22 @@ select {
   .chip-on {
     @apply chip border-primary bg-primary text-on-primary;
   }
+  /* Área de toque de 44 px sin agrandar el dibujo: los chips (38 px) y las opciones del Segmented */
+  .chip,
+  .chip-on,
+  .tap-area {
+    position: relative;
+  }
+  .chip::after,
+  .chip-on::after,
+  .tap-area::after {
+    content: '';
+    position: absolute;
+    inset: -3px 0;
+  }
+  .tap-area::after {
+    inset: -5px 0;
+  }
   .section-title {
     @apply text-xl text-ink;
   }
@@ -135,11 +152,12 @@ select {
 .suricata-sway { animation: suricata-sway 1.8s ease-in-out infinite alternate; transform-origin: 50% 100%; }
 
 /*
- * Pantallas anchas (la web en una compu): la app se ve dentro de un marco de teléfono. El transform de #root hace
- * que los position: fixed de la app (barra de pestañas, hojas, avisos) queden dentro del marco, y el scroll pasa
- * a .app-scroll. En el iPhone (solo vertical) nunca llega a 760px.
+ * Pantallas anchas (la web en una compu o un iPad): la app se ve dentro de un marco de teléfono. El transform de
+ * #root hace que los position: fixed de la app (barra de pestañas, hojas, avisos) queden dentro del marco, y el
+ * scroll pasa a .app-scroll. Un teléfono acostado (844x390) pasa los 760 px de ancho pero no tiene alto: ahí no hay
+ * marco. La app de iPhone es solo vertical.
  */
-@media (min-width: 760px) {
+@media (min-width: 760px) and (min-height: 500px) {
   html,
   body {
     height: 100%;

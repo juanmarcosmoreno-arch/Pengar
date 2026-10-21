@@ -29,8 +29,11 @@ function keywordMatch(text: string, rubros: Rubro[]): { rubro: Rubro; length: nu
     for (const raw of [...r.keywords, r.name]) {
       const k = norm(raw);
       if (k.length < 3) continue;
-      // Palabra entera (o comienzo de palabra si la clave termina en espacio, como «pan »)
-      const re = new RegExp(`(^|[^a-z0-9])${k.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`);
+      // Desde el comienzo de una palabra. Las claves con un espacio al final («pan ») y las de tres letras («ute», «gas»)
+      // van enteras; las de cuatro, enteras o en plural («agua» no es «AGUACATE»); las largas, también como comienzo
+      // («regalo» en «REGALOS»)
+      const end = /\s$/.test(raw) || k.length <= 3 ? '(?=[^a-z0-9]|$)' : k.length === 4 ? '(?:e?s)?(?=[^a-z0-9]|$)' : '';
+      const re = new RegExp(`(^|[^a-z0-9])${k.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}${end}`);
       if (re.test(t) && (!best || k.length > best.length)) best = { rubro: r, length: k.length };
     }
   }

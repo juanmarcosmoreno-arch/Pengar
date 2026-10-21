@@ -2,8 +2,9 @@ import { FileSpreadsheet } from 'lucide-react';
 import { useRef, useState } from 'react';
 import { monthLabel } from '../domain/dates';
 import {
-  importMonthlySheet, importMovementSheet, isMonthlySheet, isMovementSheet, type ImportResult,
+  importMonthlySheet, importMovementSheet, isMonthlySheet, isMovementSheet, mergeImport, replaceImport, type ImportResult,
 } from '../domain/importSheet';
+import { plural } from '../domain/text';
 import { readSpreadsheet, type Sheet } from '../lib/files';
 import { useMoney } from '../lib/useMoney';
 import { useStore } from '../store/store';
@@ -23,8 +24,10 @@ export function ImportFlow({ mode, name, onDone, compact = false }: { mode: 'rep
 
   const analyze = (s: Sheet) => {
     try {
-      if (isMonthlySheet(s.rows)) setResult({ res: importMonthlySheet(s.rows), sheet: s.name });
-      else if (isMovementSheet(s.rows)) setResult({ res: importMovementSheet(s.rows, data), sheet: s.name });
+      // Primero la de movimientos: «Fecha» y «Monto» en la primera fila no dejan dudas (un monto de 45.000 en un CSV
+      // de movimientos no es una fecha de Excel)
+      if (isMovementSheet(s.rows)) setResult({ res: importMovementSheet(s.rows, data), sheet: s.name });
+      else if (isMonthlySheet(s.rows)) setResult({ res: importMonthlySheet(s.rows), sheet: s.name });
       else setError(`No reconozco el formato de la hoja «${s.name}». Mirá el formato esperado más abajo.`);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'No se pudo leer la planilla.');
@@ -56,7 +59,12 @@ export function ImportFlow({ mode, name, onDone, compact = false }: { mode: 'rep
 
   const res = result?.res;
   const expense = res ? res.movements.filter((m) => m.kind === 'gasto').reduce((s, m) => s + m.amount, 0) : 0;
-  const hasData = data.movements.length > 0 || data.rubros.length > 0;
+  // Con los datos de ejemplo no se ofrece sumar: lo real quedaría mezclado con lo inventado (y «Empezar con los míos» lo borraría)
+  const hasData = !data.settings.example && (data.movements.length > 0 || data.rubros.length > 0);
+  const canMerge = mode === 'ask' && hasData;
+  // El resumen dice lo que va a pasar: al sumar, lo que de verdad es nuevo y lo que ya estaba
+  const merged = res && canMerge ? mergeImport(data, res) : null;
+  const replaced = res && !canMerge ? replaceImport(data, res) : null;
 
   return (
     <div className="space-y-4">
@@ -83,13 +91,21 @@ export function ImportFlow({ mode, name, onDone, compact = false }: { mode: 'rep
         <div className="card space-y-2 p-4">
           <div className="text-xl">Hoja «{result!.sheet}»</div>
           <ul className="space-y-1 text-[17px]">
-            <li>{res.movements.length} montos {res.months.length > 0 && <>de {monthLabel(res.months[0]).toLowerCase()} a {monthLabel(res.months[res.months.length - 1]).toLowerCase()}</>}</li>
-            <li>{res.rubros.length} rubros nuevos en {res.categories.length} categorías</li>
+            <li>{plural(res.movements.length, 'monto', 'montos')} {res.months.length > 0 && <>de {monthLabel(res.months[0]).toLowerCase()} a {monthLabel(res.months[res.months.length - 1]).toLowerCase()}</>}</li>
+            {merged ? (
+              <>
+                <li>{plural(merged.rubros.length, 'rubro nuevo', 'rubros nuevos')} y {plural(merged.categories.length, 'categoría nueva', 'categorías nuevas')}</li>
+                {merged.repeated > 0 && <li>{merged.repeated === 1 ? '1 monto ya estaba: no se suma' : `${merged.repeated} montos ya estaban: no se suman`} otra vez</li>}
+                {merged.updated > 0 && <li>{merged.updated === 1 ? '1 total de un mes cambió: se reemplaza' : `${merged.updated} totales de un mes cambiaron: se reemplazan`}</li>}
+              </>
+            ) : (
+              replaced && <li>{plural(replaced.rubros.length, 'rubro', 'rubros')} en {plural(replaced.categories.length, 'categoría', 'categorías')}</li>
+            )}
             <li>Gastos en total: {money(expense)}</li>
           </ul>
           {res.warnings.slice(0, 4).map((w) => <p key={w} className="text-[15px] text-muted">{w}</p>)}
           <div className="flex flex-col gap-2 pt-2">
-            {mode === 'replace' || !hasData ? (
+            {!canMerge ? (
               <button className="btn-primary" onClick={() => confirm('replace')}>Importar</button>
             ) : (
               <>
@@ -108,7 +124,7 @@ export function ImportFlow({ mode, name, onDone, compact = false }: { mode: 'rep
 export function ImportFormatHelp() {
   return (
     <details className="text-[15px] text-muted">
-      <summary className="cursor-pointer text-primary">¿Qué formato tiene que tener la planilla?</summary>
+      <summary className="cursor-pointer py-3 text-primary">¿Qué formato tiene que tener la planilla?</summary>
       <div className="mt-2 space-y-2">
         <p><b>Un mes por columna</b>: en la primera columna el rubro (UTE, Netflix…), en la segunda la letra de su categoría, y después una columna por mes con la fecha en el encabezado. La fila «Entrada» (o «Ingresos», «Sueldo») son los ingresos; TOTAL y BALANCE se ignoran.</p>
         <p>Opcional: una tabla con la letra, el nombre de cada categoría y una columna <b>PROYECTADO</b> con el presupuesto mensual.</p>

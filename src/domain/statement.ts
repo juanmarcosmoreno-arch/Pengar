@@ -6,7 +6,7 @@
  * tenga siempre la misma clave y lo aprendido sirva para los meses siguientes (y para las facturas).
  */
 import { monthOf, today as todayISO } from './dates';
-import { norm, type Cell } from './importSheet';
+import { norm, sheetDate, type Cell } from './importSheet';
 import { parseAmount, round2 } from './money';
 import { groupRows, type TextBox } from './ocrLines';
 import type { Movement } from './types';
@@ -114,8 +114,11 @@ function dateToken(raw: string): DayParts | null {
   return null;
 }
 
-/** Fecha que empieza en el pedazo `i` (puede ocupar hasta tres: «12 SET 2025») */
-function dateAt(words: string[], i: number): { parts: DayParts; next: number } | null {
+/**
+ * Fecha que empieza en el pedazo `i` (puede ocupar hasta tres: «12 SET 2025»). Con `ref`, un año de dos cifras
+ * después del mes vale solo si es el del cierre o el anterior: en «19 NOV 24 HORAS» el 24 es del comercio.
+ */
+function dateAt(words: string[], i: number, ref?: Ref): { parts: DayParts; next: number } | null {
   const t = words[i];
   if (!t) return null;
   const p = dateToken(t);
@@ -124,7 +127,7 @@ function dateAt(words: string[], i: number): { parts: DayParts; next: number } |
   if (!mo) return null;
   const y = words[i + 2]?.match(/^(\d{4}|\d{2})$/)?.[1];
   const year = y ? fullYear(y) : undefined;
-  const withYear = year != null && year >= 2020 && year <= 2069;
+  const withYear = year != null && year >= 2020 && year <= 2069 && (y!.length === 4 || !ref || year === ref.y || year === ref.y - 1);
   const parts = valid({ d: +t, m: mo, y: withYear ? year : undefined });
   return parts ? { parts, next: i + (withYear ? 3 : 2) } : null;
 }
@@ -205,6 +208,10 @@ export function detectCard(text: string): string | undefined {
   return undefined;
 }
 
+/** Fechas escritas en un renglón ya normalizado: 25/09/2025, 26/09, 25.09.2025, 2025-09-25, 25 de setiembre (de 2025) */
+const DATE_TEXT =
+  /\b\d{1,2}[/-]\d{1,2}(?:[/-]\d{2,4})?\b|\b\d{1,2}\.\d{1,2}\.\d{2,4}\b|\b\d{4}-\d{2}-\d{2}\b|\b\d{1,2}(?: de)? (?:ene|feb|mar|abr|may|jun|jul|ago|set|sep|oct|nov|dic)[a-z]*\.?(?:(?: de)? \d{4})?/g;
+
 /** Cierre, vencimiento, período, cotización y tarjeta: con el título en el mismo renglón o en el de arriba */
 export function statementInfo(text: string): StatementInfo {
   const lines = text.split(/\r?\n/).map(norm);
@@ -243,10 +250,14 @@ export function statementInfo(text: string): StatementInfo {
       });
     }
   });
-  const rate = lines.join('\n').match(/(cotizacion|tipo de cambio|t\/c|\btc\b)[^\d\n]{0,30}(\d{1,3}(?:[.,]\d{1,4})?)/);
-  if (rate) {
-    const v = Number(rate[2].replace(',', '.'));
-    if (v > 10 && v < 200) info.usdRate = v;
+  // Sin las fechas: en «Cotización al 25/09/2025: 40,10» el primer número es el día
+  const noDates = lines.join('\n').replace(DATE_TEXT, ' ');
+  for (const m of noDates.matchAll(/(cotizacion|tipo de cambio|t\/c|\btc\b)[^\d\n]{0,30}(\d{1,3}(?:[.,]\d{1,4})?)/g)) {
+    const v = Number(m[2].replace(',', '.'));
+    if (v > 10 && v < 200) {
+      info.usdRate = v;
+      break;
+    }
   }
   const card = detectCard(text);
   if (card) info.card = card;
@@ -278,7 +289,7 @@ export function statementPeriod(txs: StatementTx[], info: StatementInfo): { from
 // --- Tipo de movimiento y cuotas -------------------------------------------------------------------------
 
 const SALDO = /^saldo\b|\bsaldo (anterior|contado|actual|a pagar|deudor|financiado|total|al cierre|a favor|pendiente|del periodo)\b|total a pagar|\bpago minimo\b|minimo a pagar|\bpago contado\b|\blimite\b|\bdisponible\b|^total\b|\bsub ?total\b/;
-const PAGO = /^(su |sus )?pagos?\b(?! (web|online|facil|movil|express))|pago recibido|gracias por su pago|\bpago (de |del )?(la )?(tarjeta|resumen|estado de cuenta)\b/;
+const PAGO = /^(su |sus )?pagos?\b(?! (web|online|facil|movil|express|(de )?(factura|servicio)s?\b))|pago recibido|gracias por su pago|\bpago (de |del )?(la )?(tarjeta|resumen|estado de cuenta)\b/;
 const CREDITO = /reintegro|devolucion|bonificacion|\bbonif\b|\banul|reverso|reversion|contracargo|nota de credito|reembolso|cashback|\ba favor\b|descuento ley|\bdto ley\b|ley 19\.?210|ley 17\.?934|\bcr$/;
 const CARGO = /\bcargos?\b|comision|^seguro|\bseguro de vida\b|\bintereses?\b|^iva\b|\btimbres?\b|costo (de )?emision|\brecargo|\bmora\b|gastos? (de )?(administracion|cobranza|emision|envio|mantenimiento)|anualidad|membresia|renovacion|cuota anual|^impuestos?\b|sellado/;
 
@@ -300,6 +311,13 @@ const CUOTA_RES = [
   /\bc\.?\s?(\d{1,2})\/(\d{1,3})\b/gi,
   /(^|\s)(\d{1,2})\/(\d{1,3})(?=\s|$)/g,
 ];
+
+/** La descripción sin el texto de la cuota («ZARA CUOTA 02/03» → «ZARA»): la cuota no dice de qué es la compra */
+export function withoutInstallment(text: string): string {
+  let s = text;
+  for (const re of CUOTA_RES) s = s.replace(re, ' ');
+  return s.replace(/\s+/g, ' ').trim();
+}
 
 export function installmentOf(text: string): string | undefined {
   for (const re of CUOTA_RES) {
@@ -578,11 +596,11 @@ interface ParsedRow {
   marker?: Marker;
 }
 
-function parseRow(toks: Tok[]): ParsedRow {
+function parseRow(toks: Tok[], ref?: Ref): ParsedRow {
   const words = toks.map((t) => t.t);
   // La fecha va primero (puede haber una viñeta o un número antes)
-  let found = dateAt(words, 0);
-  if (!found && words.length > 2 && !/[a-z]/i.test(words[0]) && tokenAmount(words[0]) == null) found = dateAt(words, 1);
+  let found = dateAt(words, 0, ref);
+  if (!found && words.length > 2 && !/[a-z]/i.test(words[0]) && tokenAmount(words[0]) == null) found = dateAt(words, 1, ref);
   let start = 0;
   let date: DayParts | undefined;
   if (found) {
@@ -591,7 +609,7 @@ function parseRow(toks: Tok[]): ParsedRow {
     // Fecha de proceso a continuación, o un rango («26/08 al 25/09»)
     for (;;) {
       const sep = /^(-|al|a)$/i.test(words[start] ?? '') ? 1 : 0;
-      const more = dateAt(words, start + sep);
+      const more = dateAt(words, start + sep, ref);
       if (!more) break;
       start = more.next;
     }
@@ -720,7 +738,7 @@ function parseTokenRows(rows: Tok[][], text: string, opts: StatementOptions): St
   const txs: StatementTx[] = [];
   for (const toks of rows) {
     if (!toks.length) continue;
-    const row = parseRow(toks);
+    const row = parseRow(toks, ref);
     if (!row.date && !row.amounts.length) {
       cols = headerOf(toks) ?? cols;
       continue;
@@ -728,10 +746,15 @@ function parseTokenRows(rows: Tok[][], text: string, opts: StatementOptions): St
     if (!row.amounts.length || !/[a-z]{2}/.test(norm(row.desc))) continue;
     let date = row.date ? isoOf(row.date, ref) : null;
     if (date) lastDate = date;
+    else if (row.date) continue;
     else {
-      // Sin fecha: cargos y créditos del banco debajo del último movimiento (intereses, IVA, reintegros)
+      // Sin fecha: cargos y créditos del banco pegados al último movimiento (intereses, IVA, reintegros). Cualquier
+      // otro renglón con importe (saldo, compra, cotización) corta la cadena: el cuadro de resumen del pie no cuenta
       const kind = statementKind(row.desc);
-      if (row.date || !lastDate || kind === 'compra' || kind === 'saldo' || INFO_LINE.test(norm(row.desc))) continue;
+      if (!lastDate || (kind !== 'cargo' && kind !== 'credito') || INFO_LINE.test(norm(row.desc))) {
+        lastDate = undefined;
+        continue;
+      }
       date = lastDate;
     }
     for (const { currency, amount } of assignAmounts(row.amounts, cols, row.marker)) txs.push(makeTx(date, row.desc, amount, currency));
@@ -771,11 +794,14 @@ interface TableCols {
 
 function tableColumns(header: string[]): TableCols | null {
   const h = header.map(norm);
-  const find = (re: RegExp, not?: RegExp) => h.findIndex((c) => !!c && re.test(c) && !not?.test(c));
+  const find = (re: RegExp, not?: RegExp, skip = -1) => h.findIndex((c, i) => i !== skip && !!c && re.test(c) && !not?.test(c));
   let date = find(/^fecha\b|^date$|^dia$/, /valor|proceso|vencimiento|cierre|pago|emision/);
   if (date < 0) date = find(/^fecha\b/);
-  let desc = find(/descripcion|concepto|detalle|comercio|establecimiento|movimiento|description/);
-  if (desc < 0) desc = find(/referencia/);
+  // La descripción no es la fecha ni el tipo («Fecha movimiento», «Tipo de movimiento»): primero los títulos claros
+  const notDesc = /^fecha|^tipo/;
+  let desc = find(/^(descripcion|concepto|detalle|comercio|establecimiento|description)/, notDesc, date);
+  if (desc < 0) desc = find(/descripcion|concepto|detalle|comercio|establecimiento|movimiento|description/, notDesc, date);
+  if (desc < 0) desc = find(/referencia/, notDesc, date);
   const currency = find(/^(moneda|divisa|currency)$/);
   const installment = find(/^(cuotas?|cuota nro|nro de cuota|plan)$/);
   const debit = find(/debito|\bdebe\b|^cargos?$|^consumos?$/);
@@ -796,14 +822,14 @@ function cellAmount(v: Cell): number | null {
   if (typeof v !== 'string') return null;
   const s = v.trim();
   if (!s || !/\d/.test(s)) return null;
-  const negative = /^-|-$|^\(.*\)$|\bcr\.?$/i.test(s);
+  // El signo puede venir después del símbolo («$ -890,00», «U$S (12,99)»)
+  const negative = /^[^\d(]*-|-$|^[^\d(]*\(.*\)$|\bcr\.?$/i.test(s);
   const n = parseAmount(s.replace(/\b(cr|db)\.?$/i, '').replace(/[()-]/g, ''));
   return n == null ? null : negative ? -Math.abs(n) : n;
 }
 
 function cellDate(v: Cell, ref: Ref): string | null {
-  // SheetJS arma las fechas en UTC: se suman unas horas para no caer en el día anterior
-  if (v instanceof Date) return Number.isNaN(v.getTime()) ? null : new Date(v.getTime() + 12 * 3600_000).toISOString().slice(0, 10);
+  if (v instanceof Date) return sheetDate(v);
   if (typeof v === 'number') return v > 30000 && v < 80000 ? new Date(Date.UTC(1899, 11, 30) + v * 86400_000).toISOString().slice(0, 10) : null;
   const s = cellText(v);
   const iso = s.match(/^(\d{4}-\d{2}-\d{2})[T\s]/);
@@ -893,6 +919,9 @@ export function findDuplicates(txs: StatementTx[], movements: Movement[], usdRat
     // En dólares la cotización del día de la compra puede ser otra
     const tol = Math.max(1, amount * (tx.currency === 'usd' ? 0.03 : 0.01));
     for (const m of pool) {
+      // Otra cuota de la misma compra: hay bancos que repiten la fecha de la compra todos los meses
+      const cuota = m.note?.match(/cuota (\d+\/\d+)/)?.[1];
+      if (tx.installment && cuota && cuota !== tx.installment) continue;
       const dAmount = Math.abs(m.amount - amount);
       const dDays = Math.abs(dayNumber(m.date) - dayNumber(tx.date));
       if (dAmount <= tol && dDays <= 3) pairs.push({ i, id: m.id, sim: similarity(tx.key, m.merchant || m.note), dAmount, dDays });

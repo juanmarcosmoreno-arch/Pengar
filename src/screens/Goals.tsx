@@ -1,8 +1,10 @@
 import { Plus } from 'lucide-react';
-import { useEffect, useState } from 'react';
-import { CategoryBubble, Icon } from '../components/Icon';
+import { useEffect, useId, useState } from 'react';
+import { CategoryBubble, Icon, iconLabel } from '../components/Icon';
 import { PageHeader, Sheet } from '../components/Sheet';
 import { EmptyState, Suricata } from '../components/Suricata';
+import { useToast } from '../components/Toast';
+import { Segmented } from '../components/Toggle';
 import { parseAmount } from '../domain/money';
 import { ICON_CHOICES, newId } from '../domain/template';
 import type { Goal } from '../domain/types';
@@ -63,6 +65,8 @@ export function Goals({ onBack }: { onBack: () => void }) {
 
 function GoalSheet({ value, onClose }: { value: Goal | 'new'; onClose: () => void }) {
   const { upsertGoal, deleteGoal } = useStore();
+  const toast = useToast();
+  const id = useId();
   const [g, setG] = useState<Goal>(value === 'new' ? { id: newId('g'), name: '', icon: 'm:viajes', target: 0, saved: 0 } : value);
   const [target, setTarget] = useState(g.target ? String(g.target) : '');
   const [saved, setSaved] = useState(g.saved ? String(g.saved) : '');
@@ -73,20 +77,32 @@ function GoalSheet({ value, onClose }: { value: Goal | 'new'; onClose: () => voi
       onClose={onClose}
       footer={
         <div className="flex gap-2">
-          {value !== 'new' && <button className="btn-outline text-danger" onClick={() => { deleteGoal(g.id); onClose(); }}>Borrar</button>}
+          {value !== 'new' && (
+            <button
+              className="btn-outline text-danger"
+              onClick={() => {
+                deleteGoal(value.id);
+                // Se recupera la meta como estaba guardada, no lo que se estaba editando
+                toast(`Meta «${value.name}» borrada`, { label: 'Deshacer', run: () => upsertGoal(value) });
+                onClose();
+              }}
+            >
+              Borrar
+            </button>
+          )}
           <button className="btn-primary flex-1" disabled={!g.name.trim() || t <= 0} onClick={() => { upsertGoal({ ...g, name: g.name.trim(), target: t, saved: parseAmount(saved) ?? 0 }); onClose(); }}>Guardar</button>
         </div>
       }
     >
       <div className="space-y-4">
-        <div><label className="label">Nombre</label><input className="field" value={g.name} onChange={(e) => setG({ ...g, name: e.target.value })} placeholder="Vacaciones" autoFocus /></div>
+        <div><label className="label" htmlFor={`${id}-nombre`}>Nombre</label><input id={`${id}-nombre`} className="field" value={g.name} onChange={(e) => setG({ ...g, name: e.target.value })} placeholder="Vacaciones" autoFocus /></div>
         <div className="grid grid-cols-2 gap-3">
-          <div><label className="label">Necesito</label><input className="field" inputMode="decimal" value={target} onChange={(e) => setTarget(e.target.value)} /></div>
-          <div><label className="label">Ya tengo</label><input className="field" inputMode="decimal" value={saved} onChange={(e) => setSaved(e.target.value)} /></div>
+          <div><label className="label" htmlFor={`${id}-necesito`}>Necesito</label><input id={`${id}-necesito`} className="field" inputMode="decimal" value={target} onChange={(e) => setTarget(e.target.value)} /></div>
+          <div><label className="label" htmlFor={`${id}-tengo`}>Ya tengo</label><input id={`${id}-tengo`} className="field" inputMode="decimal" value={saved} onChange={(e) => setSaved(e.target.value)} /></div>
         </div>
-        <div className="grid grid-cols-6 gap-2">
+        <div className="grid grid-cols-6 gap-2" role="group" aria-label="Ícono">
           {ICON_CHOICES.map((name) => (
-            <button key={name} className={`flex h-12 items-center justify-center rounded-2xl border ${g.icon === name ? 'border-primary bg-soft/30' : 'border-line bg-surface'}`} onClick={() => setG({ ...g, icon: name })} aria-label={name}>
+            <button key={name} className={`flex h-12 items-center justify-center rounded-2xl border ${g.icon === name ? 'border-primary bg-soft/30' : 'border-line bg-surface'}`} onClick={() => setG({ ...g, icon: name })} aria-label={iconLabel(name)} aria-pressed={g.icon === name}>
               <Icon name={name} size={22} />
             </button>
           ))}
@@ -99,7 +115,10 @@ function GoalSheet({ value, onClose }: { value: Goal | 'new'; onClose: () => voi
 function AddToGoal({ goal, onClose, onReached }: { goal: Goal; onClose: () => void; onReached: (g: Goal) => void }) {
   const { upsertGoal } = useStore();
   const [text, setText] = useState('');
-  const n = parseAmount(text) ?? 0;
+  // En el iPhone el teclado de números no tiene «-»: se elige si se suma o se resta
+  const [how, setHow] = useState<'sumar' | 'restar'>('sumar');
+  const n = Math.abs(parseAmount(text) ?? 0) * (how === 'restar' ? -1 : 1);
+  const title = how === 'sumar' ? `Sumar a «${goal.name}»` : `Restar de «${goal.name}»`;
   const add = () => {
     const g = { ...goal, saved: Math.max(0, goal.saved + n) };
     upsertGoal(g);
@@ -109,12 +128,23 @@ function AddToGoal({ goal, onClose, onReached }: { goal: Goal; onClose: () => vo
   };
   return (
     <Sheet
-      title={`Sumar a «${goal.name}»`}
+      title={title}
       onClose={onClose}
-      footer={<button className="btn-primary w-full" disabled={!n} onClick={add}>Sumar</button>}
+      footer={<button className="btn-primary w-full" disabled={!n} onClick={add}>{title}</button>}
     >
-      <input className="field text-center text-3xl" inputMode="decimal" autoFocus value={text} onChange={(e) => setText(e.target.value)} placeholder="0" />
-      <p className="mt-2 text-[15px] text-muted">Para restar, poné un número negativo. Las metas son aparte de los gastos: si querés que el ahorro aparezca en las gráficas, anotalo también como gasto en tu categoría de ahorro.</p>
+      <div className="space-y-3">
+        <Segmented value={how} onChange={setHow} options={[{ id: 'sumar', label: 'Sumar' }, { id: 'restar', label: 'Restar' }]} />
+        <input
+          className="field text-center text-3xl"
+          inputMode="decimal"
+          autoFocus
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          placeholder="0"
+          aria-label={how === 'sumar' ? 'Monto que sumás' : 'Monto que restás'}
+        />
+        <p className="text-[15px] text-muted">Las metas son aparte de los gastos: si querés que el ahorro aparezca en las gráficas, anotalo también como gasto en tu categoría de ahorro.</p>
+      </div>
     </Sheet>
   );
 }

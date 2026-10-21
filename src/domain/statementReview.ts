@@ -4,8 +4,8 @@
  * interesan) se recuerdan con NOT_SPEND.
  */
 import { merchantKey, suggestRubro, type Suggestion } from './classify';
-import { round2 } from './money';
-import { isSpend, type StatementTx } from './statement';
+import { NBSP, round2 } from './money';
+import { isSpend, withoutInstallment, type StatementTx } from './statement';
 import type { Category, Rubro, Settings } from './types';
 
 /** Valor de settings.learned para un comercio que no es un gasto: la próxima vez va directo a «No son gastos» */
@@ -50,7 +50,8 @@ export function knownRubro(tx: StatementTx, rubros: Rubro[], learned: Settings['
   const value = learned[learnedKeyOf(tx)];
   if (value === NOT_SPEND) return NOT_SPEND;
   if (value && rubros.some((r) => r.id === value)) return { rubroId: value, reason: 'aprendido' };
-  return suggestRubro(tx.description, tx.merchant, rubros, learned);
+  // Sin el texto de la cuota: «CUOTA 02/03» no dice de qué es la compra
+  return suggestRubro(withoutInstallment(tx.description), tx.merchant, rubros, learned);
 }
 
 const dayNumber = (iso: string) => Date.UTC(+iso.slice(0, 4), +iso.slice(5, 7) - 1, +iso.slice(8, 10)) / 86400_000;
@@ -98,7 +99,7 @@ const usdFormat = new Intl.NumberFormat('es-UY', { minimumFractionDigits: 2, max
 const rateFormat = new Intl.NumberFormat('es-UY', { maximumFractionDigits: 2 });
 
 /** «U$S 12,99» */
-export const usd = (n: number) => `U$S ${usdFormat.format(n)}`;
+export const usd = (n: number) => `U$S${NBSP}${usdFormat.format(n)}`;
 
 /** Nota del gasto: la tarjeta, la cuota y la cuenta en dólares («OCA · cuota 2/3 · U$S 12,99 × 40») */
 export function statementNote(tx: StatementTx, card: string | undefined, usdRate: number): string | undefined {

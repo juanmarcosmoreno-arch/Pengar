@@ -210,8 +210,12 @@ export interface CategoryCompare {
 export interface MonthSummary {
   month: string;
   income: number;
+  /** Todos los gastos del mes */
   expense: number;
   budget: number;
+  /** Lo gastado en las categorías con presupuesto: es lo que se compara con `budget` */
+  budgetedExpense: number;
+  /** budgetedExpense − budget (positivo: te pasaste). Las categorías sin presupuesto no cuentan */
   diff: number;
   rows: CategoryCompare[];
 }
@@ -256,10 +260,35 @@ export function monthSummary(data: Data, ix: Index, month: string, includeSaving
       };
     })
     .filter((r) => r.real > 0 || r.budget > 0)
-    .sort((a, b) => b.diff - a.diff);
+    .sort(compareRows);
   const expense = rows.reduce((s, r) => s + r.real, 0);
   const budget = rows.reduce((s, r) => s + r.budget, 0);
-  return { month, income: sum(incomes(data, f)), expense, budget, diff: expense - budget, rows };
+  const budgetedExpense = rows.filter((r) => r.hasBudget).reduce((s, r) => s + r.real, 0);
+  return { month, income: sum(incomes(data, f)), expense, budget, budgetedExpense, diff: budgetedExpense - budget, rows };
+}
+
+/**
+ * Orden de «Real contra presupuesto»: primero las que se pasaron (las que más), después las que tienen gasto (las
+ * que usaron más de su presupuesto primero; las sin presupuesto, por lo gastado) y al final las que están en $ 0.
+ */
+function compareRows(a: CategoryCompare, b: CategoryCompare): number {
+  const group = (r: CategoryCompare) => (r.status === 'over' ? 0 : r.real <= 0 ? 3 : r.hasBudget ? 1 : 2);
+  const ga = group(a);
+  const gb = group(b);
+  if (ga !== gb) return ga - gb;
+  if (ga === 0) return b.diff - a.diff;
+  if (ga === 1) return b.real / (b.budget || 1) - a.real / (a.budget || 1);
+  if (ga === 2) return b.real - a.real;
+  return b.budget - a.budget;
+}
+
+/**
+ * Al cambiar un presupuesto de monto a «% del ingreso» (o al revés), el número se convierte con el ingreso del mes:
+ * $ 20.000 con $ 200.000 de ingreso es el 10 %. Sin ingreso no hay cómo: queda vacío.
+ */
+export function convertBudget(value: number | null, to: 'fixed' | 'percentIncome', income: number): number | null {
+  if (value == null || value <= 0 || income <= 0) return null;
+  return to === 'percentIncome' ? Math.round((value / income) * 100) : Math.round((income * value) / 100);
 }
 
 export interface PercentCard {
@@ -285,10 +314,16 @@ export function percentCards(data: Data, ix: Index, month: string): PercentCard[
     });
 }
 
-/** Variación de los gastos contra el mes anterior (null si el anterior no tiene gastos) */
-export function expenseChange(data: Data, ix: Index, month: string, includeSavings = false): number | null {
+/**
+ * Variación de los gastos contra el mes anterior (null si el anterior no tiene gastos). Con `current` (el mes en
+ * curso, todavía incompleto) solo vale la suba: ya pasó al mes anterior entero. Una baja a principio de mes no dice
+ * nada (con $ 0 anotado sería «100 % menos»).
+ */
+export function expenseChange(data: Data, ix: Index, month: string, includeSavings = false, current?: string): number | null {
   const cur = sum(expenses(data, ix, { from: month, to: month, includeSavings }));
   const prevMonth = addMonths(month, -1);
   const prev = sum(expenses(data, ix, { from: prevMonth, to: prevMonth, includeSavings }));
-  return prev ? (cur - prev) / prev : null;
+  if (!prev) return null;
+  const change = (cur - prev) / prev;
+  return month === current && change <= 0 ? null : change;
 }

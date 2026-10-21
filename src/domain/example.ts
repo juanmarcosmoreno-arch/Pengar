@@ -89,6 +89,16 @@ export function exampleData(res: Pick<ImportResult, 'categories' | 'rubros' | 'm
   });
 }
 
+/**
+ * El ejemplo guardado se armó para un mes que ya pasó (alguien lo miró, cambió algo y volvió otro mes): el mes en curso
+ * quedaría vacío. Hay que volver a armarlo.
+ */
+export function exampleOutdated(d: Pick<Data, 'movements' | 'settings'>, todayISO: string): boolean {
+  if (!d.settings.example || !d.movements.length) return false;
+  const last = d.movements.reduce((m, x) => (monthOf(x.date) > m ? monthOf(x.date) : m), '');
+  return last < monthOf(todayISO);
+}
+
 interface StatementExample {
   /** Día del mes: en el mes anterior tal cual; en este mes, acomodado hasta hoy (como DAILY) */
   day: number;

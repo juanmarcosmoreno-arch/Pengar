@@ -128,7 +128,8 @@ export interface Settings {
 }
 
 export interface Data {
-  version: 1;
+  /** 2: íconos ya migrados (ver normalizeData) */
+  version: 2;
   categories: Category[];
   rubros: Rubro[];
   movements: Movement[];

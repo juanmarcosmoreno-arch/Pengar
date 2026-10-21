@@ -1,5 +1,5 @@
 import { Download, Smartphone, Sparkles, Upload } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import { ConfirmSheet } from '../components/ConfirmSheet';
 import { ImportFlow, ImportFormatHelp } from '../components/ImportFlow';
 import { PageHeader } from '../components/Sheet';
@@ -7,9 +7,9 @@ import { useToast } from '../components/Toast';
 import { today } from '../domain/dates';
 import { movementsCsv } from '../domain/export';
 import { emptyData } from '../domain/template';
-import type { Data } from '../domain/types';
+import { plural } from '../domain/text';
 import { appleAIStatus, type AppleAIStatus } from '../lib/appleAI';
-import { makeBackup, readBackup } from '../lib/backup';
+import { makeBackup, readBackup, type ReadBackup } from '../lib/backup';
 import { NO_DOWNLOADS, saveOrShare } from '../lib/files';
 import { isNative, isPreview } from '../lib/platform';
 import { useStore } from '../store/store';
@@ -26,6 +26,7 @@ const APPLE_AI: Record<AppleAIStatus, string> = {
   notEligible: 'este iPhone no es compatible.',
   notReady: 'se está descargando. Cuando termine, se usa para sugerir rubros.',
   unsupported: 'necesita iOS 26 o más nuevo.',
+  sdk: 'esta versión de la app se compiló sin Apple Intelligence (hace falta Xcode 26).',
 };
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
@@ -38,22 +39,41 @@ function Section({ title, children }: { title: string; children: React.ReactNode
 }
 
 export function Settings({ onBack }: { onBack: () => void }) {
-  const { data, updateSettings, replaceAll } = useStore();
+  const { data, update, updateSettings, replaceAll, restoreBackup } = useStore();
   const toast = useToast();
+  const id = useId();
   const s = data.settings;
   const [importing, setImporting] = useState(false);
   const [showKey, setShowKey] = useState(false);
   const restore = useRef<HTMLInputElement>(null);
-  // Respaldo leído que espera confirmación, y «Borrar todo»
-  const [backup, setBackup] = useState<Data | null>(null);
+  // Respaldo leído que espera confirmación, «Borrar todo» y «Olvidar lo aprendido»
+  const [backup, setBackup] = useState<ReadBackup | null>(null);
   const [wiping, setWiping] = useState(false);
+  const [forgetting, setForgetting] = useState(false);
+  // Mientras se arma el respaldo o está abierta «Compartir» (un segundo toque la rechaza)
+  const [busy, setBusy] = useState(false);
   // Apple Intelligence en este teléfono (en la web no hay)
   const [apple, setApple] = useState<AppleAIStatus | null>(null);
   useEffect(() => {
     if (isNative && !isPreview) void appleAIStatus().then(setApple);
   }, []);
-  const share = async (blob: Blob | Promise<Blob>, fileName: string) => {
-    if (!(await saveOrShare(await blob, fileName))) toast(NO_DOWNLOADS);
+  const share = async (blob: () => Blob | Promise<Blob>, fileName: string) => {
+    setBusy(true);
+    try {
+      if (!(await saveOrShare(await blob(), fileName))) toast(NO_DOWNLOADS);
+    } catch (e) {
+      console.error(e);
+      toast('No se pudo exportar el archivo');
+    } finally {
+      setBusy(false);
+    }
+  };
+  const learnedCount = Object.keys(s.learned).length;
+  const forget = () => {
+    const before = s.learned;
+    updateSettings({ learned: {} });
+    // Deshacer suma lo de antes a lo que se haya aprendido mientras tanto
+    toast('Se olvidó lo aprendido', { label: 'Deshacer', run: () => update((d) => ({ ...d, settings: { ...d.settings, learned: { ...before, ...d.settings.learned } } })) });
   };
 
   return (
@@ -62,17 +82,17 @@ export function Settings({ onBack }: { onBack: () => void }) {
       <div className="space-y-5 px-4 pb-12">
         <Section title="Vos">
           <div>
-            <label className="label">Nombre</label>
-            <input className="field" value={s.name} onChange={(e) => updateSettings({ name: e.target.value })} />
+            <label className="label" htmlFor={`${id}-nombre`}>Nombre</label>
+            <input id={`${id}-nombre`} className="field" value={s.name} onChange={(e) => updateSettings({ name: e.target.value })} />
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="label">Símbolo de la moneda</label>
-              <input className="field" value={s.currency.symbol} onChange={(e) => updateSettings({ currency: { ...s.currency, symbol: e.target.value.slice(0, 4) } })} />
+              <label className="label" htmlFor={`${id}-simbolo`}>Símbolo de la moneda</label>
+              <input id={`${id}-simbolo`} className="field" value={s.currency.symbol} onChange={(e) => updateSettings({ currency: { ...s.currency, symbol: e.target.value.slice(0, 4) } })} />
             </div>
             <div>
-              <label className="label">Decimales</label>
-              <select className="field" value={s.currency.decimals} onChange={(e) => updateSettings({ currency: { ...s.currency, decimals: Number(e.target.value) } })}>
+              <label className="label" htmlFor={`${id}-decimales`}>Decimales</label>
+              <select id={`${id}-decimales`} className="field" value={s.currency.decimals} onChange={(e) => updateSettings({ currency: { ...s.currency, decimals: Number(e.target.value) } })}>
                 <option value={0}>Sin decimales</option>
                 <option value={2}>Con 2 decimales</option>
               </select>
@@ -98,9 +118,10 @@ export function Settings({ onBack }: { onBack: () => void }) {
           ) : (
             <>
               <div>
-                <label className="label">Clave de la API (console.anthropic.com)</label>
+                <label className="label" htmlFor={`${id}-clave`}>Clave de la API (console.anthropic.com)</label>
                 <div className="flex gap-2">
                   <input
+                    id={`${id}-clave`}
                     className="field flex-1"
                     type={showKey ? 'text' : 'password'}
                     autoComplete="off"
@@ -113,16 +134,16 @@ export function Settings({ onBack }: { onBack: () => void }) {
                 <p className="mt-1 text-[14px] text-muted">Queda guardada solo en este teléfono y no va en los respaldos.</p>
               </div>
               <div>
-                <label className="label">Modelo</label>
-                <select className="field" value={s.ai.model} onChange={(e) => updateSettings({ ai: { ...s.ai, model: e.target.value } })}>
+                <label className="label" htmlFor={`${id}-modelo`}>Modelo</label>
+                <select id={`${id}-modelo`} className="field" value={s.ai.model} onChange={(e) => updateSettings({ ai: { ...s.ai, model: e.target.value } })}>
                   {MODELS.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
                 </select>
               </div>
             </>
           )}
-          {Object.keys(s.learned).length > 0 && (
-            <button className="btn-ghost -ml-4" onClick={() => { updateSettings({ learned: {} }); toast('Listo: se olvidó lo aprendido'); }}>
-              Olvidar los rubros aprendidos ({Object.keys(s.learned).length})
+          {learnedCount > 0 && (
+            <button className="btn-ghost -ml-4" onClick={() => setForgetting(true)}>
+              Olvidar los rubros aprendidos ({learnedCount})
             </button>
           )}
         </Section>
@@ -139,15 +160,17 @@ export function Settings({ onBack }: { onBack: () => void }) {
         <Section title="Exportar y respaldo">
           <button
             className="btn-outline w-full"
-            onClick={() => share(new Blob(['﻿' + movementsCsv(data)], { type: 'text/csv' }), `pengar-movimientos-${today()}.csv`)}
+            disabled={busy}
+            onClick={() => void share(() => new Blob(['﻿' + movementsCsv(data)], { type: 'text/csv' }), `pengar-movimientos-${today()}.csv`)}
           >
             <Download size={18} /> Movimientos en CSV (Excel)
           </button>
           <button
             className="btn-outline w-full"
-            onClick={() => share(makeBackup(data), `pengar-respaldo-${today()}.json`)}
+            disabled={busy}
+            onClick={() => void share(() => makeBackup(data), `pengar-respaldo-${today()}.json`)}
           >
-            <Download size={18} /> Respaldo completo (con facturas)
+            <Download size={18} /> {busy ? 'Preparando…' : 'Respaldo completo (con facturas)'}
           </button>
           <button className="btn-ghost w-full" onClick={() => restore.current?.click()}>Restaurar un respaldo…</button>
           <p className="text-[14px] text-muted">Los datos viven solo en este teléfono. Guardá un respaldo de vez en cuando (en Archivos o iCloud Drive) por si lo cambiás o se pierde.</p>
@@ -177,13 +200,29 @@ export function Settings({ onBack }: { onBack: () => void }) {
       {backup && (
         <ConfirmSheet
           title="¿Restaurar el respaldo?"
-          message={`Se reemplazan todos los datos de este teléfono por los del respaldo (${backup.movements.length} movimientos, ${backup.invoices.length} facturas).`}
+          message={`Se reemplazan todos los datos de este teléfono por los del respaldo (${plural(backup.data.movements.length, 'movimiento', 'movimientos')}, ${plural(backup.data.invoices.length, 'factura', 'facturas')}).`}
           confirmLabel="Restaurar"
           onConfirm={() => {
-            replaceAll({ ...backup, settings: { ...backup.settings, ai: s.ai, onboarded: true } });
-            toast('Respaldo restaurado');
+            // Los archivos del respaldo se guardan recién ahora (si se cancela, no queda nada)
+            restoreBackup(backup, { ai: s.ai, onboarded: true }).then(
+              () => toast('Respaldo restaurado'),
+              (e) => {
+                console.error(e);
+                toast('No se pudo restaurar el respaldo');
+              },
+            );
           }}
           onClose={() => setBackup(null)}
+        />
+      )}
+      {forgetting && (
+        <ConfirmSheet
+          title="¿Olvidar lo aprendido?"
+          message={`Se olvidan ${plural(learnedCount, 'comercio o palabra', 'comercios y palabras')} de las facturas y la tarjeta, también los que marcaste «No es un gasto». La próxima vez te los vuelve a preguntar.`}
+          confirmLabel="Olvidar"
+          danger
+          onConfirm={forget}
+          onClose={() => setForgetting(false)}
         />
       )}
       {wiping && (

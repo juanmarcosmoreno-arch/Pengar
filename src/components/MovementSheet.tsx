@@ -1,5 +1,5 @@
 import { CreditCard, Paperclip, Trash2 } from 'lucide-react';
-import { useState } from 'react';
+import { useId, useState } from 'react';
 import { monthOf, today } from '../domain/dates';
 import { formatMoney, parseAmount } from '../domain/money';
 import { clampDay, newRecurring, recurringOf } from '../domain/recurring';
@@ -30,6 +30,7 @@ export function MovementSheet({ movement, kind: initialKind = 'gasto', preset, o
 }) {
   const { data, addMovement, updateMovement, deleteMovement, update, upsertRecurring } = useStore();
   const toast = useToast();
+  const id = useId();
   const c = data.settings.currency;
   const start = movement ?? preset;
   const [kind, setKind] = useState<Kind>(start?.kind ?? initialKind);
@@ -84,11 +85,12 @@ export function MovementSheet({ movement, kind: initialKind = 'gasto', preset, o
         }
       >
         <div className="space-y-5">
-          <div className="flex rounded-full bg-sunken p-1">
+          <div className="flex rounded-full bg-sunken p-1" role="group" aria-label="Tipo">
             {(['gasto', 'ingreso'] as Kind[]).map((k) => (
               <button
                 key={k}
-                className={`flex-1 rounded-full py-2 text-lg ${kind === k ? 'bg-surface shadow-sm' : 'text-muted'}`}
+                aria-pressed={kind === k}
+                className={`tap-area flex-1 rounded-full py-2 text-lg ${kind === k ? 'bg-surface shadow-sm' : 'text-muted'}`}
                 onClick={() => { setKind(k); if (k !== kind) setRubroId(undefined); }}
               >
                 {k === 'gasto' ? 'Gasto' : 'Ingreso'}
@@ -117,12 +119,12 @@ export function MovementSheet({ movement, kind: initialKind = 'gasto', preset, o
 
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="label">Fecha</label>
-              <input type="date" className="field" value={date} onChange={(e) => setDate(e.target.value)} />
+              <label className="label" htmlFor={`${id}-fecha`}>Fecha</label>
+              <input id={`${id}-fecha`} type="date" className="field" value={date} onChange={(e) => setDate(e.target.value)} />
             </div>
             <div>
-              <label className="label">Nota</label>
-              <input className="field" value={note} onChange={(e) => setNote(e.target.value)} placeholder="Opcional" />
+              <label className="label" htmlFor={`${id}-nota`}>Nota</label>
+              <input id={`${id}-nota`} className="field" value={note} onChange={(e) => setNote(e.target.value)} placeholder="Opcional" />
             </div>
           </div>
 

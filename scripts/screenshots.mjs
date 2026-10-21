@@ -245,7 +245,7 @@ async function run(scheme) {
   await page.getByRole('button', { name: 'Guardar' }).click();
   await page.getByRole('button', { name: 'Sumar', exact: true }).click();
   await page.getByRole('dialog').locator('input').fill('5500');
-  await page.getByRole('dialog').getByRole('button', { name: 'Sumar', exact: true }).click();
+  await page.getByRole('dialog').getByRole('button', { name: /^Sumar a «/ }).click();
   await page.getByRole('button', { name: '¡Bien!' }).waitFor();
   await shot('21-meta-cumplida');
   await page.getByRole('button', { name: '¡Bien!' }).click();
