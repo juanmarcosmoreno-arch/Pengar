@@ -11,7 +11,7 @@ import { addDays, addMonths, MONTHS, monthName, monthOf, monthRange, today } fro
 import { formatRate, validUsdRate, type UsdRate } from '../domain/fx';
 import { CARD_NAME_MAX, cardName, chosenCard, closingOf, hasUnnamedStatement, knownCards, sameCard, sameNameOtherCard, statementCommitments } from '../domain/installments';
 import { NBSP, parseDecimal, round2 } from '../domain/money';
-import { findDuplicates, isSpend, planillaMonths, toLocal, withoutInstallment, type StatementTx } from '../domain/statement';
+import { findDuplicates, isSpend, paymentDate, planillaMonths, toLocal, withoutInstallment, type StatementTx } from '../domain/statement';
 import {
   applyCredits,
   creditTargets,
@@ -229,6 +229,13 @@ function Review({ draft, onDone, onRetry, onDirty }: { draft: StatementDraft; on
 
   // El cierre: el mes de los gastos que van con su fecha y de las cuotas que siguen
   const closing = draft.period?.to ?? txs.map((t) => t.date).sort().at(-1);
+  // Los gastos se descuentan el mes en que se paga la tarjeta (el del vencimiento), con la fecha de cada compra en la
+  // nota; o, si se elige, cada compra en su fecha. Un archivo de varios meses va siempre con las fechas de las compras
+  const oneMonth = !!draft.period && (Date.parse(draft.period.to) - Date.parse(draft.period.from)) / 86400_000 <= 35;
+  const payDay = closing && oneMonth ? paymentDate(closing, draft.due) : undefined;
+  const [atPayment, setAtPayment] = useState(true);
+  const shift = !!payDay && atPayment;
+  const dateOf = (i: number) => (shift ? payDay! : txs[i].date);
   // La tarjeta: la que se leyó (o el nombre que se le puso la última vez a esa) o, si no se reconoció (o está mal),
   // la que se elija o se escriba. Va en el estado de cuenta y en la nota de cada gasto; con el mismo nombre todos los
   // meses se juntan sus cuotas. Se pregunta si no se leyó, si no es una de las ya usadas, si ya hay otra con ese
@@ -286,7 +293,13 @@ function Review({ draft, onDone, onRetry, onDirty }: { draft: StatementDraft; on
       section[g.key] = known === NOT_SPEND ? 'excluido' : known ? 'conocido' : 'nuevo';
       if (known && known !== NOT_SPEND) choice[g.key] = known;
     }
-    return { section, choice, groups: all, months: planillaMonths(txs, data.movements) };
+    return {
+      section,
+      choice,
+      groups: all,
+      months: planillaMonths(txs, data.movements),
+      monthsAtPayment: payDay ? planillaMonths(txs.map((t) => ({ ...t, date: payDay })), data.movements) : [],
+    };
   });
   const [section, setSection] = useState(fixed.section);
   const [choice, setChoice] = useState(fixed.choice);
@@ -329,10 +342,12 @@ function Review({ draft, onDone, onRetry, onDirty }: { draft: StatementDraft; on
   }, [groups]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const local = (i: number) => toLocal(txs[i], rateOf(i));
-  const skipMonth = (i: number) => skipPlanilla && fixed.months.includes(monthOf(txs[i].date));
+  // Los meses que ya tienen los totales de la planilla (con las fechas con que se guardaría)
+  const months = shift ? fixed.monthsAtPayment : fixed.months;
+  const skipMonth = (i: number) => skipPlanilla && months.includes(monthOf(dateOf(i)));
   const rubroOf = (key: string) => (excluded.has(key) ? undefined : choice[key]?.rubroId);
   const monthName = (m: string) => MONTHS[Number(m.slice(5, 7)) - 1];
-  const monthsText = joinAnd(fixed.months.map(monthName));
+  const monthsText = joinAnd(months.map(monthName));
 
   // Lo que se guarda: un gasto por compra (las de los meses de la planilla, si se saltean, no)
   const rows: { i: number; rubroId: string; merchant: string }[] = [];
@@ -350,7 +365,12 @@ function Review({ draft, onDone, onRetry, onDirty }: { draft: StatementDraft; on
   const targets = rows.map((r) => txs[r.i]);
   const amounts = applyCredits(rows.map((r) => local(r.i)), targets, [...subtract].map((i) => ({ ...txs[i], amount: local(i) })));
   const movements = rows
-    .map((r, k) => ({ date: txs[r.i].date, amount: amounts[k], rubroId: r.rubroId, merchant: r.merchant, note: statementNote(txs[r.i], cardLabel, rateOf(r.i)) }))
+    .map((r, k) => {
+      const tx = txs[r.i];
+      const bought = tx.purchaseDate ?? tx.date;
+      const note = statementNote(shift && bought !== payDay ? { ...tx, purchaseDate: bought } : tx, cardLabel, rateOf(r.i));
+      return { date: dateOf(r.i), amount: amounts[k], rubroId: r.rubroId, merchant: r.merchant, note, ...(shift && bought !== payDay ? { purchased: bought } : {}) };
+    })
     .filter((m) => m.amount > 0);
   const total = round2(movements.reduce((s, m) => s + m.amount, 0));
 
@@ -465,7 +485,7 @@ function Review({ draft, onDone, onRetry, onDirty }: { draft: StatementDraft; on
     // Los meses de la planilla de este comercio (no todos los de la planilla)
     const skippedIdx = g.idx.filter(skipMonth);
     const skipped = skippedIdx.length;
-    const skipMonths = [...new Set(skippedIdx.map((i) => monthOf(txs[i].date)))].sort();
+    const skipMonths = [...new Set(skippedIdx.map((i) => monthOf(dateOf(i))))].sort();
     const skipText = joinAnd(skipMonths.map(monthName));
     const n = skipped > 1 ? 'n' : '';
     const usdSum = round2(list.filter((t) => t.currency === 'usd').reduce((s, t) => s + t.amount, 0));
@@ -641,12 +661,27 @@ function Review({ draft, onDone, onRetry, onDirty }: { draft: StatementDraft; on
         </div>
       )}
 
-      {fixed.months.length > 0 && (
+      {payDay && (
+        <div className="card space-y-2 p-4">
+          <Toggle
+            checked={atPayment}
+            onChange={(v) => { setTouched(true); setAtPayment(v); }}
+            label={`Descontarlo en ${monthName(monthOf(payDay))}, cuando pagás la tarjeta`}
+          />
+          <p className="text-[15px] leading-snug text-muted">
+            {atPayment
+              ? `Los gastos van con la fecha del vencimiento (${dayMonth(payDay)}${draft.due ? '' : ', aproximada'}) y bajan lo que te queda ese mes. La nota de cada uno dice de cuándo es la compra.`
+              : 'Cada compra va con su fecha.'}
+          </p>
+        </div>
+      )}
+
+      {months.length > 0 && (
         <div className="card space-y-3 border-danger/40 p-4">
           <p className="flex gap-2 text-lg leading-snug">
             <TriangleAlert size={20} className="mt-0.5 shrink-0 text-danger" />
             <span>
-              {capital(monthsText)} ya {fixed.months.length === 1 ? 'tiene' : 'tienen'} los totales de tu planilla: si guardás estos gastos se van a contar dos veces.
+              {capital(monthsText)} ya {months.length === 1 ? 'tiene' : 'tienen'} los totales de tu planilla: si guardás estos gastos se van a contar dos veces.
             </span>
           </p>
           <Toggle checked={skipPlanilla} onChange={(v) => { setTouched(true); setSkipPlanilla(v); }} label={`No guardar las compras de ${monthsText}`} />

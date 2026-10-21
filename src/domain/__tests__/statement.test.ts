@@ -9,6 +9,7 @@ import {
   findDuplicates,
   installmentOf,
   installmentsAtClosing,
+  paymentDate,
   normalizeMerchant,
   parseStatementRows,
   parseStatementTable,
@@ -610,6 +611,20 @@ describe('período sin fechas escritas', () => {
   it('el 31 de marzo: un mes antes es el último de febrero', () => {
     const txs = parseStatementText('05/01/2026 MUEBLERIA CUOTA 8/10 100,00', { today: '2026-04-01' });
     expect(statementPeriod(txs, { closing: '2026-03-31' })).toEqual({ from: '2026-03-01', to: '2026-03-31' });
+  });
+});
+
+describe('los gastos del estado de cuenta se descuentan el mes en que se paga', () => {
+  it('el día del pago: el vencimiento, o 15 días después del cierre si no se leyó (o no cuadra)', () => {
+    expect(paymentDate('2026-09-25', '2026-10-08')).toBe('2026-10-08');
+    expect(paymentDate('2026-09-25')).toBe('2026-10-10');
+    expect(paymentDate('2026-09-25', '2026-03-01')).toBe('2026-10-10');
+  });
+  it('lo guardado con la fecha del pago se reconoce por la de la compra al subirlo otra vez', () => {
+    const txs = parseStatementText('12/09/2026 ALMACEN LOS ROBLES 1.210,50', { today: '2026-10-01' });
+    const saved = mov('2026-10-08', 1210.5, { id: 'p', origin: 'tarjeta', purchased: '2026-09-12' });
+    expect([...findDuplicates(txs, [saved])]).toEqual([[0, 'p']]);
+    expect(statementNote({ ...txs[0], purchaseDate: '2026-09-12' }, 'OCA', 1)).toBe('OCA · compra del 12/9/2026');
   });
 });
 

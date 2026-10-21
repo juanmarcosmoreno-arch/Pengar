@@ -57,6 +57,8 @@ export interface Movement {
   origin: Origin;
   /** Total de un mes entero (importado de la planilla, sin días) */
   monthly?: boolean;
+  /** Fecha de la compra, si el gasto va con otra (la del pago de la tarjeta: se descuenta el mes en que se paga) */
+  purchased?: string;
   createdAt: number;
   /**
    * En un hogar compartido: quién lo anotó (el id del integrante, que no cambia aunque entre desde otro teléfono; el

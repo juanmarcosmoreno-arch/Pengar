@@ -421,6 +421,15 @@ export function installmentsAtClosing(txs: StatementTx[], period: { from: string
   });
 }
 
+/**
+ * Cuándo se paga el estado de cuenta: el vencimiento, si se leyó y cuadra con el cierre; si no, 15 días después del
+ * cierre (en Uruguay se paga a principios o mediados del mes siguiente)
+ */
+export function paymentDate(closing: string, due?: string): string {
+  const days = due ? dayNumber(due) - dayNumber(closing) : -1;
+  return due && days >= 0 && days <= 40 ? due : addDays(closing, 15);
+}
+
 // --- Tipo de movimiento y cuotas -------------------------------------------------------------------------
 
 const SALDO = /^saldo\b|\bsaldo (anterior|contado|actual|a pagar|deudor|financiado|total|al cierre|a favor|pendiente|del periodo)\b|total a pagar|\bpago minimo\b|minimo a pagar|\bpago contado\b|\blimite\b|\bdisponible\b|^total\b|\bsub ?total\b/;
@@ -1246,7 +1255,9 @@ export function findDuplicates(
       if (tx.installment && cuota && cuota !== tx.installment) continue;
       // Una cuota guardada (quizá llevada al cierre) no es una compra nueva de esos días por el mismo monto
       if (!tx.installment && cuota) continue;
-      const days = (iso: string) => Math.abs(dayNumber(m.date) - dayNumber(iso));
+      // Lo guardado con la fecha del pago de la tarjeta se compara también con la de la compra
+      const days = (iso: string) =>
+        Math.min(Math.abs(dayNumber(m.date) - dayNumber(iso)), m.purchased ? Math.abs(dayNumber(m.purchased) - dayNumber(iso)) : Infinity);
       let dDays: number;
       if (tx.purchaseDate) {
         // La cuota de una compra vieja: la misma cuota (en el cierre o, guardada antes, con la fecha de la compra), o lo

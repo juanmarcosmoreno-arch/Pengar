@@ -48,7 +48,7 @@ export interface StatementToSave {
   card?: string;
   /** Cierre del estado de cuenta */
   date?: string;
-  movements: Pick<Movement, 'date' | 'amount' | 'rubroId' | 'merchant' | 'note'>[];
+  movements: Pick<Movement, 'date' | 'amount' | 'rubroId' | 'merchant' | 'note' | 'purchased'>[];
   /** Clave del comercio → rubro (o NOT_SPEND) */
   learned: Settings['learned'];
   usdRate?: number;
@@ -118,7 +118,8 @@ interface Store {
   saveInvoice: (inv: InvoiceToSave) => Promise<{ count: number; fileKept: boolean }>;
   /** Guarda el archivo y los gastos, y aprende los comercios. Devuelve cuántos gastos y cómo deshacerlo */
   saveStatement: (st: StatementToSave) => Promise<{ count: number; undo: () => void; fileKept: boolean }>;
-  deleteInvoice: (id: string) => void;
+  /** `withMovements`: también los gastos que se guardaron con él (para volver a subir un estado de cuenta) */
+  deleteInvoice: (id: string, withMovements?: boolean) => void;
   /** Otro nombre para la tarjeta de un estado de cuenta guardado (también en la nota de sus gastos) */
   renameStatementCard: (id: string, name: string) => void;
   upsertCategory: (c: Category) => void;
@@ -597,7 +598,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         mime: st.mime,
         date: st.date,
         total: round2(movements.reduce((s, m) => s + m.amount, 0)),
-        items: movements.map((m) => ({ description: m.merchant ?? '', amount: m.amount, rubroId: m.rubroId, date: m.date })),
+        items: movements.map((m) => ({ description: m.merchant ?? '', amount: m.amount, rubroId: m.rubroId, date: m.purchased ?? m.date })),
         installments: st.installments,
         ...(st.limit != null ? { limit: st.limit } : {}),
         ...(st.available != null ? { available: st.available } : {}),
@@ -617,12 +618,14 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       });
       return { count: movements.length, undo, fileKept };
     },
-    deleteInvoice: (id) => {
+    deleteInvoice: (id, withMovements = false) => {
       const set = dataset.current;
       update((d) => ({
         ...d,
         invoices: d.invoices.filter((i) => i.id !== id),
-        movements: d.movements.map((m) => (m.invoiceId === id ? { ...m, invoiceId: undefined } : m)),
+        movements: withMovements
+          ? d.movements.filter((m) => m.invoiceId !== id)
+          : d.movements.map((m) => (m.invoiceId === id ? { ...m, invoiceId: undefined } : m)),
       }));
       whenSaved(() => deleteFile(id, set));
     },

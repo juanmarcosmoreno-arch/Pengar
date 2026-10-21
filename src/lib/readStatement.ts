@@ -35,6 +35,8 @@ export interface StatementDraft {
   /** Límite de crédito y crédito disponible, si los trae */
   limit?: number;
   available?: number;
+  /** Vencimiento (cuándo se paga), si lo trae */
+  due?: string;
   /**
    * Lo que el estado de cuenta cobra (positivo) o acredita (negativo) sin que aparezca como movimiento, por moneda
    * (balanceGaps). Lo que cobra de más va también en `txs`, como un cargo para revisar (balanceCharge)
@@ -126,6 +128,7 @@ function finish(draft: Omit<StatementDraft, 'period' | 'card' | 'usdRate' | 'usd
     period,
     ...(gaps.length ? { balanceGaps: gaps } : {}),
     card: info.card,
+    ...(info.due ? { due: info.due } : {}),
     ...(info.limit != null ? { limit: info.limit } : {}),
     ...(info.available != null ? { available: info.available } : {}),
     usdRate,

@@ -107,7 +107,7 @@ export function statementNote(tx: StatementTx, card: string | undefined, usdRate
   const parts = [
     card,
     tx.installment && `cuota ${tx.installment}`,
-    tx.installment && tx.purchaseDate && `compra del ${dayMonthYear(tx.purchaseDate)}`,
+    tx.purchaseDate && `compra del ${dayMonthYear(tx.purchaseDate)}`,
     tx.currency === 'usd' && `${usd(tx.amount)} × ${formatRate(usdRate)}`,
   ].filter(Boolean);
   return parts.length ? parts.join(' · ') : undefined;
