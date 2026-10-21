@@ -177,8 +177,17 @@ export function normalizeData(d: Partial<Omit<Data, 'version'>> & { version?: nu
       usdRate: typeof s.usdRate === 'number' && Number.isFinite(s.usdRate) && s.usdRate > 0 ? s.usdRate : undefined,
       lastReportSeen: isMonth(s.lastReportSeen) ? s.lastReportSeen : undefined,
       sharedExtra: s.sharedExtra && typeof s.sharedExtra === 'object' && !Array.isArray(s.sharedExtra) ? s.sharedExtra : undefined,
+      recovery: validRecovery(s.recovery),
     },
   };
+}
+
+/** La llave del hogar (de un respaldo, o rota): sin el largo de las que arma la app no sirve */
+function validRecovery(r: unknown): Settings['recovery'] {
+  if (!r || typeof r !== 'object') return undefined;
+  const { token, householdId, householdName } = r as Record<string, unknown>;
+  if (typeof token !== 'string' || token.length < 32 || token.length > 200 || typeof householdId !== 'string' || !householdId) return undefined;
+  return { token, householdId, householdName: typeof householdName === 'string' ? householdName : '' };
 }
 
 const isMonth = (v: unknown): v is string => typeof v === 'string' && /^\d{4}-(0[1-9]|1[0-2])$/.test(v);

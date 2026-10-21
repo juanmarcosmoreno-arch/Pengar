@@ -7,7 +7,9 @@ insert into auth.users (id, email) values
   ('00000000-0000-0000-0000-00000000000a', 'ana@ejemplo.com'),
   ('00000000-0000-0000-0000-00000000000b', 'bruno@ejemplo.com'),
   ('00000000-0000-0000-0000-00000000000c', 'carla@ejemplo.com'),
-  ('00000000-0000-0000-0000-00000000000d', 'dani@ejemplo.com');
+  ('00000000-0000-0000-0000-00000000000d', 'dani@ejemplo.com'),
+  ('00000000-0000-0000-0000-00000000000e', 'dani-telefono-nuevo@ejemplo.com'),
+  ('00000000-0000-0000-0000-00000000000f', 'dani-otro-telefono@ejemplo.com');
 
 -- Sin sesión (anon) no se puede nada
 set local role anon;
@@ -27,9 +29,9 @@ reset role;
 
 set local role authenticated;
 
--- Ana crea un hogar
+-- Ana crea un hogar (con su llave para volver a entrar)
 set local request.jwt.claim.sub = '00000000-0000-0000-0000-00000000000a';
-select id as hh, invite_code as code from public.pengar_create_household('  Casa de Ana  ', 'Ana') \gset
+select id as hh, invite_code as code from public.pengar_create_household('  Casa de Ana  ', 'Ana', 'llave-de-ana-0123456789abcdefghijklmnop') \gset
 select set_config('t.hh', :'hh', true) as x \gset ignored_
 select set_config('t.code', :'code', true) as x \gset ignored_
 do $$ begin
@@ -37,7 +39,25 @@ do $$ begin
   assert (select name from public.pengar_households) = 'Casa de Ana', 'nombre sin espacios de más';
   assert (select count(*) from public.pengar_members) = 1, 'Ana es miembro';
   assert (select display_name from public.pengar_members) = 'Ana', 'con su nombre';
+  assert (select member_id from public.pengar_members) = auth.uid(), 'su id de integrante es el de su usuario';
+  -- El hash de la llave no lo lee nadie (tampoco ella) ni se cambia a mano
+  begin
+    perform recovery_hash from public.pengar_members;
+    raise exception 'el hash de la llave no se tiene que poder leer';
+  exception when insufficient_privilege then null;
+  end;
+  begin
+    update public.pengar_members set recovery_hash = repeat('0', 64);
+    raise exception 'el hash no se cambia a mano';
+  exception when insufficient_privilege then null;
+  end;
 end $$;
+reset role;
+do $$ begin
+  assert (select recovery_hash from public.pengar_members where user_id = '00000000-0000-0000-0000-00000000000a')
+    = encode(sha256(convert_to('llave-de-ana-0123456789abcdefghijklmnop', 'UTF8')), 'hex'), 'se guarda el hash, no la llave';
+end $$;
+set local role authenticated;
 
 -- Sus registros: la hora y quién lo cambió los pone el servidor (aunque el teléfono mande otra cosa)
 insert into public.pengar_records (household_id, kind, id, data, updated_at, updated_by)
@@ -218,22 +238,92 @@ do $$ begin
   end;
 end $$;
 
--- Dani entra con un teléfono que después pierde: otro integrante lo saca (a sí mismo no, para eso está salir)
+-- Dani entra con su llave
 set local request.jwt.claim.sub = '00000000-0000-0000-0000-00000000000d';
-select 1 as x from public.pengar_join_household(:'newcode', 'Dani') \gset ignored_
+do $$
+declare
+  r record;
+begin
+  select * into r from public.pengar_join_household(current_setting('t.newcode'), 'Dani', 'llave-de-dani-0123456789abcdefghijklmnop');
+  assert not r.reclaimed, 'la primera vez es un integrante nuevo';
+  assert r.member_id = auth.uid() and r.display_name = 'Dani', 'con su id y su nombre';
+  insert into public.pengar_records (household_id, kind, id, data)
+  values (current_setting('t.hh')::uuid, 'movement', 'de-dani', jsonb_build_object('createdBy', r.member_id));
+  begin
+    perform public.pengar_join_household(current_setting('t.newcode'), null, 'corta');
+    raise exception 'una llave corta no sirve';
+  exception when invalid_parameter_value then null;
+  end;
+end $$;
+
+-- Dani cambia de teléfono (otro usuario) y entra con el código y la misma llave (la de un respaldo): vuelve a ser Dani.
+-- No se suma otro integrante, sigue su id (lo que anotó dice «Anotado por Dani») y el teléfono de antes queda afuera
+set local request.jwt.claim.sub = '00000000-0000-0000-0000-00000000000e';
+do $$
+declare
+  r record;
+begin
+  select * into r from public.pengar_join_household(current_setting('t.newcode'), 'Dani', 'llave-de-dani-0123456789abcdefghijklmnop');
+  assert r.reclaimed, 'volvió a entrar con su llave';
+  assert r.member_id = '00000000-0000-0000-0000-00000000000d' and r.display_name = 'Dani', 'es el mismo integrante, con su nombre';
+  assert r.id = current_setting('t.hh')::uuid, 'en el mismo hogar';
+  assert (select count(*) from public.pengar_members) = 3, 'Ana, Bruno y Dani: no se sumó otro';
+  assert (select user_id from public.pengar_members where member_id = '00000000-0000-0000-0000-00000000000d') = auth.uid(), 'Dani es este teléfono';
+  assert (select data ->> 'createdBy' from public.pengar_records where id = 'de-dani') = r.member_id::text, 'lo que anotó sigue siendo suyo';
+  -- Un reintento no duplica
+  select * into r from public.pengar_join_household(current_setting('t.newcode'), null, 'llave-de-dani-0123456789abcdefghijklmnop');
+  assert r.reclaimed and r.display_name = 'Dani', 'el reintento es lo mismo';
+  assert (select count(*) from public.pengar_members) = 3, 'sin duplicar';
+end $$;
+set local request.jwt.claim.sub = '00000000-0000-0000-0000-00000000000d';
+do $$ begin
+  assert (select count(*) from public.pengar_records) = 0, 'el teléfono de antes ya no ve nada';
+  assert (select count(*) from public.pengar_households) = 0, 'ni el hogar';
+end $$;
+
+-- Otro teléfono más de Dani entra primero sin la llave (un integrante nuevo) y después con ella: queda uno solo
+set local request.jwt.claim.sub = '00000000-0000-0000-0000-00000000000f';
+do $$
+declare
+  r record;
+begin
+  select * into r from public.pengar_join_household(current_setting('t.newcode'), 'Dani', null);
+  assert not r.reclaimed and (select count(*) from public.pengar_members) = 4, 'sin la llave, otro integrante';
+  select * into r from public.pengar_join_household(current_setting('t.newcode'), 'Dani', 'llave-de-dani-0123456789abcdefghijklmnop');
+  assert r.reclaimed and r.member_id = '00000000-0000-0000-0000-00000000000d', 'con la llave, Dani';
+  assert (select count(*) from public.pengar_members) = 3, 'el integrante de más se fue';
+  -- Una llave nueva (la de antes deja de servir)
+  perform public.pengar_set_recovery(current_setting('t.hh')::uuid, 'otra-llave-de-dani-0123456789abcdefghijklm');
+end $$;
+set local request.jwt.claim.sub = '00000000-0000-0000-0000-00000000000e';
+do $$
+declare
+  r record;
+begin
+  begin
+    perform public.pengar_set_recovery(current_setting('t.hh')::uuid, 'llave-de-dani-0123456789abcdefghijklmnop');
+    raise exception 'quien no es miembro no pone llaves';
+  exception when insufficient_privilege then null;
+  end;
+  select * into r from public.pengar_join_household(current_setting('t.newcode'), 'Dani viejo', 'llave-de-dani-0123456789abcdefghijklmnop');
+  assert not r.reclaimed and r.member_id = auth.uid(), 'la llave vieja ya no sirve: es otro integrante';
+end $$;
+
+-- Ana saca a los dos teléfonos de Dani (a sí misma no, para eso está salir)
 set local request.jwt.claim.sub = '00000000-0000-0000-0000-00000000000a';
 do $$ begin
-  assert (select count(*) from public.pengar_members) = 3, 'Ana, Bruno y Dani';
+  assert (select count(*) from public.pengar_members) = 4, 'Ana, Bruno y los dos de Dani';
   begin
     perform public.pengar_remove_member(current_setting('t.hh')::uuid, auth.uid());
     raise exception 'debería haber fallado';
   exception when invalid_parameter_value then null;
   end;
-  perform public.pengar_remove_member(current_setting('t.hh')::uuid, '00000000-0000-0000-0000-00000000000d');
+  perform public.pengar_remove_member(current_setting('t.hh')::uuid, '00000000-0000-0000-0000-00000000000e');
+  perform public.pengar_remove_member(current_setting('t.hh')::uuid, '00000000-0000-0000-0000-00000000000f');
   assert (select count(*) from public.pengar_members) = 2, 'Dani ya no está';
   assert (select what from public.pengar_signals where household_id = current_setting('t.hh')::uuid) = 'members', 'aviso de integrantes';
 end $$;
-set local request.jwt.claim.sub = '00000000-0000-0000-0000-00000000000d';
+set local request.jwt.claim.sub = '00000000-0000-0000-0000-00000000000f';
 do $$ begin
   assert (select count(*) from public.pengar_records) = 0, 'Dani ya no ve nada';
 end $$;
@@ -275,8 +365,8 @@ begin
   end loop;
   assert (select array_agg(proname::text order by proname) from pg_proc where proname like 'pengar\_%' and prosecdef)
     = array['pengar_can_use_file', 'pengar_create_household', 'pengar_is_member', 'pengar_join_household',
-            'pengar_leave_household', 'pengar_regenerate_code', 'pengar_remove_member', 'pengar_signal_household',
-            'pengar_signal_members', 'pengar_signal_records'], 'security definer solo las que lo necesitan';
+            'pengar_leave_household', 'pengar_regenerate_code', 'pengar_remove_member', 'pengar_set_recovery',
+            'pengar_signal_household', 'pengar_signal_members', 'pengar_signal_records'], 'security definer solo las que lo necesitan';
   assert exists (select 1 from pg_publication_tables where pubname = 'supabase_realtime' and tablename = 'pengar_signals'), 'realtime';
   assert not exists (select 1 from pg_publication_tables where pubname = 'supabase_realtime' and tablename in ('pengar_records', 'pengar_members', 'pengar_households')),
     'las tablas de verdad no van a Realtime (sus DELETE no respetan la RLS)';

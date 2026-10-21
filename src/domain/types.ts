@@ -58,7 +58,10 @@ export interface Movement {
   /** Total de un mes entero (importado de la planilla, sin días) */
   monthly?: boolean;
   createdAt: number;
-  /** En un hogar compartido: quién lo anotó (id de usuario de Supabase). Lo pone lib/sync al mandarlo */
+  /**
+   * En un hogar compartido: quién lo anotó (el id del integrante, que no cambia aunque entre desde otro teléfono; el
+   * de los que ya estaban es su usuario de Supabase). Lo pone lib/sync al mandarlo
+   */
   createdBy?: string;
 }
 
@@ -117,7 +120,8 @@ export interface Recurring {
 /**
  * Ajustes que van con los datos (y en los respaldos). Los que son solo de este teléfono (el bloqueo con Face ID, el
  * aviso del día 1) están en lib/device.ts. En un hogar compartido se comparten la moneda, lo aprendido y la última
- * cotización escrita; `name`, `ai`, `onboarded`, `example`, `demo` y `lastReportSeen` quedan en cada teléfono (domain/sync.ts).
+ * cotización escrita; `name`, `ai`, `onboarded`, `example`, `demo`, `lastReportSeen` y `recovery` quedan en cada teléfono
+ * (domain/sync.ts).
  */
 export interface Settings {
   name: string;
@@ -148,6 +152,18 @@ export interface Settings {
   lastReportSeen?: string;
   /** Ajustes del hogar que trajo una versión más nueva de la app y esta no conoce: se guardan y se mandan tal cual */
   sharedExtra?: Record<string, unknown>;
+  /**
+   * Hogar compartido: la llave de este integrante para volver a entrar desde otro teléfono (la pone lib/sync). Va en los
+   * respaldos para eso, pero nunca al hogar: con el código y esta llave, otro teléfono pasa a ser este integrante
+   */
+  recovery?: Recovery;
+}
+
+/** La llave para volver a entrar al hogar, con de qué hogar es (para decirlo en la pantalla) */
+export interface Recovery {
+  token: string;
+  householdId: string;
+  householdName: string;
 }
 
 export interface Data {
