@@ -91,3 +91,11 @@ describe('diezmo acumulado', () => {
     expect(normalizeData({ categories: [{ ...diezmo, ledger: { from: '2026-08', opening: -250 } }] }).categories[0].ledger).toEqual({ from: '2026-08', opening: -250 });
   });
 });
+
+describe('ingresos que no llevan diezmo', () => {
+  it('no cuentan para lo que hay que dar', () => {
+    const d = data([mov('sueldo', '2026-07-01', 100000), mov('sueldo', '2026-07-15', 20000, { noTithe: true })]);
+    const l = percentLedger(d, buildIndex(d), 'd', '2026-07');
+    expect(l.rows.at(-1)).toMatchObject({ income: 100000, expected: 10000 });
+  });
+});

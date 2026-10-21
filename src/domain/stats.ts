@@ -225,10 +225,12 @@ export interface MonthSummary {
  * estimar los «% del ingreso»): un mes cerrado sin ingresos espera 0, como el diezmo acumulado (domain/ledger)
  */
 export function incomeFor(data: Data, month: string, current?: string): { amount: number; estimated: boolean } {
-  const real = sum(incomes(data, { from: month, to: month }));
+  // Los ingresos que no llevan diezmo no cuentan
+  const counted = (f: { from: string; to: string }) => sum(incomes(data, f).filter((m) => !m.noTithe));
+  const real = counted({ from: month, to: month });
   if (real > 0 || month !== current) return { amount: real, estimated: false };
   const prev = addMonths(month, -1);
-  return { amount: sum(incomes(data, { from: prev, to: prev })), estimated: true };
+  return { amount: counted({ from: prev, to: prev }), estimated: true };
 }
 
 export function budgetAmount(c: Category, income: number): number {

@@ -58,8 +58,9 @@ export function ledgerRows(data: Data, ix: Index, categoryId: string, from: stri
   for (const m of data.movements) {
     const month = monthOf(m.date);
     if (month < from || month > to) continue;
-    if (m.kind === 'ingreso') income.set(month, (income.get(month) ?? 0) + m.amount);
-    else if (ix.categoryOf(m)?.id === categoryId) given.set(month, (given.get(month) ?? 0) + m.amount);
+    if (m.kind === 'ingreso') {
+      if (!m.noTithe) income.set(month, (income.get(month) ?? 0) + m.amount);
+    } else if (ix.categoryOf(m)?.id === categoryId) given.set(month, (given.get(month) ?? 0) + m.amount);
   }
   let pending = opening;
   return monthRange(from, to).map((month) => {

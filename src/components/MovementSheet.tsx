@@ -88,11 +88,22 @@ export function MovementSheet({ movement, kind: initialKind = 'gasto', preset, o
       : 'Buscando la cotización del BCU…';
   const invoice = movement?.invoiceId ? data.invoices.find((i) => i.id === movement.invoiceId) : undefined;
   const fixed = recurringOf(data, rubroId);
+  // Un ingreso lleva diezmo (cuenta para los «% del ingreso») salvo que se apague
+  const percentCat = data.categories.find((x) => x.budget.type === 'percentIncome');
+  const [tithe, setTithe] = useState(!movement?.noTithe);
+  const titheLabel = percentCat && /diezmo/i.test(percentCat.name) ? 'Lleva diezmo' : `Cuenta para «${percentCat?.name ?? ''}»`;
   const author = authorLabel(useAuthors(), movement?.createdBy);
 
   const save = () => {
     if (!valid) return;
-    const fields = { kind, amount: amount!, rubroId: rubroId!, date, note: (inUsd ? withUsdNote(note, typed!, rate!) : note.trim()) || undefined };
+    const fields = {
+      kind,
+      amount: amount!,
+      rubroId: rubroId!,
+      date,
+      note: (inUsd ? withUsdNote(note, typed!, rate!) : note.trim()) || undefined,
+      noTithe: kind === 'ingreso' && percentCat && !tithe ? true : undefined,
+    };
     if (movement) updateMovement(movement.id, fields);
     else addMovement({ ...fields, origin: 'manual', ...(preset?.id ? { id: preset.id } : {}) });
     // «Se repite todos los meses»: queda como gasto fijo, ya anotado en el mes de este movimiento
@@ -209,6 +220,8 @@ export function MovementSheet({ movement, kind: initialKind = 'gasto', preset, o
               <input id={`${id}-nota`} className="field" value={note} onChange={(e) => setNote(e.target.value)} placeholder="Opcional" />
             </div>
           </div>
+
+          {kind === 'ingreso' && percentCat && <Toggle checked={tithe} onChange={setTithe} label={titheLabel} />}
 
           {!movement && (fixed
             ? <p className="text-[15px] text-muted">Se anota todos los meses · Más → Gastos fijos</p>

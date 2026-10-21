@@ -57,6 +57,8 @@ export interface Movement {
   origin: Origin;
   /** Total de un mes entero (importado de la planilla, sin días) */
   monthly?: boolean;
+  /** Un ingreso que no cuenta para los «% del ingreso» (no lleva diezmo) */
+  noTithe?: boolean;
   /** Fecha de la compra, si el gasto va con otra (la del pago de la tarjeta: se descuenta el mes en que se paga) */
   purchased?: string;
   createdAt: number;
