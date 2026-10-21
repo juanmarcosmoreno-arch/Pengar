@@ -53,7 +53,7 @@ const vitrinaStyle = `
 
 // loading="lazy": con la vitrina oculta (en el teléfono) la imagen no se baja
 const vitrina = `<aside class="vitrina" lang="es" aria-label="Sobre esta vista previa">
-  <img src="assets/${principal}" alt="" width="129" height="180" loading="lazy">
+  <img src="assets/${principal}" alt="" width="167" height="180" loading="lazy">
   <h1>Pengar</h1>
   <p class="lema">Tu dinero, más simple.</p>
   <h2>Para probar</h2>

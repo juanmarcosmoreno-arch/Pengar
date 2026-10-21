@@ -143,6 +143,19 @@ function UsdToday() {
   );
 }
 
+/** La animación del suricata al abrir (components/Intro): es de este teléfono, como el bloqueo */
+function IntroSetting() {
+  const { device, updateDevice } = useStore();
+  return (
+    <Section title="Al abrir">
+      <Toggle checked={device.intro} onChange={(intro) => updateDevice({ intro })} label="El suricata sale del pozo" />
+      <p className="text-[14px] text-muted">
+        Una animación cortita cada vez que abrís Pengar (con un toque la salteás). Con «Reducir movimiento» del iPhone no se muestra.
+      </p>
+    </Section>
+  );
+}
+
 const AFTER_LABEL: Record<LockAfter, string> = { 0: 'Al instante', 60: '1 minuto', 300: '5 minutos' };
 
 /** Bloqueo con Face ID (o el código del iPhone): solo en el iPhone; es de este teléfono, no va en los respaldos */
@@ -397,6 +410,8 @@ function DemoMode() {
   const toast = useToast();
   const exit = useExitDemo();
   const [asking, setAsking] = useState(false);
+  // Mientras se guardan tus datos y se arma el demo (si el hogar estaba mandando algo, espera que termine)
+  const [entering, setEntering] = useState(false);
   if (demo) {
     return (
       <Section title="Modo demo">
@@ -416,7 +431,7 @@ function DemoMode() {
         <Presentation size={18} className="mt-0.5 shrink-0 text-primary" />
         <span>{DEMO_EXPLAINED}</span>
       </p>
-      <button className="btn-outline w-full" onClick={() => setAsking(true)}>Pasar al modo demo</button>
+      <button className="btn-outline w-full" disabled={entering} onClick={() => setAsking(true)}>{entering ? 'Preparando el demo…' : 'Pasar al modo demo'}</button>
       <p className="text-[14px] text-muted">
         {canLock ? 'Para volver te pide Face ID o el código del iPhone, aunque no tengas el bloqueo prendido: quien mira la app no puede ver tus datos. ' : ''}
         Mientras tanto no se sincroniza el hogar compartido ni se hacen respaldos.
@@ -427,10 +442,12 @@ function DemoMode() {
           message={`Vas a ver datos inventados para mostrar la app. Tus datos quedan guardados como están y vuelven al salir.${hh ? ` Mientras tanto no se sincroniza el hogar «${hh.name}»: lo que falte mandar se manda al salir.` : ''}`}
           confirmLabel="Pasar al modo demo"
           onConfirm={() => {
+            setEntering(true);
             enterDemo().then(
               () => toast('Modo demo: los datos son inventados'),
               (e) => {
                 console.error(e);
+                setEntering(false);
                 toast('No se pudo pasar al modo demo: probá de nuevo');
               },
             );
@@ -546,6 +563,7 @@ export function Settings({ onBack }: { onBack: () => void }) {
 
         {/* En el modo demo no se muestra (se está mostrando la app a otra persona) */}
         {canLock && !demo && <Privacy />}
+        <IntroSetting />
 
         <Section title="Facturas y rubros con IA">
           {apple && (

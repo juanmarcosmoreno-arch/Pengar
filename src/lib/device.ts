@@ -22,23 +22,27 @@ export interface Device {
    * con esto prendido arranca en el demo; salir pide Face ID o el código del iPhone
    */
   demo: boolean;
+  /** La animación del suricata al abrir la app (components/Intro): prendida de fábrica */
+  intro: boolean;
 }
 
 const autoBackupByDefault = isNative && !isPreview;
 
-export const defaultDevice = (): Device => ({ lock: { enabled: false, after: 0 }, reportReminder: false, autoBackup: { enabled: autoBackupByDefault }, demo: false });
+export const defaultDevice = (): Device => ({ lock: { enabled: false, after: 0 }, reportReminder: false, autoBackup: { enabled: autoBackupByDefault }, demo: false, intro: true });
 
 /** Completa lo que falte y descarta lo que no sirve (lo guardado por otra versión, o nada) */
 export function normalizeDevice(raw: unknown): Device {
   const base = defaultDevice();
   if (!raw || typeof raw !== 'object') return base;
-  const r = raw as { lock?: { enabled?: unknown; after?: unknown }; reportReminder?: unknown; autoBackup?: unknown; demo?: unknown };
+  const r = raw as { lock?: { enabled?: unknown; after?: unknown }; reportReminder?: unknown; autoBackup?: unknown; demo?: unknown; intro?: unknown };
   const after = LOCK_AFTER.find((a) => a === r.lock?.after) ?? base.lock.after;
   return {
     lock: { enabled: r.lock?.enabled === true, after },
     reportReminder: r.reportReminder === true,
     autoBackup: normalizeAutoBackup(r.autoBackup, autoBackupByDefault),
     demo: r.demo === true,
+    // Solo un «no» explícito la apaga (lo guardado antes de que existiera la tiene prendida)
+    intro: r.intro !== false,
   };
 }
 

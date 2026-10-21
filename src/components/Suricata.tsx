@@ -5,7 +5,7 @@
 const files = import.meta.glob<string>('../assets/suricata/*.webp', { eager: true, query: '?url', import: 'default' });
 
 export type Pose =
-  | 'principal' | 'saludando' | 'contento' | 'ahorrando' | 'pensando' | 'calculadora' | 'lista' | 'organizando'
+  | 'principal' | 'moneda' | 'saludando' | 'contento' | 'ahorrando' | 'pensando' | 'calculadora' | 'lista' | 'organizando'
   | 'analizando' | 'metas' | 'compras' | 'transportes' | 'casa' | 'celebrando'
   | 'cara-normal' | 'cara-feliz' | 'cara-sorprendido' | 'cara-pensando' | 'cara-preocupado' | 'cara-decidido'
   | 'cara-triste' | 'cara-entusiasmado' | 'cara-curioso';

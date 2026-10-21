@@ -83,8 +83,11 @@ for i, name in enumerate(faces):
     x1 = starts[i + 1] - 5 if i + 1 < len(starts) else 1525
     save(sheet.crop((x0, 790, x1, 950)), f'cara-{name}', 300)
 
-main = unpaper(Image.open(IMG + 'suricata-principal.webp').crop((230, 110, 980, 1160)))
+# El principal (bienvenida, bloqueo): pensando con la calculadora. El de la moneda queda como otra pose
+main = unpaper(Image.open(IMG + 'suricata-principal.webp').crop((110, 50, 1170, 1195)))
 save(main, 'principal', 640)
+coin = unpaper(Image.open(IMG + 'suricata-moneda.webp').crop((230, 110, 980, 1160)))
+save(coin, 'moneda', 640)
 
 # --- Ilustraciones de categorías: cada una es un círculo de color con el suricata ------------------------
 TILES = [

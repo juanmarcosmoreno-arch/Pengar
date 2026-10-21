@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { Intro, introAllowed } from './components/Intro';
 import { LockGate } from './components/LockScreen';
 import { MovementSheet, type MovementPreset } from './components/MovementSheet';
 import { Suricata } from './components/Suricata';
@@ -51,7 +52,28 @@ function SaveError({ onRetry }: { onRetry: () => void }) {
   );
 }
 
+/**
+ * La animación de entrada (el suricata sale del pozo y se vuelve a meter) una vez por arranque, si está prendida en
+ * este teléfono: no al volver de otra app. Mientras se va (el fundido de salida) ya se arma la app debajo, así que el
+ * bloqueo pide Face ID recién cuando la animación termina.
+ */
 export default function App() {
+  const { device, ready } = useStore();
+  // 'esperando': hasta leer los ajustes del teléfono no se sabe si va. Se decide una sola vez: prenderla en Ajustes no la muestra
+  const [intro, setIntro] = useState<'esperando' | 'si' | 'saliendo' | 'no'>('esperando');
+  useEffect(() => {
+    if (ready && intro === 'esperando') setIntro(device.intro && introAllowed() ? 'si' : 'no');
+  }, [ready, intro, device.intro]);
+  if (!ready || intro === 'esperando') return null;
+  return (
+    <>
+      {intro !== 'si' && <AppContent />}
+      {intro !== 'no' && <Intro onLeaving={() => setIntro('saliendo')} onDone={() => setIntro('no')} />}
+    </>
+  );
+}
+
+function AppContent() {
   const { data, device, ready, loadError, retryLoad, saveError, saveNow, markRecurring } = useStore();
   const [tab, setTab] = useState<Tab>('inicio');
   const [page, setPage] = useState<MorePage | null>(null);

@@ -22,7 +22,7 @@ beforeEach(() => mocks.kv.clear());
 describe('ajustes de este teléfono', () => {
   it('de fábrica: sin bloqueo ni aviso, con el respaldo automático prendido (en el iPhone)', async () => {
     const { device } = await fresh();
-    expect(await device.loadDevice()).toEqual({ lock: { enabled: false, after: 0 }, reportReminder: false, autoBackup: { enabled: true }, demo: false });
+    expect(await device.loadDevice()).toEqual({ lock: { enabled: false, after: 0 }, reportReminder: false, autoBackup: { enabled: true }, demo: false, intro: true });
   });
   it('lo guardado vuelve igual', async () => {
     const { device } = await fresh();
@@ -31,6 +31,7 @@ describe('ajustes de este teléfono', () => {
       reportReminder: true,
       autoBackup: { enabled: false, last: 1_790_000_000_000, lastHash: 'abc', failed: { at: 1_790_000_100_000, message: 'sin lugar' } },
       demo: true,
+      intro: false,
     };
     await device.saveDevice(saved);
     expect(mocks.kv.get('device')).toEqual(saved);
@@ -42,12 +43,16 @@ describe('ajustes de este teléfono', () => {
     expect(n(null)).toEqual(device.defaultDevice());
     expect(n('sí')).toEqual(device.defaultDevice());
     const auto = { enabled: true };
-    expect(n({ lock: { enabled: 'sí', after: 30 } })).toEqual({ lock: { enabled: false, after: 0 }, reportReminder: false, autoBackup: auto, demo: false });
-    expect(n({ lock: { enabled: true, after: 60 }, reportReminder: 1 })).toEqual({ lock: { enabled: true, after: 60 }, reportReminder: false, autoBackup: auto, demo: false });
-    expect(n({ lock: { enabled: true } })).toEqual({ lock: { enabled: true, after: 0 }, reportReminder: false, autoBackup: auto, demo: false });
+    expect(n({ lock: { enabled: 'sí', after: 30 } })).toEqual({ lock: { enabled: false, after: 0 }, reportReminder: false, autoBackup: auto, demo: false, intro: true });
+    expect(n({ lock: { enabled: true, after: 60 }, reportReminder: 1 })).toEqual({ lock: { enabled: true, after: 60 }, reportReminder: false, autoBackup: auto, demo: false, intro: true });
+    expect(n({ lock: { enabled: true } })).toEqual({ lock: { enabled: true, after: 0 }, reportReminder: false, autoBackup: auto, demo: false, intro: true });
     // El modo demo, solo si es true
     expect(n({ demo: 'sí' }).demo).toBe(false);
     expect(n({ demo: true }).demo).toBe(true);
+    // La animación al abrir, prendida salvo un «no» explícito
+    expect(n({ intro: false }).intro).toBe(false);
+    expect(n({ intro: 'no' }).intro).toBe(true);
+    expect(n({}).intro).toBe(true);
   });
   it('el respaldo automático: lo que no sirve se descarta y lo que falta queda de fábrica', async () => {
     const { device } = await fresh();
@@ -76,7 +81,7 @@ describe('migración: el aviso del día 1 pasa de los datos a este teléfono', (
     const { db, device } = await fresh();
     const data = await db.loadData();
     expect(data?.settings).not.toHaveProperty('reportReminder');
-    expect(await device.loadDevice()).toEqual({ lock: { enabled: false, after: 0 }, reportReminder: true, autoBackup: { enabled: true }, demo: false });
+    expect(await device.loadDevice()).toEqual({ lock: { enabled: false, after: 0 }, reportReminder: true, autoBackup: { enabled: true }, demo: false, intro: true });
     // Al guardar los datos de nuevo ya no lo llevan
     await db.saveData(data!);
     expect((mocks.kv.get('data') as { settings: object }).settings).not.toHaveProperty('reportReminder');
@@ -86,7 +91,7 @@ describe('migración: el aviso del día 1 pasa de los datos a este teléfono', (
     mocks.kv.set('device', { lock: { enabled: true, after: 60 }, reportReminder: false });
     const { db, device } = await fresh();
     await db.loadData();
-    expect(await device.loadDevice()).toEqual({ lock: { enabled: true, after: 60 }, reportReminder: false, autoBackup: { enabled: true }, demo: false });
+    expect(await device.loadDevice()).toEqual({ lock: { enabled: true, after: 60 }, reportReminder: false, autoBackup: { enabled: true }, demo: false, intro: true });
   });
   it('apagado (o algo raro) no crea nada', async () => {
     for (const on of [undefined, false, 'sí']) {
