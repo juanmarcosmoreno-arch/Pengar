@@ -1,4 +1,4 @@
-import { ArrowDown, ArrowUp, Camera, Minus, Plus, Target } from 'lucide-react';
+import { ArrowDown, ArrowUp, Camera, CreditCard, Minus, Plus } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { BudgetRows } from '../components/charts/BudgetRows';
 import { Columns } from '../components/charts/Columns';
@@ -19,13 +19,15 @@ import { useStore } from '../store/store';
 // El suricata saluda solo la primera vez que se abre Inicio en la sesión
 let greeted = false;
 
-export function Home({ onAdd, onScan, onEdit, onRecord, onGo }: {
+export function Home({ onAdd, onScan, onStatement, onEdit, onRecord, onGo }: {
   onAdd: (kind: Kind) => void;
   onScan: () => void;
+  /** Estado de cuenta de la tarjeta */
+  onStatement: () => void;
   onEdit: (m: Movement) => void;
   /** Anotar un gasto fijo (abre el formulario con su monto estimado) */
   onRecord: (r: Recurring) => void;
-  onGo: (where: 'movimientos' | 'mes' | 'presupuesto') => void;
+  onGo: (where: 'movimientos' | 'mes') => void;
 }) {
   const { data, ix } = useStore();
   const { money } = useMoney();
@@ -84,7 +86,7 @@ export function Home({ onAdd, onScan, onEdit, onRecord, onGo }: {
           { label: 'Gasto', icon: <Minus size={24} />, run: () => onAdd('gasto') },
           { label: 'Ingreso', icon: <Plus size={24} />, run: () => onAdd('ingreso') },
           { label: 'Factura', icon: <Camera size={24} />, run: onScan },
-          { label: 'Presupuesto', icon: <Target size={24} />, run: () => onGo('presupuesto') },
+          { label: 'Tarjeta', icon: <CreditCard size={24} />, run: onStatement },
         ].map((a) => (
           <button key={a.label} className="flex flex-col items-center gap-1 text-[15px]" onClick={a.run}>
             <span className="flex h-14 w-14 items-center justify-center rounded-full border border-primary/40 bg-soft/25 text-primary">{a.icon}</span>

@@ -1,17 +1,33 @@
 import { Share } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { shortDate } from '../domain/dates';
+import { dayMonth } from '../domain/statementReview';
 import type { Invoice } from '../domain/types';
 import { loadFile } from '../lib/db';
 import { NO_DOWNLOADS, saveOrShare } from '../lib/files';
 import { renderPdfPages } from '../lib/pdf';
 import { useMoney } from '../lib/useMoney';
+import { useStore } from '../store/store';
 import { Sheet } from './Sheet';
 import { Suricata } from './Suricata';
 import { useToast } from './Toast';
 
-/** Ver una factura guardada (foto o PDF) dentro de la app, con «Compartir o guardar» */
+/** «Estado de cuenta · Visa» (los estados de cuenta) o el comercio (las facturas) */
+export const invoiceTitle = (inv: Invoice) =>
+  inv.kind === 'estado' ? `Estado de cuenta${inv.card ? ` · ${inv.card}` : ''}` : inv.merchant || inv.fileName;
+
+/** «23 movimientos» o «3 renglones» */
+export function invoiceCount(inv: Invoice): string {
+  const n = inv.items.length;
+  return inv.kind === 'estado' ? `${n} ${n === 1 ? 'movimiento' : 'movimientos'}` : `${n} ${n === 1 ? 'renglón' : 'renglones'}`;
+}
+
+/**
+ * Ver una factura o un estado de cuenta guardado dentro de la app, con «Compartir o guardar». Las fotos y los PDF se
+ * muestran tal cual; las planillas (CSV, Excel) y el texto, como una tabla de lo que se guardó.
+ */
 export function InvoiceViewer({ invoice, onClose }: { invoice: Invoice; onClose: () => void }) {
+  const { ix } = useStore();
   const { money } = useMoney();
   const toast = useToast();
   const [file, setFile] = useState<Blob | null>(null);
@@ -20,6 +36,8 @@ export function InvoiceViewer({ invoice, onClose }: { invoice: Invoice; onClose:
   const [hidden, setHidden] = useState(0);
   const pagesBox = useRef<HTMLDivElement>(null);
   const isPdf = invoice.mime === 'application/pdf' || /\.pdf$/i.test(invoice.fileName);
+  const isImage = !isPdf && invoice.mime.startsWith('image/');
+  const noun = invoice.kind === 'estado' ? 'el estado de cuenta' : 'la factura';
 
   useEffect(() => {
     let alive = true;
@@ -36,7 +54,7 @@ export function InvoiceViewer({ invoice, onClose }: { invoice: Invoice; onClose:
         for (const c of pages) c.className = 'rounded-xl border border-line bg-white shadow-sm';
         box.replaceChildren(...pages);
         setHidden(total - pages.length);
-      } else {
+      } else if (isImage) {
         url = URL.createObjectURL(blob);
         setImageUrl(url);
       }
@@ -49,7 +67,7 @@ export function InvoiceViewer({ invoice, onClose }: { invoice: Invoice; onClose:
       alive = false;
       if (url) URL.revokeObjectURL(url);
     };
-  }, [invoice.id, isPdf]);
+  }, [invoice.id, isPdf, isImage]);
 
   const share = async () => {
     if (!file) return;
@@ -62,10 +80,12 @@ export function InvoiceViewer({ invoice, onClose }: { invoice: Invoice; onClose:
   };
 
   const details = [invoice.date && shortDate(invoice.date), invoice.total != null && money(invoice.total)].filter(Boolean);
+  // La planilla o el texto: lo que se guardó, sin esperar al archivo
+  const table = !isPdf && !isImage;
 
   return (
     <Sheet
-      title={invoice.merchant || 'Factura'}
+      title={invoice.kind === 'estado' ? invoiceTitle(invoice) : invoice.merchant || 'Factura'}
       onClose={onClose}
       tall
       footer={
@@ -77,19 +97,19 @@ export function InvoiceViewer({ invoice, onClose }: { invoice: Invoice; onClose:
       <div className="space-y-3">
         <div className="flex items-baseline justify-between gap-3 text-[16px] text-muted">
           <span className="min-w-0 truncate">{details.length ? details.join(' · ') : invoice.fileName}</span>
-          {invoice.items.length > 0 && <span className="shrink-0">{invoice.items.length} {invoice.items.length === 1 ? 'renglón' : 'renglones'}</span>}
+          {invoice.items.length > 0 && <span className="shrink-0">{invoiceCount(invoice)}</span>}
         </div>
 
-        {status === 'cargando' && (
+        {status === 'cargando' && !table && (
           <div className="flex flex-col items-center gap-3 py-16 text-muted">
             <div className="h-6 w-6 animate-spin rounded-full border-[3px] border-soft border-t-primary" />
-            Abriendo la factura…
+            Abriendo {noun}…
           </div>
         )}
-        {status === 'error' && (
+        {status === 'error' && !table && (
           <div className="flex flex-col items-center gap-2 px-4 py-12 text-center">
             <Suricata pose="cara-preocupado" size={90} />
-            <p className="text-xl">No se pudo abrir la factura</p>
+            <p className="text-xl">No se pudo abrir {noun}</p>
             <p className="text-muted">
               {file ? 'El archivo está guardado, pero no se puede mostrar acá. Probá con «Compartir o guardar».' : 'No se encontró el archivo en este teléfono.'}
             </p>
@@ -97,9 +117,23 @@ export function InvoiceViewer({ invoice, onClose }: { invoice: Invoice; onClose:
         )}
 
         {isPdf ? (
-          <div ref={pagesBox} className={`space-y-3 ${status === 'error' ? 'hidden' : ''}`} aria-label="Páginas de la factura" />
-        ) : imageUrl && status !== 'error' && (
-          <img src={imageUrl} alt="Factura" className="w-full rounded-xl border border-line" onError={() => setStatus('error')} />
+          <div ref={pagesBox} className={`space-y-3 ${status === 'error' ? 'hidden' : ''}`} aria-label={`Páginas de ${noun}`} />
+        ) : isImage ? (
+          imageUrl && status !== 'error' && <img src={imageUrl} alt={noun} className="w-full rounded-xl border border-line" onError={() => setStatus('error')} />
+        ) : (
+          <div className="card divide-y divide-line px-4" aria-label="Lo que se guardó">
+            {invoice.items.map((it, i) => (
+              <div key={i} className="flex items-baseline gap-3 py-2">
+                {it.date && <span className="w-11 shrink-0 text-[15px] text-muted tabular">{dayMonth(it.date)}</span>}
+                <div className="min-w-0 flex-1">
+                  <div className="truncate">{it.description || 'Sin detalle'}</div>
+                  {it.rubroId && <div className="truncate text-[14px] text-muted">{ix.rubro.get(it.rubroId)?.name}</div>}
+                </div>
+                <span className="shrink-0 tabular">{money(it.amount)}</span>
+              </div>
+            ))}
+            {!invoice.items.length && <p className="py-4 text-muted">No se guardaron gastos con este archivo.</p>}
+          </div>
         )}
         {hidden > 0 && status === 'listo' && (
           <p className="text-center text-[15px] text-muted">Tiene {hidden} página{hidden === 1 ? '' : 's'} más. Para verla{hidden === 1 ? '' : 's'}, usá «Compartir o guardar».</p>

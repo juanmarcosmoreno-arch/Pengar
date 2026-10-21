@@ -1,5 +1,6 @@
 /** Datos de ejemplo (inventados): para mirar la app sin cargar nada y para la vista previa web. */
 import { addMonths, monthOf } from './dates';
+import { parseAmount } from './money';
 import { norm, type ImportResult } from './importSheet';
 import { defaultSettings, newId, normalizeData } from './template';
 import type { Data, Kind, Movement, Rubro } from './types';
@@ -86,4 +87,74 @@ export function exampleData(res: Pick<ImportResult, 'categories' | 'rubros' | 'm
     goals: [{ id: newId('g'), name: 'Vacaciones', icon: 'm:viajes', target: 60000, saved: 18000 }],
     settings: { ...defaultSettings(), name: 'Ana', onboarded: true, example: true },
   });
+}
+
+interface StatementExample {
+  /** Día del mes: en el mes anterior tal cual; en este mes, acomodado hasta hoy (como DAILY) */
+  day: number;
+  prev?: boolean;
+  text: string;
+  /** Como viene en el estado de cuenta («-» para pagos y créditos, «U$S» para dólares) */
+  amount: string;
+}
+
+/**
+ * Compras del estado de cuenta de ejemplo. Algunos comercios coinciden con las palabras de los rubros del ejemplo
+ * (Tienda Inglesa, Farmashop, Netflix…) y otros son nuevos; Tienda Inglesa del 4 y Farmashop del 17 ya están
+ * anotados en DAILY (posibles repetidos).
+ */
+const STATEMENT: StatementExample[] = [
+  { prev: true, day: 26, text: 'SALDO ANTERIOR', amount: '21.540,00' },
+  { prev: true, day: 27, text: 'TIENDA INGLESA SUC 12 MONTEVIDEO', amount: '2.418,30' },
+  { prev: true, day: 28, text: 'MERCADOPAGO*LA PASIVA', amount: '890,00' },
+  { day: 2, text: 'SU PAGO - GRACIAS', amount: '-21.540,00' },
+  { day: 4, text: 'TIENDA INGLESA 7', amount: '3.870,00' },
+  { day: 5, text: 'NETFLIX.COM', amount: 'U$S 12,99' },
+  { day: 6, text: 'PANADERIA LA ESPIGA', amount: '585,00' },
+  { day: 8, text: 'DLO*UBER TRIP', amount: '312,00' },
+  { day: 10, text: 'ZARA 18 DE JULIO', amount: '3.290,00' },
+  { day: 11, text: 'FARMASHOP 14 CUOTA 02/03', amount: '1.500,00' },
+  { day: 12, text: 'MOVIE CENTER', amount: '980,00' },
+  { day: 13, text: 'MERCADOPAGO*LA PASIVA', amount: '760,00' },
+  { day: 14, text: 'TIENDA INGLESA 7', amount: '1.236,40' },
+  { day: 15, text: 'FERRETERIA EL TORNILLO', amount: '1.380,00' },
+  { day: 16, text: 'REINTEGRO IVA LEY 19210', amount: '-48,60' },
+  { day: 17, text: 'FARMASHOP 3', amount: '690,00' },
+  { day: 18, text: 'PEDIDOSYA*BURGER KING', amount: '715,00' },
+  { day: 19, text: 'DLO*UBER TRIP', amount: '268,00' },
+  { day: 21, text: 'SPOTIFY P2A4B6C8', amount: 'U$S 4,99' },
+  { day: 24, text: 'PANADERIA LA ESPIGA', amount: '420,00' },
+];
+
+const dmy = (iso: string) => `${iso.slice(8, 10)}/${iso.slice(5, 7)}/${iso.slice(0, 4)}`;
+
+/**
+ * Estado de cuenta de ejemplo (OCA, en texto como lo lee el PDF), del 26 del mes pasado a hoy: para probar «Tarjeta»
+ * con los datos de ejemplo. Trae compras conocidas y nuevas, un pago, el reintegro de IVA, compras en dólares y una cuota.
+ */
+export function exampleStatementText(todayISO: string): string {
+  const month = monthOf(todayISO);
+  const prev = addMonths(month, -1);
+  const todayDay = Number(todayISO.slice(8, 10));
+  const due = new Date(Date.UTC(+todayISO.slice(0, 4), +todayISO.slice(5, 7) - 1, todayDay + 15)).toISOString().slice(0, 10);
+  const rows = STATEMENT.map((e) => {
+    const day = e.prev ? e.day : Math.max(1, Math.ceil((e.day / 28) * todayDay));
+    const date = `${e.prev ? prev : month}-${String(day).padStart(2, '0')}`;
+    return `${date.slice(8, 10)}/${date.slice(5, 7)} ${e.text} ${e.amount}`;
+  });
+  // Lo de este período (sin el saldo anterior ni su pago), en cada moneda
+  const nf = new Intl.NumberFormat('es-UY', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const total = (cur: 'local' | 'usd') => nf.format(STATEMENT.filter((e) => !/^(SALDO|SU PAGO)/.test(e.text) && e.amount.startsWith('U$S') === (cur === 'usd'))
+    .reduce((s, e) => s + (parseAmount(e.amount) ?? 0), 0));
+  return [
+    'OCA',
+    'Estado de cuenta',
+    'Titular: ANA PEREZ',
+    `Período del ${dmy(`${prev}-26`)} al ${dmy(todayISO)}`,
+    `Fecha de cierre: ${dmy(todayISO)}   Vencimiento: ${dmy(due)}`,
+    'FECHA DESCRIPCION IMPORTE $ IMPORTE U$S',
+    ...rows,
+    `TOTAL A PAGAR ${total('local')} ${total('usd')}`,
+    'Cotización del dólar: 40,10',
+  ].join('\n');
 }

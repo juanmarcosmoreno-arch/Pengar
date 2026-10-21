@@ -9,7 +9,7 @@ const ITEMS: { id: MorePage; label: string; sub: string; Icon: typeof Wallet }[]
   { id: 'fijos', label: 'Gastos fijos', sub: 'Lo que pagás todos los meses: te avisa para anotarlo', Icon: Repeat },
   { id: 'categorias', label: 'Categorías y rubros', sub: 'Armalos a tu gusto: nombres, íconos, colores', Icon: Layers },
   { id: 'metas', label: 'Metas', sub: 'Ahorrar para algo', Icon: Target },
-  { id: 'facturas', label: 'Facturas guardadas', sub: 'Las fotos y PDF que escaneaste', Icon: FileText },
+  { id: 'facturas', label: 'Facturas y estados de cuenta', sub: 'Las fotos, PDF y planillas que subiste', Icon: FileText },
   { id: 'ajustes', label: 'Ajustes', sub: 'Moneda, importar, respaldo, lectura con IA', Icon: Settings },
   { id: 'ayuda', label: 'Cómo se usa', sub: 'Lo básico en un minuto', Icon: CircleHelp },
 ];

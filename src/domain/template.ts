@@ -147,7 +147,8 @@ export function normalizeData(d: Partial<Data>): Data {
     categories,
     rubros: d.rubros ?? [],
     movements: d.movements ?? [],
-    invoices: d.invoices ?? [],
+    // `kind` desconocido (de una versión futura o un respaldo roto) cuenta como factura
+    invoices: (d.invoices ?? []).map((i) => (i.kind && i.kind !== 'factura' && i.kind !== 'estado' ? { ...i, kind: undefined } : i)),
     goals: d.goals ?? [],
     recurring: d.recurring ?? [],
     settings: {
@@ -157,6 +158,7 @@ export function normalizeData(d: Partial<Data>): Data {
       currency: { ...base.settings.currency, ...s?.currency },
       learned: s?.learned ?? {},
       example: s?.example === true || undefined,
+      usdRate: typeof s?.usdRate === 'number' && Number.isFinite(s.usdRate) && s.usdRate > 0 ? s.usdRate : undefined,
     },
   };
 }

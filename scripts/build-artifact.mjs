@@ -50,6 +50,7 @@ const vitrina = `<aside class="vitrina" aria-label="Sobre esta vista previa">
     <li>Anotá un gasto o un ingreso desde Inicio.</li>
     <li>Mirá Estadísticas: el mes y las tendencias.</li>
     <li>Subí el PDF de una factura: lee el comercio, el total y cada renglón.</li>
+    <li>Probá «Tarjeta» con el estado de cuenta de ejemplo.</li>
     <li>Cambiá categorías y rubros en Más.</li>
   </ol>
   <p class="nota">Vista previa web con datos de ejemplo. Los datos quedan en este navegador. Las fotos de tickets, la lectura con Claude y las descargas funcionan en la app de iPhone.</p>

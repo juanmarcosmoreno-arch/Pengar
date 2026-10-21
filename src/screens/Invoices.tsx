@@ -1,7 +1,7 @@
-import { FileText, Trash2 } from 'lucide-react';
+import { CreditCard, FileText, Trash2 } from 'lucide-react';
 import { useState } from 'react';
 import { ConfirmSheet } from '../components/ConfirmSheet';
-import { InvoiceViewer } from '../components/InvoiceViewer';
+import { invoiceCount, invoiceTitle, InvoiceViewer } from '../components/InvoiceViewer';
 import { PageHeader } from '../components/Sheet';
 import { useToast } from '../components/Toast';
 import { shortDate } from '../domain/dates';
@@ -16,19 +16,20 @@ export function Invoices({ onBack }: { onBack: () => void }) {
   const [viewing, setViewing] = useState<Invoice | null>(null);
   const [deleting, setDeleting] = useState<Invoice | null>(null);
   const list = [...data.invoices].sort((a, b) => (b.date ?? '').localeCompare(a.date ?? '') || b.createdAt - a.createdAt);
+  const statement = deleting?.kind === 'estado';
   return (
     <div>
-      <PageHeader title="Facturas guardadas" onBack={onBack} />
+      <PageHeader title="Facturas y estados" onBack={onBack} />
       <div className="px-4 pb-10">
-        {!list.length && <p className="py-10 text-center text-muted">Todavía no escaneaste facturas. Usá «Factura» en Inicio.</p>}
+        {!list.length && <p className="py-10 text-center text-muted">Todavía no subiste nada. Usá «Factura» o «Tarjeta» en Inicio.</p>}
         <div className="card divide-y divide-line px-4">
           {list.map((inv) => (
             <div key={inv.id} className="flex items-center gap-3 py-3">
               <button className="flex min-w-0 flex-1 items-center gap-3 text-left" onClick={() => setViewing(inv)}>
-                <FileText className="shrink-0 text-primary" />
+                {inv.kind === 'estado' ? <CreditCard className="shrink-0 text-primary" /> : <FileText className="shrink-0 text-primary" />}
                 <div className="min-w-0 flex-1">
-                  <div className="truncate text-lg">{inv.merchant || inv.fileName}</div>
-                  <div className="text-[14px] text-muted">{inv.date ? shortDate(inv.date) : ''} · {inv.items.length} {inv.items.length === 1 ? 'renglón' : 'renglones'}</div>
+                  <div className="truncate text-lg">{invoiceTitle(inv)}</div>
+                  <div className="text-[14px] text-muted">{[inv.date && shortDate(inv.date), invoiceCount(inv)].filter(Boolean).join(' · ')}</div>
                 </div>
                 {inv.total != null && <span className="tabular">{money(inv.total)}</span>}
               </button>
@@ -46,11 +47,11 @@ export function Invoices({ onBack }: { onBack: () => void }) {
       {viewing && <InvoiceViewer invoice={viewing} onClose={() => setViewing(null)} />}
       {deleting && (
         <ConfirmSheet
-          title="¿Borrar la factura?"
-          message="Se borra el archivo guardado. Los gastos que anotaste con ella se mantienen."
+          title={statement ? '¿Borrar el estado de cuenta?' : '¿Borrar la factura?'}
+          message={`Se borra el archivo guardado. Los gastos que anotaste con ${statement ? 'él' : 'ella'} se mantienen.`}
           confirmLabel="Borrar"
           danger
-          onConfirm={() => { deleteInvoice(deleting.id); toast('Factura borrada'); }}
+          onConfirm={() => { deleteInvoice(deleting.id); toast(statement ? 'Estado de cuenta borrado' : 'Factura borrada'); }}
           onClose={() => setDeleting(null)}
         />
       )}

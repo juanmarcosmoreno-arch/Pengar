@@ -1,4 +1,4 @@
-import { Paperclip, Trash2 } from 'lucide-react';
+import { CreditCard, Paperclip, Trash2 } from 'lucide-react';
 import { useState } from 'react';
 import { monthOf, today } from '../domain/dates';
 import { formatMoney, parseAmount } from '../domain/money';
@@ -133,7 +133,9 @@ export function MovementSheet({ movement, kind: initialKind = 'gasto', preset, o
           {movement?.merchant && <p className="text-muted">Comercio: {movement.merchant}</p>}
           {invoice && (
             <button className="chip" onClick={() => setViewing(true)}>
-              <Paperclip size={16} /> Ver factura{invoice.merchant ? ` de ${invoice.merchant}` : ''}
+              {invoice.kind === 'estado'
+                ? <><CreditCard size={16} /> Ver estado de cuenta{invoice.card ? ` de ${invoice.card}` : ''}</>
+                : <><Paperclip size={16} /> Ver factura{invoice.merchant ? ` de ${invoice.merchant}` : ''}</>}
             </button>
           )}
         </div>

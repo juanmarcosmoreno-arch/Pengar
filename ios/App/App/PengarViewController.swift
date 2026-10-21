@@ -5,5 +5,6 @@ import UIKit
 class PengarViewController: CAPBridgeViewController {
     override open func capacitorDidLoad() {
         bridge?.registerPluginInstance(PengarOCRPlugin())
+        bridge?.registerPluginInstance(PengarAIPlugin())
     }
 }

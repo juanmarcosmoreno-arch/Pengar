@@ -3,10 +3,17 @@
  * comercio o esa palabra), después las palabras clave de cada rubro y su nombre.
  */
 import { norm } from './importSheet';
+import { normalizeMerchant } from './statement';
 import type { Rubro, Settings } from './types';
 
-/** Clave para aprender de un comercio («merchant:tienda inglesa») */
-export const merchantKey = (merchant: string) => `merchant:${norm(merchant).replace(/\b(s\.?a\.?|srl|ltda)\b/g, '').trim()}`;
+/**
+ * Clave para aprender de un comercio («merchant:tienda inglesa»). Es la misma de los estados de cuenta, así lo
+ * aprendido en una factura sirve para la tarjeta y al revés.
+ */
+export const merchantKey = (merchant: string) => `merchant:${normalizeMerchant(merchant).key}`;
+
+/** La clave de antes (el nombre entero), para no perder lo aprendido con versiones anteriores */
+const legacyMerchantKey = (merchant: string) => `merchant:${norm(merchant).replace(/\b(s\.?a\.?|srl|ltda)\b/g, '').trim()}`;
 
 /** Clave para aprender de un renglón: sus dos primeras palabras significativas («item:leche conaprole») */
 export function itemKey(description: string): string | null {
@@ -48,8 +55,9 @@ export function suggestRubro(
   const byItem = keywordMatch(description, rubros);
   if (byItem) return { rubroId: byItem.rubro.id, reason: 'palabra' };
   if (merchant) {
-    const mk = merchantKey(merchant);
-    if (valid.has(learned[mk])) return { rubroId: learned[mk], reason: 'aprendido' };
+    for (const mk of [merchantKey(merchant), legacyMerchantKey(merchant)]) {
+      if (valid.has(learned[mk])) return { rubroId: learned[mk], reason: 'aprendido' };
+    }
     const byMerchant = keywordMatch(merchant, rubros);
     if (byMerchant) return { rubroId: byMerchant.rubro.id, reason: 'comercio' };
   }
@@ -71,7 +79,7 @@ export function learnFrom(
     counts.set(it.rubroId, (counts.get(it.rubroId) ?? 0) + 1);
   }
   // El comercio se asocia al rubro más frecuente de la factura
-  if (merchant && counts.size) {
+  if (merchant?.trim() && counts.size) {
     const top = [...counts.entries()].sort((a, b) => b[1] - a[1])[0][0];
     next[merchantKey(merchant)] = top;
   }

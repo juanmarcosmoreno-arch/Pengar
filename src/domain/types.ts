@@ -35,7 +35,8 @@ export interface Rubro {
   archived?: boolean;
 }
 
-export type Origin = 'manual' | 'factura' | 'planilla';
+/** De dónde salió: anotado a mano, de una factura, de la planilla o del estado de cuenta de la tarjeta */
+export type Origin = 'manual' | 'factura' | 'planilla' | 'tarjeta';
 
 export interface Movement {
   id: string;
@@ -58,11 +59,20 @@ export interface InvoiceItem {
   description: string;
   amount: number;
   rubroId?: string;
+  /** Fecha de la compra (en los estados de cuenta) */
+  date?: string;
 }
 
-/** Factura o ticket guardado. El archivo (foto o PDF) se guarda aparte, con la clave `file:<id>`. */
+/**
+ * Factura, ticket o estado de cuenta de la tarjeta guardado. El archivo (foto, PDF o planilla) se guarda aparte,
+ * con la clave `file:<id>`.
+ */
 export interface Invoice {
   id: string;
+  /** Sin valor es una factura (los datos de antes) */
+  kind?: 'factura' | 'estado';
+  /** Tarjeta del estado de cuenta («OCA», «Visa BROU») */
+  card?: string;
   fileName: string;
   mime: string;
   merchant?: string;
@@ -113,6 +123,8 @@ export interface Settings {
   onboarded: boolean;
   /** Son los datos de ejemplo (inventados): Inicio y Más muestran un aviso para empezar con los propios */
   example?: boolean;
+  /** Cotización del dólar para pasar a pesos las compras en U$S de la tarjeta (la última usada) */
+  usdRate?: number;
 }
 
 export interface Data {

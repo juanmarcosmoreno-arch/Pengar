@@ -1,5 +1,5 @@
-import { Download, Sparkles, Upload } from 'lucide-react';
-import { useRef, useState } from 'react';
+import { Download, Smartphone, Sparkles, Upload } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
 import { ConfirmSheet } from '../components/ConfirmSheet';
 import { ImportFlow, ImportFormatHelp } from '../components/ImportFlow';
 import { PageHeader } from '../components/Sheet';
@@ -8,9 +8,10 @@ import { today } from '../domain/dates';
 import { movementsCsv } from '../domain/export';
 import { emptyData } from '../domain/template';
 import type { Data } from '../domain/types';
+import { appleAIStatus, type AppleAIStatus } from '../lib/appleAI';
 import { makeBackup, readBackup } from '../lib/backup';
 import { NO_DOWNLOADS, saveOrShare } from '../lib/files';
-import { isPreview } from '../lib/platform';
+import { isNative, isPreview } from '../lib/platform';
 import { useStore } from '../store/store';
 
 const MODELS = [
@@ -18,6 +19,14 @@ const MODELS = [
   { id: 'claude-sonnet-5-5', label: 'Claude Sonnet 5.5 (más barato)' },
   { id: 'claude-haiku-5-5', label: 'Claude Haiku 5.5 (el más barato)' },
 ];
+
+const APPLE_AI: Record<AppleAIStatus, string> = {
+  available: 'disponible. Se usa para sugerir rubros, en el teléfono y sin costo.',
+  notEnabled: 'no está activado en Ajustes del iPhone. Si lo activás, Pengar lo usa para sugerir rubros, en el teléfono y sin costo.',
+  notEligible: 'este iPhone no es compatible.',
+  notReady: 'se está descargando. Cuando termine, se usa para sugerir rubros.',
+  unsupported: 'necesita iOS 26 o más nuevo.',
+};
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
@@ -38,6 +47,11 @@ export function Settings({ onBack }: { onBack: () => void }) {
   // Respaldo leído que espera confirmación, y «Borrar todo»
   const [backup, setBackup] = useState<Data | null>(null);
   const [wiping, setWiping] = useState(false);
+  // Apple Intelligence en este teléfono (en la web no hay)
+  const [apple, setApple] = useState<AppleAIStatus | null>(null);
+  useEffect(() => {
+    if (isNative && !isPreview) void appleAIStatus().then(setApple);
+  }, []);
   const share = async (blob: Blob | Promise<Blob>, fileName: string) => {
     if (!(await saveOrShare(await blob, fileName))) toast(NO_DOWNLOADS);
   };
@@ -66,10 +80,16 @@ export function Settings({ onBack }: { onBack: () => void }) {
           </div>
         </Section>
 
-        <Section title="Lectura de facturas con IA">
+        <Section title="Facturas y rubros con IA">
+          {apple && (
+            <p className="flex gap-2 text-[16px]">
+              <Smartphone size={18} className="mt-0.5 shrink-0 text-primary" />
+              <span>Apple Intelligence: {APPLE_AI[apple]}</span>
+            </p>
+          )}
           <p className="flex gap-2 text-[16px] text-muted">
             <Sparkles size={18} className="mt-0.5 shrink-0 text-primary" />
-            Sin esto, las facturas se leen en el teléfono (gratis y sin conexión). Con una clave de la API de Claude, la foto o el PDF se mandan a Anthropic y se lee mejor, sobre todo tickets arrugados y facturas largas. Cada lectura tiene un costo chico en tu cuenta de Anthropic.
+            Sin esto, las facturas se leen en el teléfono (gratis y sin conexión). Con una clave de la API de Claude, la foto o el PDF se mandan a Anthropic y se lee mejor, sobre todo tickets arrugados y facturas largas; también sugiere el rubro de lo que Pengar todavía no reconoce, cuando Apple Intelligence no está o no sabe. Cada uso tiene un costo chico en tu cuenta de Anthropic.
           </p>
           {isPreview ? (
             <p className="rounded-2xl bg-sunken px-4 py-3 text-[16px]">
@@ -102,7 +122,7 @@ export function Settings({ onBack }: { onBack: () => void }) {
           )}
           {Object.keys(s.learned).length > 0 && (
             <button className="btn-ghost -ml-4" onClick={() => { updateSettings({ learned: {} }); toast('Listo: se olvidó lo aprendido'); }}>
-              Olvidar lo aprendido de las facturas ({Object.keys(s.learned).length})
+              Olvidar los rubros aprendidos ({Object.keys(s.learned).length})
             </button>
           )}
         </Section>

@@ -3,6 +3,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import { learnFrom } from '../domain/classify';
 import { distributeTotal } from '../domain/invoice';
 import { mergeImport, type ImportResult } from '../domain/importSheet';
+import { round2 } from '../domain/money';
 import { dueMovements } from '../domain/recurring';
 import { buildIndex, type Index } from '../domain/stats';
 import { emptyData, newId, normalizeData, templateData } from '../domain/template';
@@ -25,6 +26,20 @@ export interface InvoiceToSave {
   note?: string;
 }
 
+/** Estado de cuenta revisado: los gastos (uno por compra) y lo aprendido de cada comercio */
+export interface StatementToSave {
+  file: Blob;
+  fileName: string;
+  mime: string;
+  card?: string;
+  /** Cierre del estado de cuenta */
+  date?: string;
+  movements: Pick<Movement, 'date' | 'amount' | 'rubroId' | 'merchant' | 'note'>[];
+  /** Clave del comercio → rubro (o NOT_SPEND) */
+  learned: Settings['learned'];
+  usdRate?: number;
+}
+
 interface Store {
   data: Data;
   ix: Index;
@@ -34,6 +49,8 @@ interface Store {
   updateMovement: (id: string, patch: Partial<Movement>) => void;
   deleteMovement: (id: string) => void;
   saveInvoice: (inv: InvoiceToSave) => Promise<number>;
+  /** Guarda el archivo y los gastos, y aprende los comercios. Devuelve cuántos gastos y cómo deshacerlo */
+  saveStatement: (st: StatementToSave) => Promise<{ count: number; undo: () => void }>;
   deleteInvoice: (id: string) => void;
   upsertCategory: (c: Category) => void;
   deleteCategory: (id: string, moveRubrosTo?: string) => void;
@@ -133,6 +150,44 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         settings: { ...d.settings, learned: learnFrom(d.settings.learned, inv.merchant, inv.mode === 'single' ? inv.items.map((i) => ({ ...i, rubroId: inv.rubroId })) : inv.items) },
       }));
       return movements.length;
+    },
+    saveStatement: async (st) => {
+      const id = newId('f');
+      await saveFile(id, st.file);
+      const now = Date.now();
+      const movements: Movement[] = st.movements.map((m, i) => ({
+        ...m,
+        id: newId('m'),
+        kind: 'gasto',
+        invoiceId: id,
+        origin: 'tarjeta',
+        // En el orden del estado de cuenta
+        createdAt: now + i,
+      }));
+      const invoice: Invoice = {
+        id,
+        kind: 'estado',
+        card: st.card,
+        fileName: st.fileName,
+        mime: st.mime,
+        date: st.date,
+        total: round2(movements.reduce((s, m) => s + m.amount, 0)),
+        items: movements.map((m) => ({ description: m.merchant ?? '', amount: m.amount, rubroId: m.rubroId, date: m.date })),
+        createdAt: now,
+      };
+      update((d) => ({
+        ...d,
+        invoices: [...d.invoices, invoice],
+        movements: [...d.movements, ...movements],
+        settings: { ...d.settings, learned: { ...d.settings.learned, ...st.learned }, ...(st.usdRate ? { usdRate: st.usdRate } : {}) },
+      }));
+      const ids = new Set(movements.map((m) => m.id));
+      // Deshacer borra lo creado; lo aprendido queda
+      const undo = () => {
+        void deleteFile(id);
+        update((d) => ({ ...d, invoices: d.invoices.filter((i) => i.id !== id), movements: d.movements.filter((m) => !ids.has(m.id)) }));
+      };
+      return { count: movements.length, undo };
     },
     deleteInvoice: (id) => {
       void deleteFile(id);

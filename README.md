@@ -2,13 +2,14 @@
 
 # Pengar
 
-**Tu dinero, más simple.** Con un suricata que te acompaña. App de iPhone para anotar gastos en dos toques, escanear facturas y tickets (foto o PDF)
-y ver cómo se mueve la plata en el tiempo. Todo queda en el teléfono.
+**Tu dinero, más simple.** Con un suricata que te acompaña. App de iPhone para anotar gastos en dos toques, escanear facturas y tickets (foto o PDF), subir el estado de
+cuenta de la tarjeta (aprende el rubro de cada comercio) y ver cómo se mueve la plata en el tiempo. Todo queda en el teléfono.
 
 <p align="center">
   <img src="docs/capturas/03-inicio.png" width="200" />
   <img src="docs/capturas/07-tendencias.png" width="200" />
   <img src="docs/capturas/13-revisar-factura.png" width="200" />
+  <img src="docs/capturas/23-revisar-tarjeta.png" width="200" />
 </p>
 
 ## Qué hace
@@ -17,10 +18,24 @@ y ver cómo se mueve la plata en el tiempo. Todo queda en el teléfono.
 - **Facturas y tickets**: sacás una foto (o subís un PDF) y Pengar lee comercio, fecha, total y cada renglón, y le
   pone un rubro a cada uno. Podés separar la factura por rubro (comida y limpieza del súper, por ejemplo) o guardarla
   como un solo gasto. Lo que corregís lo aprende. El archivo queda guardado y se ve dentro de la app
-  (desde el gasto o en Más → Facturas guardadas), con «Compartir o guardar» para mandarlo a Archivos o por mail.
+  (desde el gasto o en Más → Facturas y estados de cuenta), con «Compartir o guardar» para mandarlo a Archivos o por mail.
   - En el iPhone se lee con Vision de Apple (en el teléfono, gratis, sin conexión). Los PDF con texto se leen
     directo; los escaneados se pasan por el lector de fotos.
   - Opcional: con una clave de la API de Claude (Ajustes) la lectura es mejor, sobre todo en tickets arrugados.
+  - Los renglones que no reconoce por lo aprendido ni por las palabras clave se los pregunta a Apple Intelligence
+    (iOS 26+, en el teléfono y sin costo) y, lo que siga sin rubro, a Claude si hay clave. Quedan marcados
+    «sugerido por …» para revisarlos; al guardar, se aprenden. Ajustes muestra si el iPhone tiene Apple Intelligence.
+- **Estado de cuenta de la tarjeta** («Tarjeta» en Inicio): el PDF del banco (OCA, Visa/Master del BROU, Itaú,
+  Santander, Scotiabank…), la planilla CSV o Excel que exporta o, en el iPhone, una foto. Las compras se juntan por
+  comercio (sin sucursal, ciudad ni procesador de pago: «MERCADOPAGO*LA PASIVA SUC 3» es «La Pasiva»).
+  - La primera vez se le dice el rubro de cada comercio («Nuevos») y lo aprende: el mes siguiente solo pregunta por
+    los que no conoce; el resto queda en «Ya los conozco», plegado y editable. «No es un gasto» también se recuerda.
+  - Los comercios nuevos se le preguntan a Apple Intelligence (o a Claude, si hay clave) y quedan «sugeridos».
+  - Compras en U$S pasadas a pesos con la cotización (la del estado de cuenta o la última usada), cuotas en la nota,
+    posibles repetidos con lo ya anotado (no se guardan salvo que se pida), pagos, saldos y créditos aparte (el
+    reintegro de IVA se puede restar) y aviso si el mes ya tiene los totales de la planilla.
+  - Cada compra queda como un gasto con su fecha, la tarjeta en la nota y el estado de cuenta adjunto (Más →
+    Facturas y estados de cuenta; las planillas se ven como tabla). Al guardar, «Deshacer» borra lo creado.
 - **Gastos fijos**: el alquiler, la luz, Netflix o el sueldo se marcan como fijos (al anotarlos, con «Se repite
   todos los meses», o en Más → Gastos fijos, con sugeridos según tu historial). Cuando llega su día, Inicio muestra
   «Para anotar este mes» con el monto estimado: se anotan de a uno (ajustando el monto), todos juntos o se saltean.
@@ -81,8 +96,10 @@ columna al lado que cuenta qué probar.
 
 Qué no funciona en la vista previa (sí en el iPhone):
 - **Fotos de tickets**: «Sacar una foto» y «Elegir de las fotos» quedan deshabilitados. Los **PDF con texto** se leen
-  igual, con pdf.js en el navegador; los PDF escaneados no.
+  igual, con pdf.js en el navegador; los PDF escaneados no. En «Tarjeta» la foto no se ofrece; el PDF, la planilla y
+  «Probar con un estado de cuenta de ejemplo» andan.
 - **Lectura con Claude**: Ajustes explica que no está disponible (la página no se puede conectar con Anthropic).
+- **Apple Intelligence**: solo en el iPhone; en la web los rubros salen de lo aprendido y las palabras clave.
 - **Descargas**: exportar a CSV, el respaldo y «Compartir o guardar» una factura avisan que en la vista previa no se
   pueden descargar archivos.
 - Los datos quedan solo en ese navegador (IndexedDB; si no se puede usar, en memoria mientras la página esté abierta).
@@ -101,10 +118,11 @@ iPhone y dale ▶︎. Después de cambiar código web: `npm run ios:sync`.
 
 | Carpeta | Qué hay |
 |---|---|
-| `src/domain` | Lógica pura, con pruebas: modelo, importar planillas, estadísticas, lectura de facturas, rubros sugeridos |
-| `src/lib` | Teléfono: guardado (IndexedDB), lector de fotos (Vision / Tesseract), PDF (pdf.js), Claude, archivos |
+| `src/domain` | Lógica pura, con pruebas: modelo, importar planillas, estadísticas, lectura de facturas y de estados de cuenta de la tarjeta (`statement.ts`, `statementReview.ts`), rubros sugeridos |
+| `src/lib` | Teléfono: guardado (IndexedDB), lector de fotos (Vision / Tesseract), PDF (pdf.js), Claude, Apple Intelligence, rubros sugeridos (`suggest.ts`), archivos |
 | `src/screens`, `src/components` | Pantallas y piezas de la interfaz (gráficas en SVG propio, con d3-shape) |
 | `ios/App/App/PengarOCRPlugin.swift` | Plugin nativo: texto de una foto con Vision |
+| `ios/App/App/PengarAIPlugin.swift` | Plugin nativo: rubro sugerido con Apple Intelligence (Foundation Models, iOS 26+) |
 
 El **suricata** (docs/marca) aparece en la bienvenida, el ícono, el inicio (su cara cambia según cómo viene el
 mes), los estados vacíos, la lectura de facturas, las metas y el presupuesto, y cada categoría tiene su ilustración
@@ -119,6 +137,7 @@ son una paleta validada para daltonismo; pasadas las 8 más grandes, se juntan e
 
 ## Pendiente / ideas
 
-- No probé la compilación en Xcode (no hay Mac en este entorno): el plugin Swift sigue el mismo patrón que el de Kvar.
+- No probé la compilación en Xcode (no hay Mac en este entorno): los plugins Swift siguen el mismo patrón que los de Kvar
+  (PengarAI usa Foundation Models como KvarVoice).
 - Sincronizar entre dispositivos (iCloud o Supabase); hoy los datos viven en un solo teléfono, con respaldo manual.
 - Ticket oficial de la DGI por el QR (como en Kvar).

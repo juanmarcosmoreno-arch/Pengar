@@ -9,11 +9,21 @@ export interface Sheet {
   rows: Cell[][];
 }
 
-export async function readSpreadsheet(file: File): Promise<Sheet[]> {
+/** CSV en UTF-8 o, si no lo es (los que exportan algunos bancos), en Windows-1252 */
+function decodeText(buf: ArrayBuffer): string {
+  const utf8 = new TextDecoder().decode(buf);
+  return utf8.includes('\uFFFD') ? new TextDecoder('windows-1252').decode(buf) : utf8;
+}
+
+/**
+ * `text`: el CSV queda como texto, sin convertir fechas ni números (los estados de cuenta traen «12/09/2025» y
+ * «1.234,56», que la conversión automática lee al estilo de Estados Unidos).
+ */
+export async function readSpreadsheet(file: File, opts: { text?: boolean } = {}): Promise<Sheet[]> {
   const XLSX = await import('xlsx');
   const buf = await file.arrayBuffer();
   const wb = /\.csv$/i.test(file.name)
-    ? XLSX.read(new TextDecoder().decode(buf), { type: 'string', cellDates: true, raw: false })
+    ? XLSX.read(decodeText(buf), { type: 'string', cellDates: true, raw: !!opts.text })
     : XLSX.read(buf, { cellDates: true });
   return wb.SheetNames.map((name) => ({
     name,

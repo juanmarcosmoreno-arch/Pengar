@@ -8,7 +8,8 @@ export interface TextBox {
   h: number;
 }
 
-export function groupLines(boxes: TextBox[]): string[] {
+/** Las cajas agrupadas por renglón (cada renglón ordenado de izquierda a derecha) */
+export function groupRows(boxes: TextBox[]): TextBox[][] {
   const items = boxes.filter((b) => b.text.trim()).map((b) => ({ ...b, cy: b.y + b.h / 2 }));
   if (!items.length) return [];
   const heights = items.map((i) => i.h).sort((a, b) => a - b);
@@ -26,5 +27,9 @@ export function groupLines(boxes: TextBox[]): string[] {
     }
     rows.push([it]);
   }
-  return rows.map((r) => r.sort((a, b) => a.x - b.x).map((i) => i.text.trim()).join(' '));
+  return rows.map((r) => r.sort((a, b) => a.x - b.x).map(({ text, x, y, w, h }) => ({ text, x, y, w, h })));
+}
+
+export function groupLines(boxes: TextBox[]): string[] {
+  return groupRows(boxes).map((r) => r.map((i) => i.text.trim()).join(' '));
 }

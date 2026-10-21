@@ -16,6 +16,7 @@ import { More, type MorePage } from './screens/More';
 import { Movements } from './screens/Movements';
 import { RecurringScreen } from './screens/Recurring';
 import { ScanInvoice } from './screens/ScanInvoice';
+import { ScanStatement } from './screens/ScanStatement';
 import { Settings } from './screens/Settings';
 import { Stats, type StatsView } from './screens/Stats';
 import { Welcome } from './screens/Welcome';
@@ -28,7 +29,7 @@ export default function App() {
   const [tab, setTab] = useState<Tab>('inicio');
   const [page, setPage] = useState<MorePage | null>(null);
   const [editing, setEditing] = useState<Editing>(null);
-  const [scanning, setScanning] = useState(false);
+  const [scanning, setScanning] = useState<'factura' | 'tarjeta' | null>(null);
   const [statsView, setStatsView] = useState<StatsView>('mes');
   const [statsMonth, setStatsMonth] = useState(currentMonth());
   const [movMonth, setMovMonth] = useState(currentMonth());
@@ -67,7 +68,8 @@ export default function App() {
     content = (
       <Home
         onAdd={(kind) => setEditing({ kind })}
-        onScan={() => setScanning(true)}
+        onScan={() => setScanning('factura')}
+        onStatement={() => setScanning('tarjeta')}
         onEdit={(movement) => setEditing({ movement })}
         onRecord={(r) => {
           // Un gasto fijo: se abre con su monto estimado y, al guardarlo, queda anotado este mes
@@ -80,8 +82,7 @@ export default function App() {
         }}
         onGo={(where) => {
           if (where === 'movimientos') go('movimientos');
-          else if (where === 'mes') { setStatsView('mes'); setStatsMonth(currentMonth()); go('estadisticas'); }
-          else { setTab('mas'); setPage('presupuesto'); }
+          else { setStatsView('mes'); setStatsMonth(currentMonth()); go('estadisticas'); }
         }}
       />
     );
@@ -98,7 +99,8 @@ export default function App() {
       <main className="mx-auto max-w-xl pb-[calc(env(safe-area-inset-bottom)+76px)]">{content}</main>
       <TabBar tab={tab} onChange={go} />
       {editing && <MovementSheet movement={editing.movement} kind={editing.kind} preset={editing.preset} onSaved={editing.onSaved} onClose={() => setEditing(null)} />}
-      {scanning && <ScanInvoice onClose={() => setScanning(false)} />}
+      {scanning === 'factura' && <ScanInvoice onClose={() => setScanning(null)} />}
+      {scanning === 'tarjeta' && <ScanStatement onClose={() => setScanning(null)} />}
     </ToastProvider>
   );
 }

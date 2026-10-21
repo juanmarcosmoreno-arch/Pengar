@@ -1,4 +1,4 @@
-import { Paperclip } from 'lucide-react';
+import { CreditCard, Paperclip } from 'lucide-react';
 import { monthLabel } from '../domain/dates';
 import type { Movement } from '../domain/types';
 import { useMoney } from '../lib/useMoney';
@@ -17,7 +17,7 @@ export function MovementRow({ m, onClick }: { m: Movement; onClick?: () => void 
       <div className="min-w-0 flex-1">
         <div className="truncate text-lg leading-tight">{rubro?.name ?? 'Sin rubro'}</div>
         <div className="flex items-center gap-1 truncate text-[14px] text-muted">
-          {m.invoiceId && <Paperclip size={12} className="shrink-0" />}
+          {m.origin === 'tarjeta' ? <CreditCard size={13} className="shrink-0" aria-label="De la tarjeta" /> : m.invoiceId && <Paperclip size={12} className="shrink-0" />}
           <span className="truncate">{detail}</span>
         </div>
       </div>

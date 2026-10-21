@@ -1,10 +1,12 @@
 /**
- * Lectura de facturas con Claude (opcional). Solo se usa si el usuario cargó su clave de la API en Ajustes:
- * la foto o el PDF van directo del teléfono a la API de Anthropic, junto con la lista de rubros para elegir.
+ * Lectura de facturas y sugerencia de rubros con Claude (opcional). Solo se usa si el usuario cargó su clave de la
+ * API en Ajustes: la foto o el PDF (o los nombres de los comercios) van directo del teléfono a la API de Anthropic,
+ * junto con la lista de rubros para elegir.
  */
 import Anthropic from '@anthropic-ai/sdk';
 import type { ParsedInvoice } from '../domain/invoice';
 import type { Category, Rubro } from '../domain/types';
+import { isPreview } from './platform';
 
 export interface AiInvoice extends ParsedInvoice {
   items: { description: string; amount: number; rubro?: string }[];
@@ -73,4 +75,68 @@ export async function readInvoiceWithClaude(
     total: parsed.total || undefined,
     items: parsed.items.filter((i) => i.amount).map((i) => ({ description: i.description, amount: i.amount, rubro: i.rubro || undefined })),
   };
+}
+
+const CLASSIFY_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['results'],
+  properties: {
+    results: {
+      type: 'array',
+      items: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['id', 'option'],
+        properties: {
+          id: { type: 'string', description: 'El número del comercio o renglón, tal como viene en la lista' },
+          option: { type: 'string', description: 'Nombre exacto de uno de los rubros, o vacío si no estás seguro' },
+        },
+      },
+    },
+  },
+} as const;
+
+/** Tandas grandes: es poco texto, pero la respuesta crece con cada ítem */
+const CLASSIFY_BATCH = 100;
+
+/**
+ * Rubro más probable para comercios de la tarjeta o renglones de facturas (solo texto). Devuelve id → opción elegida
+ * (quien llama la compara con la lista); los que no sabe no vienen. Nunca en la vista previa (no hay conexión con Anthropic).
+ */
+export async function classifyWithClaude(
+  items: { id: string; text: string }[],
+  options: string[],
+  opts: { apiKey: string; model: string; hint?: string },
+): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  if (isPreview || !opts.apiKey || !items.length || !options.length) return out;
+  const client = new Anthropic({ apiKey: opts.apiKey, dangerouslyAllowBrowser: true });
+  for (let start = 0; start < items.length; start += CLASSIFY_BATCH) {
+    const batch = items.slice(start, start + CLASSIFY_BATCH);
+    const response = await client.beta.messages.create({
+      model: opts.model,
+      max_tokens: 16000,
+      betas: ['server-side-fallback-2026-07-01'],
+      fallbacks: 'default',
+      system: 'Sos un asistente de finanzas personales en Uruguay. Para cada comercio o renglón elegí el rubro más probable '
+        + 'de la lista de opciones, con el nombre exacto, o dejalo vacío si no estás seguro. No inventes rubros.',
+      output_config: { effort: 'low', format: { type: 'json_schema', schema: CLASSIFY_SCHEMA } },
+      messages: [{
+        role: 'user',
+        content: `Son compras con tarjeta de crédito o renglones de facturas de Uruguay (comercios a veces abreviados).\n`
+          + `Rubros posibles:\n${options.map((o) => `- ${o}`).join('\n')}\n`
+          + (opts.hint ? `${opts.hint}\n` : '')
+          + `\nComercios o renglones:\n${batch.map((it, i) => `${i + 1}. ${it.text}`).join('\n')}`,
+      }],
+    });
+    if (response.stop_reason === 'refusal') throw new Error('Claude no pudo sugerir los rubros.');
+    const text = response.content.flatMap((b) => (b.type === 'text' ? [b.text] : [])).join('');
+    const parsed = JSON.parse(text) as { results: { id: string; option: string }[] };
+    for (const r of parsed.results ?? []) {
+      const item = batch[Number(r.id) - 1];
+      if (item && r.option?.trim()) out.set(item.id, r.option);
+    }
+  }
+  return out;
 }

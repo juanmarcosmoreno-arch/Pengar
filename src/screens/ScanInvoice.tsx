@@ -9,13 +9,12 @@ import { suggestRubro } from '../domain/classify';
 import { today } from '../domain/dates';
 import { distributeTotal } from '../domain/invoice';
 import { parseAmount, round2 } from '../domain/money';
-import type { InvoiceItem } from '../domain/types';
 import { isPreview } from '../lib/platform';
-import { readInvoice, type InvoiceDraft } from '../lib/readInvoice';
+import { readInvoice, type DraftItem, type InvoiceDraft } from '../lib/readInvoice';
 import { useMoney } from '../lib/useMoney';
 import { useStore } from '../store/store';
 
-interface Row extends InvoiceItem {
+interface Row extends DraftItem {
   key: number;
   amountText: string;
 }
@@ -23,8 +22,10 @@ interface Row extends InvoiceItem {
 // En la vista previa web no hay lector de fotos (en el iPhone es Vision; en la web, Tesseract se descarga de otro sitio)
 const PHOTOS_IN_APP = 'En la vista web, solo PDF; las fotos se leen en el iPhone';
 
+const AI_NAME = { apple: 'Apple Intelligence', claude: 'Claude' } as const;
+
 let rowKey = 0;
-const toRow = (i: InvoiceItem): Row => ({ ...i, key: ++rowKey, amountText: String(i.amount).replace('.', ',') });
+const toRow = (i: DraftItem): Row => ({ ...i, key: ++rowKey, amountText: String(i.amount).replace('.', ',') });
 
 /** Foto o PDF de una factura → revisar lo leído → guardar como gasto(s) con la factura adjunta */
 export function ScanInvoice({ onClose }: { onClose: () => void }) {
@@ -230,9 +231,16 @@ function Review({ draft, onDone, onRetry }: { draft: InvoiceDraft; onDone: () =>
                   />
                 </div>
                 <div className="flex items-center gap-2">
-                  <button className={r.rubroId ? 'chip' : 'chip border-danger text-danger'} onClick={() => setPicking(r.key)}>
-                    {r.rubroId ? ix.rubro.get(r.rubroId)?.name : 'Elegir rubro'}
-                  </button>
+                  <div className="min-w-0">
+                    <button className={r.rubroId ? 'chip' : 'chip border-danger text-danger'} onClick={() => setPicking(r.key)}>
+                      {r.rubroId ? ix.rubro.get(r.rubroId)?.name : 'Elegir rubro'}
+                    </button>
+                    {r.rubroId && (r.reason === 'apple' || r.reason === 'claude') && (
+                      <div className="mt-1 flex items-center gap-1 pl-1 text-[13px] text-muted">
+                        <Sparkles size={13} className="shrink-0" /> sugerido por {AI_NAME[r.reason]}
+                      </div>
+                    )}
+                  </div>
                   <button className="ml-auto flex min-h-tap min-w-tap items-center justify-center text-muted" onClick={() => setRows((rs) => rs.filter((x) => x.key !== r.key))} aria-label="Quitar renglón">
                     <Trash2 size={18} />
                   </button>
@@ -273,7 +281,7 @@ function Review({ draft, onDone, onRetry }: { draft: InvoiceDraft; onDone: () =>
             value={picking === 'single' ? singleRubro : rows.find((r) => r.key === picking)?.rubroId}
             onChange={(id) => {
               if (picking === 'single') setSingleRubro(id);
-              else setRow(picking, { rubroId: id });
+              else setRow(picking, { rubroId: id, reason: undefined });
               setPicking(null);
             }}
           />

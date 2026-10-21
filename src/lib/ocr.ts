@@ -4,6 +4,7 @@
  */
 import { registerPlugin } from '@capacitor/core';
 import { groupLines, type TextBox } from '../domain/ocrLines';
+import { rowsFromBoxes, type StatementRow } from '../domain/statement';
 import { isNative } from './platform';
 
 interface PengarOCRPlugin {
@@ -29,7 +30,7 @@ function loadImage(file: Blob): Promise<HTMLImageElement> {
 }
 
 /** JPEG reducido (lado mayor hasta `max` px) y ya orientado */
-export async function toJpeg(file: Blob, max = 2800): Promise<{ base64: string; blob: Blob }> {
+export async function toJpeg(file: Blob, max = 2800): Promise<{ base64: string; blob: Blob; width: number; height: number }> {
   const img = await loadImage(file);
   const scale = Math.min(1, max / Math.max(img.naturalWidth, img.naturalHeight));
   const canvas = document.createElement('canvas');
@@ -38,7 +39,7 @@ export async function toJpeg(file: Blob, max = 2800): Promise<{ base64: string; 
   canvas.getContext('2d')!.drawImage(img, 0, 0, canvas.width, canvas.height);
   const dataUrl = canvas.toDataURL('image/jpeg', 0.9);
   const blob = await (await fetch(dataUrl)).blob();
-  return { base64: dataUrl.split(',')[1], blob };
+  return { base64: dataUrl.split(',')[1], blob, width: canvas.width, height: canvas.height };
 }
 
 export async function readImageText(file: Blob, onProgress?: (msg: string) => void): Promise<string> {
@@ -57,4 +58,15 @@ export async function readImageText(file: Blob, onProgress?: (msg: string) => vo
   } finally {
     await worker.terminate();
   }
+}
+
+/**
+ * Renglones con la posición de cada pedazo de texto (para los estados de cuenta, donde importa la columna).
+ * Solo en el iPhone, con las cajas de Vision; en la web devuelve null y se usa el texto de Tesseract.
+ */
+export async function readImageRows(file: Blob): Promise<StatementRow[] | null> {
+  if (!isNative) return null;
+  const { base64, width, height } = await toJpeg(file);
+  const res = await PengarOCR.recognize({ image: base64 });
+  return rowsFromBoxes(res.boxes, width / height);
 }

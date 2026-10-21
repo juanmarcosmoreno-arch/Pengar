@@ -37,6 +37,19 @@ async function ticketPdf() {
   return pdf;
 }
 
+// Un estado de cuenta de tarjeta en PDF, con las columnas de OCA (FECHA, DESCRIPCION, IMPORTE $, IMPORTE U$S)
+async function statementPdf({ from, closing, rows }) {
+  const page = await browser.newPage();
+  const tr = ([date, desc, pesos = '', dolares = '']) => `<tr><td>${date}</td><td>${desc}</td><td class="n">${pesos}</td><td class="n">${dolares}</td></tr>`;
+  await page.setContent(`<style>body{font:12px Helvetica,Arial,sans-serif;margin:32px}td,th{padding:3px 8px;text-align:left}.n{text-align:right}</style>
+    <h2>OCA</h2><div>Estado de cuenta</div><div>Período del ${from} al ${closing}</div><div>Fecha de cierre: ${closing}</div><br>
+    <table><tr><th>FECHA</th><th>DESCRIPCION</th><th class="n">IMPORTE $</th><th class="n">IMPORTE U$S</th></tr>${rows.map(tr).join('')}</table>
+    <br><div>Cotización del dólar: 40,30</div>`);
+  const pdf = await page.pdf({ format: 'A4' });
+  await page.close();
+  return pdf;
+}
+
 async function run(scheme) {
   const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, colorScheme: scheme, locale: 'es-UY', hasTouch: true });
   const page = await ctx.newPage();
@@ -48,6 +61,14 @@ async function run(scheme) {
     // Sin animaciones: el suricata queda quieto en su pose (las que terminan, terminadas)
     await page.screenshot({ path: join(out, `${name}.png`), fullPage: full, animations: 'disabled' });
     console.log('✓', name);
+  };
+  // Las pantallas fijas que scrollean adentro (revisar el estado de cuenta) se sacan enteras agrandando la ventana
+  const shotScroller = async (name) => {
+    if (only && !name.startsWith(only)) return;
+    const h = await page.locator('.fixed.inset-0.overflow-y-auto').evaluate((el) => el.scrollHeight);
+    await page.setViewportSize({ width: 390, height: h });
+    await shot(name);
+    await page.setViewportSize({ width: 390, height: 844 });
   };
   await page.goto(url);
   await shot('01-bienvenida');
@@ -127,13 +148,93 @@ async function run(scheme) {
   await shot('13-revisar-factura');
   await page.getByRole('button', { name: /^Guardar/ }).click();
   await page.getByRole('navigation').getByRole('button', { name: 'Más' }).click();
-  await page.getByRole('button', { name: /Facturas guardadas/ }).click();
+  await page.getByRole('button', { name: /Facturas y estados de cuenta/ }).click();
   await page.getByRole('button', { name: /^DISCO/ }).click();
   await page.locator('[aria-label="Páginas de la factura"] canvas').first().waitFor({ timeout: 20000 });
   await page.waitForTimeout(4200);
   await shot('19-ver-factura');
   await page.getByLabel('Cerrar').last().click();
   await page.getByLabel('Volver').click();
+  // Estado de cuenta de la tarjeta: la primera vez se le dice el rubro de cada comercio nuevo
+  await page.getByRole('navigation').getByRole('button', { name: 'Inicio' }).click();
+  // Una compra ya anotada a mano (aparece en «Posibles repetidos»)
+  await page.getByRole('button', { name: 'Gasto', exact: true }).click();
+  await page.getByLabel('Monto').fill('1240');
+  await page.getByPlaceholder('Buscar rubro…').fill('Supermercado');
+  await page.getByRole('button', { name: 'Supermercado', exact: true }).click();
+  await page.getByRole('dialog').locator('input[type=date]').fill('2026-11-05');
+  await page.getByRole('button', { name: 'Guardar' }).click();
+  await page.getByRole('button', { name: 'Tarjeta', exact: true }).click();
+  await page.waitForTimeout(4200); // que se vaya el aviso del gasto
+  await shot('22-tarjeta');
+  const october = await statementPdf({
+    from: '11/10/2026',
+    closing: '10/11/2026',
+    rows: [
+      ['11/10', 'SALDO ANTERIOR', '15.200,00'],
+      ['14/10', 'TIENDA INGLESA SUC 12 MONTEVIDEO', '2.345,60'],
+      ['20/10', 'MERCADOPAGO*LA PASIVA', '890,00'],
+      ['25/10', 'SU PAGO - GRACIAS', '-15.200,00'],
+      ['01/11', 'NETFLIX.COM', '', '15,99'],
+      ['02/11', 'ANCAP EST 1234 CARRASCO', '2.100,00'],
+      ['03/11', 'MERCADOPAGO*LA PASIVA', '760,00'],
+      ['05/11', 'TIENDA INGLESA 7', '1.240,00'],
+      ['06/11', 'FARMASHOP 14 CUOTA 02/03', '1.500,00'],
+      ['07/11', 'MOVIE CENTER', '980,00'],
+      ['08/11', 'PEDIDOSYA*BURGER KING', '715,00'],
+      ['08/11', 'REINTEGRO IVA LEY 19210', '-38,40'],
+      ['09/11', 'DLO*UBER TRIP', '312,00'],
+      ['10/11', 'ZARA 18 DE JULIO', '3.290,00'],
+      ['10/11', 'SPOTIFY P2A4B6C8', '', '4,99'],
+    ],
+  });
+  await page.locator('input[type=file][accept*="pdf"]').setInputFiles({ name: 'oca-octubre.pdf', mimeType: 'application/pdf', buffer: october });
+  await page.getByRole('heading', { name: 'Revisar compras' }).waitFor({ timeout: 30000 });
+  const nuevos = page.locator('section', { has: page.getByRole('heading', { name: 'Nuevos: decime de qué rubro son' }) });
+  const newNames = () => nuevos.getByRole('group').evaluateAll((els) => els.map((e) => e.getAttribute('aria-label')));
+  const first = await newNames();
+  if (JSON.stringify(first) !== JSON.stringify(['La Pasiva', 'Movie Center', 'Uber Trip'])) throw new Error(`Nuevos la primera vez: ${first}`);
+  await shot('23-revisar-tarjeta');
+  await page.getByRole('button', { name: 'Ver y cambiar' }).click();
+  await page.getByRole('button', { name: 'Ver', exact: true }).click();
+  await shotScroller('24-revisar-tarjeta-completo');
+  for (const [merchant, rubro] of [['La Pasiva', 'Comer afuera'], ['Movie Center', 'Paseos'], ['Uber Trip', 'Paseos']]) {
+    await nuevos.getByRole('group', { name: merchant }).getByRole('button', { name: 'Elegir rubro' }).click();
+    await page.getByRole('dialog').getByPlaceholder('Buscar rubro…').fill(rubro);
+    await page.getByRole('dialog').getByRole('button', { name: rubro, exact: true }).click();
+  }
+  await page.getByRole('button', { name: /^Guardar \d+ gastos/ }).click();
+  await page.getByText(/gastos guardados/).waitFor();
+  // El mes siguiente solo pregunta por los comercios que no conoce
+  await page.waitForTimeout(500);
+  await page.clock.setFixedTime(new Date('2026-12-12T10:00:00'));
+  await page.reload();
+  const november = await statementPdf({
+    from: '11/11/2026',
+    closing: '10/12/2026',
+    rows: [
+      ['11/11', 'SALDO ANTERIOR', '12.645,20', '20,98'],
+      ['13/11', 'TIENDA INGLESA SUC 3', '2.980,50'],
+      ['16/11', 'MERCADOPAGO*LA PASIVA', '1.120,00'],
+      ['20/11', 'SU PAGO - GRACIAS', '-12.645,20'],
+      ['20/11', 'SU PAGO - GRACIAS', '', '-20,98'],
+      ['22/11', 'DLO*UBER TRIP', '295,00'],
+      ['25/11', 'MOSCA HNOS 4', '890,00'],
+      ['01/12', 'NETFLIX.COM', '', '15,99'],
+      ['02/12', 'ANCAP EST 1234 CARRASCO', '2.300,00'],
+      ['04/12', 'MOVIE CENTER', '1.100,00'],
+      ['06/12', 'FARMASHOP 14 CUOTA 03/03', '1.500,00'],
+      ['08/12', 'PETSHOP EL PERRO FELIZ', '1.340,00'],
+    ],
+  });
+  await page.getByRole('button', { name: 'Tarjeta', exact: true }).click();
+  await page.locator('input[type=file][accept*="pdf"]').setInputFiles({ name: 'oca-noviembre.pdf', mimeType: 'application/pdf', buffer: november });
+  await page.getByRole('heading', { name: 'Revisar compras' }).waitFor({ timeout: 30000 });
+  const second = await newNames();
+  if (JSON.stringify(second) !== JSON.stringify(['Mosca Hnos', 'Petshop el Perro Feliz'])) throw new Error(`Nuevos la segunda vez: ${second}`);
+  await shot('25-tarjeta-segunda-vez');
+  await page.getByLabel('Volver').click();
+  await page.getByRole('navigation').getByRole('button', { name: 'Más' }).click();
   // Metas: al completar una con «Sumar», el suricata festeja
   await page.getByRole('button', { name: /^Metas/ }).click();
   await page.getByRole('button', { name: 'Nueva meta' }).first().click();
