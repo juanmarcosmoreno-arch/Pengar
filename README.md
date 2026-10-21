@@ -345,8 +345,9 @@ Qué no funciona en la vista previa (sí en el iPhone):
 npm run ios          # build + cap sync + abre Xcode
 ```
 
-En Xcode: target **App → Signing & Capabilities**, elegí tu equipo (con un Apple ID gratis alcanza para tu propio
-teléfono) y, si querés, cambiá el Bundle Identifier (`uy.pengar.app`, también en `capacitor.config.ts`). Conectá el
+En Xcode: target **App → Signing & Capabilities**: el equipo ya está puesto (el de la cuenta paga del dueño; si sos
+otra persona, elegí el tuyo, y con un Apple ID gratis sacá la capability iCloud: «Respaldo en iCloud Drive», más
+abajo) y, si querés, cambiá el Bundle Identifier (`uy.pengar.app`, también en `capacitor.config.ts`). Conectá el
 iPhone y dale ▶︎. Después de cambiar código web: `npm run ios:sync`. Hace falta iOS 15.4 o más nuevo (el WebView de
 antes no tiene `Array.prototype.at`, `structuredClone` ni `crypto.randomUUID`); un iPhone con iOS 15 se actualiza a
 15.8.
@@ -376,25 +377,45 @@ falta ninguna capability.
 #### Respaldo en iCloud Drive (con la cuenta paga)
 
 Para que vayan a iCloud Drive (y estén a salvo aunque se pierda el teléfono) la app necesita la capability iCloud, que
-solo da el **Apple Developer Program** (la cuenta paga): con un Apple ID gratis, si el proyecto trae el entitlement de
-iCloud, Xcode no firma. Por eso el proyecto no lo trae y el código usa iCloud solo si está disponible al abrir. Cuando
-tengas la cuenta paga:
+solo da el **Apple Developer Program** (la cuenta paga). El proyecto ya la trae: `ios/App/App/App.entitlements` (iCloud
+Documents con el contenedor `iCloud.uy.pengar.app`), el bloque `NSUbiquitousContainers` de `Info.plist` (la carpeta
+«Pengar» de iCloud Drive) y el equipo de la cuenta (`DEVELOPMENT_TEAM` en el proyecto de Xcode). Para que firme:
 
-1. En Xcode, target **App → Signing & Capabilities**, elegí el equipo de la cuenta paga.
-2. **+ Capability → iCloud**. En *Services* marcá **iCloud Documents**; en *Containers*, **+** y escribí
-   `iCloud.uy.pengar.app` (si cambiaste el Bundle Identifier, `iCloud.` + el tuyo) y dejalo marcado. Xcode crea
-   `App/App.entitlements`.
-3. En `ios/App/App/Info.plist`, activá el bloque `NSUbiquitousContainers` (está preparado, con el contenedor
-   `iCloud.uy.pengar.app`, `NSUbiquitousContainerIsDocumentScopePublic` en YES y el nombre «Pengar»): borrá **solo**
-   la línea que empieza con `<!-- Para activarlo` y la que termina en `borrá esta línea -->` (el comentario de
-   arriba, que explica, queda). Sin eso los respaldos van a iCloud igual, pero la carpeta no aparece en iCloud Drive.
-   Si cambiaste el contenedor, cambiá también la clave del bloque.
-4. **General → Identity → Build**: subilo (por ejemplo de 1 a 2). iCloud Drive lee `NSUbiquitousContainers` solo
-   cuando cambia el Build.
-5. En el iPhone, iCloud Drive prendido (Ajustes → tu nombre → iCloud → iCloud Drive). Dale ▶︎.
+1. En [developer.apple.com](https://developer.apple.com/account) → Identifiers, el contenedor `iCloud.uy.pengar.app`
+   y el App ID `uy.pengar.app` con iCloud prendido y ese contenedor marcado (si no, con *Automatically manage signing*
+   Xcode lo crea al elegir el equipo).
+2. En Xcode, target **App → Signing & Capabilities**: el equipo de la cuenta paga (si es otro, cambialo ahí) y en
+   **iCloud** marcado **iCloud Documents** con el contenedor.
+3. En el iPhone, iCloud Drive prendido (Ajustes → tu nombre → iCloud → iCloud Drive).
 
 Ajustes → Respaldo automático pasa a decir «en iCloud Drive › Pengar › Respaldos» y los respaldos que estaban en el
-iPhone se mueven solos a iCloud Drive. Si el iPhone sale de iCloud, vuelven a guardarse en Archivos.
+iPhone se mueven solos a iCloud Drive. Si el iPhone sale de iCloud, vuelven a guardarse en Archivos. **Sin cuenta
+paga** (un Apple ID gratis) Xcode no firma con iCloud: en Signing & Capabilities borrá la capability **iCloud** (o la
+línea `CODE_SIGN_ENTITLEMENTS` del proyecto) y los respaldos van a Archivos → En mi iPhone → Pengar.
+
+#### Subir a TestFlight
+
+Con la cuenta paga, TestFlight instala la app en tu iPhone (y en el de quien comparta el hogar) sin cable, y cada
+versión nueva llega sola. Una vez:
+
+1. **App Store Connect → Apps → +** → *New App*: iOS, el nombre (único en el App Store; debajo del ícono igual dice
+   «Pengar»), idioma *Spanish (Mexico)*, el Bundle ID `uy.pengar.app` y un SKU (`pengar`).
+2. **TestFlight → Pruebas internas → +**: un grupo (por ejemplo «Hogar») con la distribución automática, y sumate.
+   Otra persona: primero invitala en **Usuarios y acceso** (rol *Marketing* o *Developer*) y, cuando acepte, sumala al
+   grupo. En el iPhone, la app **TestFlight** del App Store.
+
+Cada versión, en la Mac:
+
+```bash
+git pull
+npm install
+npm run ios:sync         # build + cap sync (con el .env del hogar compartido, si lo usás)
+```
+
+En Xcode, arriba, el destino **Any iOS Device (arm64)** → **Product → Archive**. En la ventana que se abre
+(*Organizer*): **Distribute App → App Store Connect → Upload**, con *Manage Version and Build Number* marcado (sube el
+Build solo) y la firma automática. En 10 a 30 minutos aparece en TestFlight y llega al grupo. `Info.plist` ya declara
+que la app usa solo el cifrado estándar (`ITSAppUsesNonExemptEncryption`), así que no pregunta por la exportación.
 
 #### Hogar compartido (Supabase)
 

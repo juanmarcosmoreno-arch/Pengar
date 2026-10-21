@@ -29,6 +29,7 @@
 		A1B2C3D4E5F6100000000001 /* PengarOCRPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PengarOCRPlugin.swift; sourceTree = "<group>"; };
 		A1B2C3D4E5F6100000000005 /* PengarAIPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PengarAIPlugin.swift; sourceTree = "<group>"; };
 		A1B2C3D4E5F6100000000007 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
+		A1B2C3D4E5F6100000000020 /* App.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = App.entitlements; sourceTree = "<group>"; };
 		A1B2C3D4E5F6100000000009 /* PengarLockPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PengarLockPlugin.swift; sourceTree = "<group>"; };
 		A1B2C3D4E5F610000000000B /* PengarBackupPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PengarBackupPlugin.swift; sourceTree = "<group>"; };
 		2FAD9762203C412B000D30F8 /* config.xml */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = config.xml; sourceTree = "<group>"; };
@@ -89,6 +90,7 @@
 				504EC3101FED79650016851F /* LaunchScreen.storyboard */,
 				504EC3131FED79650016851F /* Info.plist */,
 				A1B2C3D4E5F6100000000007 /* PrivacyInfo.xcprivacy */,
+				A1B2C3D4E5F6100000000020 /* App.entitlements */,
 				2FAD9762203C412B000D30F8 /* config.xml */,
 				50B271D01FEDC1A000F3C39B /* public */,
 			);
@@ -323,8 +325,10 @@
 			baseConfigurationReference = 958DCC722DB07C7200EA8C5F /* debug.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = App/App.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 62395T6WLG;
 				INFOPLIST_FILE = App/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 15.4;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -345,8 +349,10 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = App/App.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 62395T6WLG;
 				INFOPLIST_FILE = App/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 15.4;
 				LD_RUNPATH_SEARCH_PATHS = (

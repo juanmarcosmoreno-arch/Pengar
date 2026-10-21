@@ -34,13 +34,10 @@
 	<key>LSSupportsOpeningDocumentsInPlace</key>
 	<true/>
 	<!--
-	  Respaldo automático en iCloud Drive (README → «Respaldo en iCloud Drive»). Necesita la capability iCloud →
-	  iCloud Documents con el contenedor iCloud.uy.pengar.app (cuenta paga del Apple Developer Program). Con eso
-	  hecho, activá el bloque NSUbiquitousContainers de abajo para que la carpeta «Pengar» aparezca en iCloud Drive
-	  (sin esto los respaldos van a iCloud igual, pero no se ven en Archivos) y subí el Build en Xcode (si no, iCloud
-	  Drive no se entera). Si cambiás el Bundle Identifier, el contenedor cambia con él.
+	  Respaldo automático en iCloud Drive (README → «Respaldo en iCloud Drive»): la carpeta «Pengar» de iCloud Drive.
+	  Va con App.entitlements (iCloud Documents, contenedor iCloud.uy.pengar.app). Si cambiás el Bundle Identifier,
+	  el contenedor cambia con él, acá y allá. iCloud Drive lee esto solo cuando cambia el Build.
 	-->
-	<!-- Para activarlo, borrá esta línea y la de «Fin de NSUbiquitousContainers», más abajo
 	<key>NSUbiquitousContainers</key>
 	<dict>
 		<key>iCloud.uy.pengar.app</key>
@@ -53,7 +50,9 @@
 			<string>Any</string>
 		</dict>
 	</dict>
-	Fin de NSUbiquitousContainers: borrá esta línea -->
+	<!-- Solo el cifrado estándar del sistema (HTTPS): App Store Connect no pregunta por la exportación en cada versión -->
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
 	<key>UIApplicationSceneManifest</key>
