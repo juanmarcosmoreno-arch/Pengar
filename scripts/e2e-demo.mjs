@@ -205,13 +205,7 @@ await marcos.waitForTimeout(2000);
 // Ni se arma la conexión con el servidor (window.__pengarFake aparece al arrancar el motor)
 check(await marcos.evaluate(() => !window.__pengarFake || Object.keys(window.__pengarFake.calls).length === 0), 'y sin hablarle al servidor del hogar');
 
-// --- Salir: con Face ID; si se cancela, sigue en el demo. Antes se borra algo del demo: su «Deshacer» no sobrevive ---
-await nav(marcos, 'Movimientos');
-await row(marcos, 1016).first().click();
-await marcos.getByRole('dialog').last().getByRole('button', { name: 'Borrar' }).click();
-const undoBtn = marcos.getByRole('button', { name: 'Deshacer' });
-await undoBtn.waitFor();
-const deletedAt = Date.now();
+// --- Salir: con Face ID; si se cancela, sigue en el demo ---
 await chip(marcos).click();
 await marcos.getByRole('dialog', { name: 'Modo demo' }).waitFor();
 await shot(marcos, 'salir');
@@ -221,13 +215,23 @@ check(await marcos.evaluate(() => window.__lock.calls.at(-1)) === 'Para salir de
 await marcos.evaluate(() => window.__lock.answer('cancel'));
 await marcos.waitForTimeout(500);
 check(await chip(marcos).count() === 1 && await marcos.getByRole('dialog', { name: 'Modo demo' }).isVisible(), 'cancelado: sigue en el demo (con la hoja abierta)');
+// Se borra algo del demo y se sale enseguida: su «Deshacer» (dura 8 s) no sobrevive. Si siguiera, tocarlo pondría lo
+// inventado en tus datos (y en el hogar)
+await marcos.getByRole('dialog', { name: 'Modo demo' }).getByLabel('Cerrar').last().click();
+await nav(marcos, 'Movimientos');
+await row(marcos, 1016).first().click();
+await marcos.getByRole('dialog').last().getByRole('button', { name: 'Borrar' }).click();
+const undoBtn = marcos.getByRole('button', { name: 'Deshacer' });
+await undoBtn.waitFor();
+await chip(marcos).click();
 await marcos.getByRole('dialog', { name: 'Modo demo' }).getByRole('button', { name: 'Salir del modo demo' }).click();
 await waitLock(marcos);
+const undoBeforeExit = await undoBtn.isVisible();
+const exitAt = Date.now();
 await marcos.evaluate(() => window.__lock.answer('ok'));
 await marcos.getByText('Volviste a tus datos').waitFor();
-// Los avisos con «Deshacer» duran 8 s: si siguiera, tocarlo pondría lo inventado en tus datos (y en el hogar)
-const leftAfter = Date.now() - deletedAt;
-check(await undoBtn.count() === 0 && await marcos.getByText('Movimiento borrado').count() === 0 && leftAfter < 7500, `al salir no queda el «Deshacer» de lo borrado en el demo (sí «Volviste a tus datos»; ${leftAfter} ms después de borrar)`);
+const exitMs = Date.now() - exitAt;
+check(undoBeforeExit && await undoBtn.count() === 0 && await marcos.getByText('Movimiento borrado').count() === 0, `al salir no queda el «Deshacer» de lo borrado en el demo, que estaba hasta ahí (sí «Volviste a tus datos», ${exitMs} ms)`);
 await nav(marcos, 'Inicio');
 await hello(marcos, 'Marcos');
 check(true, 'con Face ID: vuelven los datos de verdad («Hola, Marcos»)');
@@ -254,13 +258,14 @@ await nav(marcos, 'Movimientos');
 await row(marcos, 4321).first().click();
 await marcos.getByRole('dialog').last().getByRole('button', { name: 'Borrar' }).click();
 await marcos.getByRole('button', { name: 'Deshacer' }).waitFor();
-const deletedReal = Date.now();
 await openSettings(marcos);
 await marcos.getByRole('button', { name: 'Pasar al modo demo' }).click();
+const undoBeforeEnter = await marcos.getByRole('button', { name: 'Deshacer' }).isVisible();
+const enterAt = Date.now();
 await marcos.getByRole('dialog', { name: '¿Pasar al modo demo?' }).getByRole('button', { name: 'Pasar al modo demo' }).click();
 await marcos.getByText('Modo demo: los datos son inventados', { exact: true }).waitFor({ timeout: 10000 });
-const enteredAfter = Date.now() - deletedReal;
-check(await marcos.getByRole('button', { name: 'Deshacer' }).count() === 0 && await marcos.getByText('Movimiento borrado').count() === 0 && enteredAfter < 7500, `al entrar al demo no queda el «Deshacer» de lo borrado en tus datos (${enteredAfter} ms después de borrar)`);
+const enterMs = Date.now() - enterAt;
+check(undoBeforeEnter && await marcos.getByRole('button', { name: 'Deshacer' }).count() === 0 && await marcos.getByText('Movimiento borrado').count() === 0, `al entrar al demo no queda el «Deshacer» de lo borrado en tus datos, que estaba hasta ahí (${enterMs} ms)`);
 check(await hasRow(marcos, 777), 'al volver a entrar sigue lo anotado en el demo');
 check(!(await hasRow(marcos, 4321, 500)), 'y nada de tus datos');
 await openSettings(marcos);

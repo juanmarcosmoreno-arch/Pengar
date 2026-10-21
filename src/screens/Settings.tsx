@@ -1,7 +1,7 @@
 import { ChevronRight, Cloud, CloudUpload, Download, HardDrive, LockKeyhole, Presentation, RefreshCw, Smartphone, Sparkles, Upload } from 'lucide-react';
 import { useEffect, useId, useRef, useState } from 'react';
 import { ConfirmSheet, NoticeSheet } from '../components/ConfirmSheet';
-import { DEMO_EXPLAINED, exitWith, NO_PASSCODE, useExitDemo, useExitLock } from '../components/Demo';
+import { DEMO_EXPLAINED, demoOffered, exitWith, NO_PASSCODE, useExitDemo, useExitLock } from '../components/Demo';
 import { ImportFlow, ImportFormatHelp } from '../components/ImportFlow';
 import { PageHeader, Sheet } from '../components/Sheet';
 import { useToast } from '../components/Toast';
@@ -510,7 +510,7 @@ export function Settings({ onBack }: { onBack: () => void }) {
   // «Rehacer los datos de demo» (en el modo demo, en lugar de «Borrar todo»)
   const [redoing, setRedoing] = useState(false);
   // El modo demo: no en la vista previa ni con el ejemplo de la bienvenida (ya son datos inventados)
-  const demoAvailable = !isPreview && (demo || !s.example);
+  const demoAvailable = demoOffered(s.example, demo);
   // Mientras se arma el respaldo o está abierta «Compartir» (un segundo toque la rechaza)
   const [busy, setBusy] = useState(false);
   // Apple Intelligence en este teléfono (en la web no hay)

@@ -8,6 +8,7 @@ import { learnFrom } from './classify';
 import { addMonths, monthOf } from './dates';
 import { exampleData } from './example';
 import { norm, type ImportResult } from './importSheet';
+import { recurringMovementId } from './recurring';
 import { learnedKeyOf } from './statementReview';
 import { newId, normalizeData } from './template';
 import type { Data, Invoice, InvoiceItem, Kind, Movement, Recurring, Rubro, Settings } from './types';
@@ -48,7 +49,7 @@ interface DemoFixed {
   done?: number;
   /** Para anotar: su día ya llegó (en un mes de 28, acomodado a hoy) */
   due?: number;
-  /** Más adelante: tantos días después de hoy */
+  /** Más adelante: tantos días después de hoy. Del 28 en adelante ya no queda día (los fijos llegan al 28): ya anotado */
   later?: number;
 }
 
@@ -200,16 +201,23 @@ export function demoData(res: Pick<ImportResult, 'categories' | 'rubros' | 'move
     const r = rubro(f.rubro);
     if (!r) continue;
     const at = f.done ?? (f.due != null ? scaled(f.due, todayDay) : Math.min(28, todayDay + (f.later ?? 0)));
+    // Uno de más adelante cuyo día ya llegó (del 28 a fin de mes): no se pide, queda anotado como los de siempre
+    const recorded = f.later != null && at <= todayDay;
+    const id = newId('rec');
     recurring.push({
-      id: newId('rec'),
+      id,
       rubroId: r.id,
       kind: f.kind ?? 'gasto',
       amount: f.amount,
       day: Math.min(28, Math.max(1, at)),
       note: f.note,
-      doneThrough: f.done != null ? month : addMonths(month, -1),
+      doneThrough: f.done != null || recorded ? month : addMonths(month, -1),
       createdAt,
     });
+    if (recorded) {
+      const date = day(at);
+      movements.push({ id: recurringMovementId(id, month), date, amount: f.amount, kind: f.kind ?? 'gasto', rubroId: r.id, note: f.note, origin: 'manual', createdAt: new Date(`${date}T09:00:00`).getTime() });
+    }
   }
 
   // El diezmo: unos meses se dio de menos y otro de más, se cuenta desde hace un año con un saldo de antes, y este mes

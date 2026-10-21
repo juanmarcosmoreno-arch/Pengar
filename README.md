@@ -237,8 +237,9 @@ o, si querés, compartido con tu casa (cada uno anota en el suyo).
     baja la primera vez que abre la factura y queda guardado.
   - Con la **pantalla de bloqueo** de Face ID puesta no se trae ni se manda nada (al abrir bloqueada, ni arranca); al
     desbloquear se pone al día. Lo que esperaba para mandarse se manda al bloquear.
-  - Los datos de ejemplo nunca se mandan (ni se le habla al servidor mientras están). En el modo demo, tampoco: el
-    motor se congela y los datos inventados ni se miran. «Borrar todo» y «Empezar con los
+  - Los datos de ejemplo nunca se mandan (ni se le habla al servidor mientras están). En el modo demo, tampoco se manda
+    ni se pide nada: el motor se congela y los datos inventados ni se miran (con Supabase, si el hogar ya había
+    arrancado, el cliente puede seguir renovando la sesión anónima, sin datos). «Borrar todo» y «Empezar con los
     míos» no tocan el hogar: el teléfono queda en pausa y la bienvenida ofrece solo «Volver a los datos del hogar»
     (con conexión; la planilla, empezar de cero y restaurar, recién después de salir del hogar). «Borrar todo» avisa
     si quedan cambios sin mandar e intenta mandarlos antes. Con el ejemplo puesto, Ajustes no deja restaurar ni
@@ -252,13 +253,14 @@ o, si querés, compartido con tu casa (cada uno anota en el suyo).
     tabla propia, `pengar_signals` (qué cambió y quién), y no por las tablas de verdad: Realtime no aplica la RLS a los
     DELETE. Cómo
     prepararlo: «Hogar compartido (Supabase)», más abajo; cómo probarlo sin Supabase: «Probar el hogar compartido».
-- **Modo demo** (Más → Ajustes → Modo demo; no en la vista previa ni con el ejemplo de la bienvenida): para mostrarle la
+- **Modo demo** (Más → Ajustes → Modo demo; no en la vista previa ni con el ejemplo de la bienvenida, donde el subtítulo
+  de Ajustes en Más tampoco lo nombra): para mostrarle la
   app a alguien sin que vea tus números. «Pasar al modo demo» (con confirmación) muestra datos inventados: los del
   ejemplo («Ana», la planilla corrida hasta el mes pasado, lo anotado este mes, la meta) más gastos fijos para anotar
-  (y otros más adelante), el resumen del mes pasado sin abrir, el diezmo con historial («Contar desde» hace un año, un
+  (y otros más adelante; del 28 a fin de mes, cuando ya no queda día para ellos, ya anotados), el resumen del mes pasado sin abrir, el diezmo con historial («Contar desde» hace un año, un
   saldo inicial y meses de menos y de más), una factura del súper separada por rubro con su ticket en PDF (hecho en el
-  teléfono: `ticketPdf`, sin nada externo) y los comercios del estado de cuenta de ejemplo ya aprendidos (solo dos
-  quedan como nuevos). Aviso «Modo demo: los datos son inventados» y un chip chico «Demo» arriba en Inicio,
+  teléfono: `ticketPdf`, sin nada externo) y los comercios del estado de cuenta de ejemplo ya aprendidos («Tarjeta» →
+  «Probar con un estado de cuenta de ejemplo», como con el ejemplo: solo dos quedan como nuevos). Aviso «Modo demo: los datos son inventados» y un chip chico «Demo» arriba en Inicio,
   Movimientos, Estadísticas y Más; tocarlo abre una hoja con «Salir del modo demo».
   - **Dos juegos de datos**: los de verdad en la clave `data` y los del demo en `data-demo`, con los archivos de sus
     facturas en `file:<id>` y `demo-file:<id>` (ninguno empieza con el prefijo del otro: borrar los que sobran de uno
@@ -267,16 +269,28 @@ o, si querés, compartido con tu casa (cada uno anota en el suyo).
     antes de mostrar el demo (si no quedara, al reabrir se verían los de verdad); al salir, después. Los datos del demo
     llevan además `settings.demo`: ni el hogar ni el respaldo los aceptan aunque los vieran. Lo que se anota o cambia en
     el demo queda en el demo; «Rehacer los datos de demo» (en lugar de «Borrar todo») los arma de nuevo, y si son de
-    otro mes se arman solos al entrar o al abrir.
+    otro mes se arman solos al entrar o al abrir. También si no son del demo (`isDemoData`: con `settings.demo`,
+    empezados y sin el ejemplo; un respaldo o una planilla que se colaran se verían cada vez): en el modo demo nunca se
+    muestra la bienvenida (ofrece restaurar un respaldo), se rehacen.
+  - **Nada pasa de un juego al otro**: cada aviso es del juego en que salió (el `epoch` del store sube al cambiar): al
+    entrar o salir se van los de antes, con su «Deshacer» (lo inventado pasaría a tus datos y al hogar, o un gasto de
+    verdad al demo) y sus montos; los que salen después («Volviste a tus datos») quedan. Lo que tarda con los datos de
+    ahora (restaurar un respaldo, «Borrar todo» con el respaldo de antes, el respaldo completo) no deja entrar mientras
+    tanto (`hold`: «Esperá a que termine…»); y lo confirmado con unos datos no se aplica a otros (`restoreBackup`,
+    `replaceAll` y `applyImport` reciben el `epoch` de cuando se confirmó y, si cambió, no tocan nada). Restaurar e
+    importar solo van a los de verdad.
   - **Mientras tanto**: el hogar compartido se congela antes de que aparezcan los datos inventados (espera la vuelta que
-    estaba en curso: `setSyncDemo`/`freeze` en `src/lib/sync.ts`) y no se le habla al servidor ni se ve nada del hogar
-    (su pantalla dice «En el modo demo no se muestra»); lo que esperaba para mandarse se manda al salir. El respaldo
-    automático no corre. Ajustes no muestra Privacidad, la clave de Claude, Importar, el respaldo automático ni
-    «Exportar y respaldo»; el resumen no ofrece el aviso del día 1. El bloqueo con Face ID no salta al volver a la app
+    estaba en curso: `setSyncDemo`/`freeze` en `src/lib/sync.ts`) y no se le manda ni se le pide nada al servidor (con
+    Supabase, si el hogar ya había arrancado, el cliente puede renovar la sesión anónima: sin datos) ni se ve nada del
+    hogar (su pantalla dice «En el modo demo no se muestra»); lo que esperaba para mandarse se manda al salir. El respaldo
+    automático no corre. Ajustes no muestra Privacidad, la clave de Claude (y «Factura» no invita a conectarla), Importar,
+    el respaldo automático ni «Exportar y respaldo»; el resumen no ofrece el aviso del día 1. El bloqueo con Face ID no salta al volver a la app
     ni al abrirla en el demo (se cerró mostrándola).
   - **Salir** (Ajustes o el chip): en el iPhone pide **siempre** Face ID o el código del iPhone (`PengarLock`, con
-    `.deviceOwnerAuthentication`), aunque el bloqueo esté apagado; si se cancela, sigue en el demo. Si el iPhone no
-    tiene código ni biometría, y en la web, pide confirmar. Al salir vuelven los datos de verdad, el hogar se pone al
+    `.deviceOwnerAuthentication`), aunque el bloqueo esté apagado; si se cancela, sigue en el demo. Los textos dicen el
+    nombre que corresponde (Touch ID, Optic ID). Si el iPhone no tiene código ni biometría, y en la web, pide confirmar:
+    en ese iPhone Ajustes no promete nada y avisa antes de entrar («Este iPhone no tiene código: cualquiera puede salir
+    del demo y ver tus datos»), y la hoja del chip y la confirmación también lo dicen. Al salir vuelven los datos de verdad, el hogar se pone al
     día y el respaldo vuelve a andar; con el bloqueo prendido no vuelve a pedir Face ID (ya se autenticó).
   - El armado, en `src/domain/demo.ts` (con pruebas); el recorrido, `npm run e2e:demo`.
 - **A tu gusto**: categorías (nombre, ícono, color, presupuesto fijo o % del ingreso, si cuenta como ahorro) y rubros

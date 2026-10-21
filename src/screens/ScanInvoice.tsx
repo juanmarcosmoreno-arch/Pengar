@@ -138,7 +138,8 @@ export function ScanInvoice({ onClose }: { onClose: () => void }) {
             <div><div className="text-xl">Subir un PDF</div><div className="text-muted">Facturas de UTE, Antel, compras online…</div></div>
           </button>
           {error && <p className="px-1 text-danger">{error}</p>}
-          {!data.settings.ai.apiKey && !isPreview && (
+          {/* En el modo demo la clave no se usa (Ajustes no la muestra): no se invita a conectarla */}
+          {!data.settings.ai.apiKey && !isPreview && !data.settings.demo && (
             <p className="flex gap-2 px-1 pt-2 text-[15px] text-muted">
               <Sparkles size={18} className="mt-0.5 shrink-0" />
               Se lee en el teléfono. Si querés una lectura más fina, podés conectar Claude en Más → Ajustes.

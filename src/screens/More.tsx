@@ -1,11 +1,13 @@
 import { ChevronRight, CircleHelp, FileText, Layers, Repeat, Settings, Target, Users, Wallet } from 'lucide-react';
-import { DemoChip } from '../components/Demo';
+import { DemoChip, demoOffered } from '../components/Demo';
 import { ExampleBanner } from '../components/ExampleBanner';
 import { PageHeader } from '../components/Sheet';
 import { useSync } from '../lib/sync';
 import { useStore } from '../store/store';
 
 export type MorePage = 'presupuesto' | 'fijos' | 'categorias' | 'metas' | 'facturas' | 'hogar' | 'ajustes' | 'ayuda';
+
+const SETTINGS_SUB = 'Moneda, importar, respaldo, lectura con IA, modo demo';
 
 const ITEMS: { id: MorePage; label: string; sub: string; Icon: typeof Wallet }[] = [
   { id: 'presupuesto', label: 'Presupuesto', sub: 'Cuánto gastar por mes en cada categoría', Icon: Wallet },
@@ -14,7 +16,7 @@ const ITEMS: { id: MorePage; label: string; sub: string; Icon: typeof Wallet }[]
   { id: 'metas', label: 'Metas', sub: 'Ahorrar para algo', Icon: Target },
   { id: 'facturas', label: 'Facturas y estados de cuenta', sub: 'Las fotos, PDF y planillas que subiste', Icon: FileText },
   { id: 'hogar', label: 'Hogar compartido', sub: 'Anotar entre varios, cada uno en su teléfono', Icon: Users },
-  { id: 'ajustes', label: 'Ajustes', sub: 'Moneda, importar, respaldo, lectura con IA, modo demo', Icon: Settings },
+  { id: 'ajustes', label: 'Ajustes', sub: SETTINGS_SUB, Icon: Settings },
   { id: 'ayuda', label: 'Cómo se usa', sub: 'Lo básico en un minuto', Icon: CircleHelp },
 ];
 
@@ -27,7 +29,11 @@ export function More({ onOpen }: { onOpen: (p: MorePage) => void }) {
     if (!household) return key ? `Tenés tu llave de «${key.householdName || 'tu hogar'}»: entrá con el código` : sub;
     return phase === 'held' ? `«${household.name}»: hay algo para revisar` : `Estás en «${household.name}»`;
   };
-  const subOf = (id: MorePage, sub: string) => (id === 'hogar' ? hogar(sub) : id === 'ajustes' && demo ? 'Estás en el modo demo: para salir, acá' : sub);
+  const settings = demo
+    ? 'Estás en el modo demo: para salir, acá'
+    // Sin «modo demo» donde Ajustes no lo ofrece (la vista previa, el ejemplo de la bienvenida)
+    : demoOffered(data.settings.example, demo) ? SETTINGS_SUB : SETTINGS_SUB.replace(', modo demo', '');
+  const subOf = (id: MorePage, sub: string) => (id === 'hogar' ? hogar(sub) : id === 'ajustes' ? settings : sub);
   return (
     <div>
       <PageHeader title="Más" right={<DemoChip className="mr-1" />} />

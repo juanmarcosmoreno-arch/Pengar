@@ -7,6 +7,7 @@ import { Presentation } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { authenticate, canLock, lockAvailability, unlockName, type LockAvailability } from '../lib/lock';
+import { isPreview } from '../lib/platform';
 import { useStore } from '../store/store';
 import { ConfirmSheet } from './ConfirmSheet';
 import { Sheet } from './Sheet';
@@ -14,6 +15,9 @@ import { Suricata } from './Suricata';
 import { useToast } from './Toast';
 
 export const DEMO_EXPLAINED = 'Muestra datos inventados para enseñar la app. Tus datos quedan guardados y vuelven al salir.';
+
+/** Ajustes ofrece el modo demo: no en la vista previa ni con el ejemplo de la bienvenida (ya son datos inventados) */
+export const demoOffered = (example: boolean | undefined, demo: boolean) => !isPreview && (demo || !example);
 
 const WEB: LockAvailability = { biometry: 'none', available: false };
 

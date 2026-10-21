@@ -62,9 +62,22 @@ describe('modo demo: los datos inventados', () => {
     // El primer día del mes también hay para anotar
     const first = demoData(sheet, '2026-11-01').data;
     expect(pendingRecurring(first, '2026-11', '2026-11-01').filter((r) => r.due).length).toBe(3);
-    // Y el 28, los de más adelante caen ese día
-    const last = demoData(sheet, '2026-11-28').data;
-    expect(pendingRecurring(last, '2026-11', '2026-11-28').every((r) => r.day <= 28)).toBe(true);
+    // El 27, los de más adelante caen el 28 (todavía no)
+    const late = demoData(sheet, '2026-10-27').data;
+    const lateIx = buildIndex(late);
+    const soon = pendingRecurring(late, '2026-10', '2026-10-27').filter((r) => !r.due);
+    expect(soon.map((r) => lateIx.rubro.get(r.rubroId)?.name).sort()).toEqual(['Celular', 'Club', 'OSE']);
+    expect(soon.every((r) => r.day === 28)).toBe(true);
+    // Del 28 a fin de mes ya no queda día para ellos (los fijos llegan al 28): quedan anotados, no se piden como vencidos
+    for (const d of ['2026-10-28', '2026-10-31', '2026-11-30', '2027-02-28']) {
+      const last = demoData(sheet, d).data;
+      const lix = buildIndex(last);
+      const pending = pendingRecurring(last, d.slice(0, 7), d);
+      expect(pending.filter((r) => r.due).map((r) => lix.rubro.get(r.rubroId)?.name)).toEqual(['Antel', 'Netflix', 'Emergencia móvil']);
+      expect(pending.filter((r) => !r.due)).toEqual([]);
+      const later = last.recurring.filter((r) => ['OSE', 'Club', 'Celular'].includes(lix.rubro.get(r.rubroId)?.name ?? ''));
+      expect(later.every((r) => r.doneThrough === d.slice(0, 7) && last.movements.some((m) => m.id === `m-${r.id}-${d.slice(0, 7)}` && m.amount === r.amount && m.date <= d))).toBe(true);
+    }
   });
 
   it('el diezmo tiene historial: se cuenta desde hace un año, con saldo inicial, meses de menos y de más', () => {
