@@ -751,9 +751,22 @@ describe('estado guardado', () => {
     expect(s).toEqual({ v: 1, household: { id: 'h', name: 'Casa', inviteCode: 'ABCDEFGH' }, userId: 'u', cursor: null, synced: { 'movement:m1': 'abc' }, files: { f1: 'up' }, rejected: {}, reload: false });
     const m = normalizeSyncState({
       household: { id: 'h', name: 'Casa', inviteCode: 'ABCDEFGH' },
-      members: [{ userId: 'u', displayName: 'Ana', joinedAt: '2026-10-21T12:00:00Z', extra: 1 }, { userId: 2 }, { userId: 'v', displayName: null, joinedAt: 'x' }],
+      members: [
+        { userId: 'u', displayName: 'Ana', joinedAt: '2026-10-21T12:00:00Z', extra: 1 },
+        { userId: 2 },
+        { userId: 'v', memberId: 'w', displayName: null, joinedAt: 'x' },
+      ],
+      memberId: 7,
+      token: 'llave',
+      tokenSent: 'sí',
     });
-    expect(m.members).toEqual([{ userId: 'u', displayName: 'Ana', joinedAt: '2026-10-21T12:00:00Z' }, { userId: 'v', displayName: null, joinedAt: 'x' }]);
+    // Los de antes de las llaves: su id de integrante es su usuario
+    expect(m.members).toEqual([
+      { userId: 'u', memberId: 'u', displayName: 'Ana', joinedAt: '2026-10-21T12:00:00Z' },
+      { userId: 'v', memberId: 'w', displayName: null, joinedAt: 'x' },
+    ]);
+    expect(m).toMatchObject({ token: 'llave', tokenSent: false });
+    expect(m.memberId).toBeUndefined();
   });
 });
 
@@ -979,5 +992,183 @@ describe('sesión y servidor (revisión)', () => {
     await bruno.engine.syncNow();
     expect(bruno.status.phase).toBe('removed');
     expect(server.isMember(hh.id, bruno.client.userId)).toBe(false);
+  });
+});
+
+// --- Volver a entrar con la llave, «Sumar mis datos» y el nombre del hogar -----------------------------------------
+
+/** Lo que trae un respaldo de ese teléfono (los datos, con la llave adentro; sin la clave de Claude) */
+const backupOf = (p: Phone): Data => normalizeData(JSON.parse(JSON.stringify({ ...p.data, settings: { ...p.data.settings, ai: { ...p.data.settings.ai, apiKey: '' } } })));
+
+describe('la llave para volver a entrar', () => {
+  it('queda en el teléfono y en los datos (para los respaldos), nunca en el hogar', async () => {
+    const hh = await together();
+    const token = ana.state.token!;
+    expect(token.length).toBeGreaterThanOrEqual(43);
+    expect(ana.state.tokenSent).toBe(true);
+    expect(ana.data.settings.recovery).toEqual({ token, householdId: hh.id, householdName: 'Casa' });
+    expect(bruno.data.settings.recovery?.token).toBe(bruno.state.token);
+    expect(bruno.state.token).not.toBe(token);
+    // Lo del hogar no la lleva (ni la de Ana ni la de Bruno)
+    const sent = JSON.stringify([...server.records.get(hh.id)!.values()]);
+    expect(sent).not.toContain(token);
+    expect(sent).not.toContain(bruno.state.token!);
+    expect(JSON.stringify(server.members.get(hh.id))).not.toContain(token);
+    // Si cambia el nombre del hogar, la copia de los datos también
+    await bruno.engine.renameHousehold('Casa de los dos');
+    await ana.engine.refreshMembers();
+    expect(ana.data.settings.recovery?.householdName).toBe('Casa de los dos');
+  });
+
+  it('con un respaldo, otro teléfono vuelve a entrar como el mismo integrante (no se suma otro)', async () => {
+    const hh = await together();
+    ana.edit((d) => ({ ...d, movements: [...d.movements, mov('a2', 30)] }));
+    await ana.engine.syncNow();
+    await bruno.engine.syncNow();
+    // Ana cambia de teléfono: restaura su respaldo y entra con el código
+    const ana2 = phone(server, backupOf(ana));
+    await ana2.engine.start();
+    const out = await ana2.engine.joinHousehold(hh.inviteCode, 'Ana');
+    expect(out).toMatchObject({ reclaimed: true, name: 'Ana', household: { id: hh.id } });
+    expect(ana2.status.memberId).toBe(ana.client.userId);
+    expect(ana2.status.userId).toBe(ana2.client.userId);
+    expect(ana2.status.members.map((m) => m.displayName)).toEqual(['Ana', 'Bruno']);
+    // Lo que anotó en el teléfono de antes sigue siendo suyo; lo de este teléfono, también
+    const authorsOf = (p: Phone) => ({ me: p.status.memberId, inHousehold: true, names: new Map(p.status.members.map((m) => [m.memberId, m.displayName ?? ''])) });
+    expect(authorLabel(authorsOf(ana2), movement(ana2, 'a2')?.createdBy)).toBeNull();
+    ana2.edit((d) => ({ ...d, movements: [...d.movements, mov('a3', 33)] }));
+    await ana2.engine.syncNow();
+    await bruno.engine.syncNow();
+    await bruno.engine.refreshMembers();
+    expect(movement(bruno, 'a3')?.createdBy).toBe(ana.client.userId);
+    expect(authorLabel(authorsOf(bruno), movement(bruno, 'a3')?.createdBy)).toBe('Anotado por Ana');
+    expect(authorLabel(authorsOf(bruno), movement(bruno, 'a2')?.createdBy)).toBe('Anotado por Ana');
+    // El teléfono de antes queda afuera (con sus datos)
+    await ana.engine.syncNow();
+    expect(ana.status.phase).toBe('removed');
+    ana2.engine.stop();
+  });
+
+  it('si perdió la sesión, entrar de nuevo con el código lo deja como estaba (no otro integrante)', async () => {
+    const hh = await together();
+    // Otro usuario para el servidor (se borró lo que guarda la app de la sesión)
+    const newClient = server.connect();
+    bruno.engine.stop();
+    const restarted = new SyncEngine(newClient, {
+      getData: () => bruno.data,
+      setData: (fn) => {
+        bruno.data = fn(bruno.data);
+      },
+      saveData: async () => {},
+      loadFile: async () => undefined,
+      saveFile: async () => {},
+      deleteFile: async () => {},
+      pruneFiles: async () => {},
+    }, { load: async () => structuredClone(bruno.stateValue), save: async (st) => void (bruno.stateValue = structuredClone(st)) }, { listenWindow: false });
+    bruno.engine = restarted;
+    await restarted.start();
+    const out = await restarted.joinHousehold(hh.inviteCode, 'Bruno');
+    expect(out.reclaimed).toBe(true);
+    expect(server.members.get(hh.id)!.map((m) => [m.displayName, m.userId])).toEqual([['Ana', ana.client.userId], ['Bruno', newClient.userId]]);
+  });
+
+  it('quien estaba antes de las llaves recibe una (y queda en los datos)', async () => {
+    const hh = await together();
+    // Un estado de antes: sin llave, sin memberId y los datos sin la copia
+    const { token: _t, tokenSent: _s, memberId: _m, ...old } = ana.state;
+    ana.stateValue = old;
+    ana.data = { ...ana.data, settings: { ...ana.data.settings, recovery: undefined } };
+    ana.saved = ana.data;
+    server.tokens.clear();
+    await ana.restart();
+    await ana.engine.refreshMembers();
+    expect(ana.state.token).toBeTruthy();
+    expect(ana.state.tokenSent).toBe(true);
+    expect(ana.status.memberId).toBe(ana.client.userId);
+    expect(ana.data.settings.recovery?.token).toBe(ana.state.token);
+    expect(ana.client.calls.setRecovery).toBe(1);
+    // Y sirve para volver a entrar
+    const ana2 = phone(server, backupOf(ana));
+    await ana2.engine.start();
+    expect((await ana2.engine.joinHousehold(hh.inviteCode, 'Ana')).reclaimed).toBe(true);
+    ana2.engine.stop();
+  });
+
+  it('sin la migración nueva (la llave no se puede mandar), lo demás sigue andando', async () => {
+    await together();
+    const { token: _t, tokenSent: _s, ...old } = ana.state;
+    ana.stateValue = old;
+    vi.spyOn(ana.client, 'setRecovery').mockRejectedValue(new RemoteError('setup', 'Guardar la llave: falta pengar_set_recovery'));
+    await ana.restart();
+    ana.edit((d) => ({ ...d, movements: [...d.movements, mov('a5', 5)] }));
+    await ana.engine.syncNow();
+    expect(ana.status.phase).toBe('idle');
+    expect(ana.state.tokenSent).toBe(false);
+    // Una llave que el servidor no tiene no va a los respaldos
+    expect(ana.data.settings.recovery?.token).not.toBe(ana.state.token);
+  });
+
+  it('«Borrar todo» no la pierde (vuelve a los datos con los del hogar); salir del hogar la saca', async () => {
+    await together();
+    const token = bruno.state.token;
+    bruno.edit(() => emptyData());
+    expect(bruno.data.settings.recovery).toBeUndefined();
+    bruno.edit(() => ({ ...emptyData(), ...templateData(), settings: { ...defaultSettings(), name: 'Bruno', onboarded: true } }));
+    await vi.advanceTimersByTimeAsync(2000);
+    await bruno.engine.syncNow();
+    expect(bruno.data.settings.recovery?.token).toBe(token);
+    await bruno.engine.leave();
+    expect(bruno.data.settings.recovery).toBeUndefined();
+    expect(bruno.state.token).toBeUndefined();
+  });
+});
+
+describe('sumar mis datos al hogar', () => {
+  it('une categorías y rubros por nombre, no duplica la planilla ni lo repetido y sube lo nuevo', async () => {
+    // Los dos importaron la misma planilla (otros ids): agosto y setiembre en «Feria»
+    const sheet = (prefix: string, rubroId: string) => [
+      mov(`${prefix}-ago`, 800, { date: '2026-08-01', origin: 'planilla', monthly: true, rubroId }),
+      mov(`${prefix}-set`, 900, { date: '2026-09-01', origin: 'planilla', monthly: true, rubroId }),
+    ];
+    ana.data = { ...ana.data, movements: [...ana.data.movements, ...sheet('pa', 'r1')] };
+    bruno.data = normalizeData({
+      ...brunoData(),
+      categories: [...brunoData().categories, { id: 'cx', name: 'alimentacion', kind: 'gasto', icon: 'm:super', color: '#000', budget: { type: 'none' }, order: 1 }],
+      rubros: [...brunoData().rubros, { id: 'rx', name: 'FERIA', categoryId: 'cx', keywords: [] }],
+      movements: [...brunoData().movements, ...sheet('pb', 'rx'), mov('dup', 100), mov('feria', 70, { rubroId: 'rx', date: '2026-10-10' })],
+      settings: { ...brunoData().settings, learned: { 'la pasiva': 'rx' } },
+    });
+    bruno.files.set('fb', new Blob(['foto de Bruno']));
+    await ana.engine.start();
+    const hh = await ana.engine.createHousehold('Casa', 'Ana');
+    await bruno.engine.start();
+    const out = await bruno.engine.joinHousehold(hh.inviteCode, 'Bruno', { keepLocal: true });
+    expect(out.reclaimed).toBe(false);
+    expect(out.sum).toMatchObject({ sheetMonths: ['2026-08', '2026-09'], repeated: 1, added: { movements: 2, categories: 1, rubros: 1, invoices: 1 } });
+    // «alimentacion» y «FERIA» son las del hogar
+    expect(bruno.data.categories.map((c) => c.name).sort()).toEqual(['Alimentación', 'Mis gastos']);
+    expect(movement(bruno, 'feria')?.rubroId).toBe('r1');
+    expect(bruno.data.settings.learned).toEqual({ disco: 'r1', 'la pasiva': 'r1' });
+    // La planilla queda una vez; lo de Bruno lleva su nombre
+    expect(bruno.data.movements.filter((m) => m.monthly).map((m) => m.id).sort()).toEqual(['pa-ago', 'pa-set']);
+    expect(movement(bruno, 'feria')?.createdBy).toBe(bruno.client.userId);
+    expect(await server.files.get(`${hh.id}/fb`)?.text()).toBe('foto de Bruno');
+    await ana.engine.syncNow();
+    expect(shared(ana.data)).toEqual(shared(bruno.data));
+    expect(movement(ana, 'feria')).toBeTruthy();
+  });
+
+  it('con la llave de un respaldo del mismo hogar, sumar no revive lo que el hogar ya cambió', async () => {
+    const hh = await together();
+    const restored = backupOf(ana);
+    ana.edit((d) => ({ ...d, movements: d.movements.map((m) => (m.id === 'm1' ? { ...m, amount: 111 } : m)) }));
+    await ana.engine.syncNow();
+    const ana2 = phone(server, restored);
+    await ana2.engine.start();
+    const out = await ana2.engine.joinHousehold(hh.inviteCode, 'Ana', { keepLocal: true });
+    expect(out.reclaimed).toBe(true);
+    expect(out.sum?.added.movements).toBe(0);
+    expect(movement(ana2, 'm1')?.amount).toBe(111);
+    ana2.engine.stop();
   });
 });

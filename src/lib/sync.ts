@@ -10,6 +10,11 @@
  * Archivos de facturas y estados de cuenta: los nuevos se suben a pengar-files/<hogar>/<id> después de mandar el
  * registro; quien no lo tiene lo baja la primera vez que lo abre (loadInvoiceFile, en el visor).
  *
+ * La llave para volver a entrar: al crear o unirse se arma una (o se usa la de un respaldo restaurado) y el servidor
+ * guarda su hash. Queda en el estado del motor y, copiada, en los datos (settings.recovery: así va en los respaldos;
+ * domain/sync no la manda al hogar). Con el código y esa llave, otro teléfono vuelve a entrar como el mismo integrante
+ * (memberId, el de «Anotado por»), sin sumar otro. Quien ya estaba antes de las llaves recibe una sola.
+ *
  * Modo demo (store, lib/device): el motor se congela antes de que aparezcan los datos inventados (espera lo que estaba
  * haciendo) y no ve nada de ellos; las pantallas no ven el hogar. Al salir, sigue con lo que había quedado pendiente.
  *
@@ -25,19 +30,22 @@ import {
   hashData,
   localChanges,
   mergeRemote,
+  newRecoveryToken,
   pendingKeys,
   presentHashes,
   readShared,
   recordKey,
   replaceWithRemote,
   seenOf,
+  sumIntoHousehold,
   syncable,
   type Hashes,
   type OutRecord,
   type RemoteRecord,
   type SharedSettings,
+  type SumResult,
 } from '../domain/sync';
-import type { Data, Goal } from '../domain/types';
+import type { Data, Goal, Recovery } from '../domain/types';
 import { deleteFile, loadFile, loadSyncState, pruneFiles, saveFile, saveSyncState } from './db';
 import { fakePhone } from './fakePhone';
 import { createFakeRemote } from './fakeRemote';
@@ -87,6 +95,12 @@ export interface SyncState {
   datasetId?: string;
   /** Hasta qué hora del servidor (ms) ya se pidió: lo de antes no se vuelve a pedir (menos el rato de margen) */
   seen?: number;
+  /** El integrante de este teléfono (Movement.createdBy). Sin esto, el usuario (los de antes de las llaves son iguales) */
+  memberId?: string;
+  /** La llave para volver a entrar desde otro teléfono (el servidor tiene su hash) */
+  token?: string;
+  /** El servidor ya tiene el hash de `token` (si no, se manda en la próxima vuelta) */
+  tokenSent?: boolean;
 }
 
 /**
@@ -102,8 +116,10 @@ export interface SyncStatus {
   /** Ya se leyó del teléfono si hay hogar (antes, `household` null no quiere decir que no haya) */
   loaded: boolean;
   household: Household | null;
-  /** El usuario de este teléfono (para Movement.createdBy) */
+  /** El usuario de Supabase de este teléfono */
   userId: string | null;
+  /** El integrante de este teléfono (para Movement.createdBy): no cambia al volver a entrar desde otro teléfono */
+  memberId: string | null;
   members: Member[];
   phase: SyncPhase;
   /** Cambios de acá todavía sin mandar */
@@ -167,6 +183,7 @@ const isMember = (m: unknown): m is Member => {
   const x = m as Partial<Member> | null;
   return !!x && typeof x.userId === 'string' && typeof x.joinedAt === 'string' && (x.displayName === null || typeof x.displayName === 'string');
 };
+const str = (v: unknown): v is string => typeof v === 'string' && v.length > 0;
 
 const strings = (m: unknown): Hashes =>
   m && typeof m === 'object' ? Object.fromEntries(Object.entries(m).filter((e): e is [string, string] => typeof e[1] === 'string')) : {};
@@ -179,7 +196,10 @@ export function normalizeSyncState(raw: unknown): SyncState {
   const h = r.household as Partial<Household> | null | undefined;
   if (!h || typeof h.id !== 'string' || typeof h.name !== 'string' || typeof h.inviteCode !== 'string') return emptyState(userId);
   const shared = readShared(r.base);
-  const members = Array.isArray(r.members) ? r.members.filter(isMember).map(({ userId, displayName, joinedAt }) => ({ userId, displayName, joinedAt })) : [];
+  // Los integrantes guardados antes de las llaves no tienen memberId: es su usuario
+  const members = Array.isArray(r.members)
+    ? r.members.filter(isMember).map(({ userId, memberId, displayName, joinedAt }) => ({ userId, memberId: str(memberId) ? memberId : userId, displayName, joinedAt }))
+    : [];
   return {
     v: 1,
     household: { id: h.id, name: h.name, inviteCode: h.inviteCode },
@@ -196,6 +216,8 @@ export function normalizeSyncState(raw: unknown): SyncState {
       ? { goals: Object.fromEntries(Object.entries(r.goals).filter((e): e is [string, number] => typeof e[1] === 'number' && Number.isFinite(e[1]))) }
       : {}),
     ...(typeof r.seen === 'number' && Number.isFinite(r.seen) ? { seen: r.seen } : {}),
+    ...(str(r.memberId) ? { memberId: r.memberId } : {}),
+    ...(str(r.token) ? { token: r.token, tokenSent: r.tokenSent === true } : {}),
   };
 }
 
@@ -218,6 +240,17 @@ interface PushItem {
   rec: OutRecord;
 }
 
+/** Cómo salió unirse */
+export interface JoinOutcome {
+  household: Household;
+  /** Volvió a entrar con su llave: es el mismo integrante de antes (con su nombre y lo que anotó), no uno nuevo */
+  reclaimed: boolean;
+  /** Cómo lo ven los demás */
+  name: string | null;
+  /** Con «Sumar mis datos al hogar»: qué se sumó y qué ya estaba */
+  sum?: Omit<SumResult, 'data'>;
+}
+
 export class SyncEngine {
   private state = emptyState();
   private status: SyncStatus = {
@@ -225,6 +258,7 @@ export class SyncEngine {
     loaded: false,
     household: null,
     userId: null,
+    memberId: null,
     members: [],
     phase: 'off',
     pending: 0,
@@ -250,6 +284,8 @@ export class SyncEngine {
   private bigDeleteOk = false;
   /** Modo demo: no hace nada (ni arranca, ni manda, ni trae) hasta thaw */
   private frozen = false;
+  /** Ya se avisó que la llave no se pudo mandar (sin la migración nueva, se probaría en cada vuelta) */
+  private tokenWarned = false;
   private readonly o: Required<SyncOptions>;
 
   constructor(
@@ -398,10 +434,11 @@ export class SyncEngine {
           : new SyncError('not-ready', 'Primero empezá con tus datos');
       }
       const { userId } = await this.remote.session({ create: true });
-      const hh = await this.remote.createHousehold(name, displayName);
-      this.state = { ...emptyState(userId), household: hh, ...(data.datasetId ? { datasetId: data.datasetId } : {}) };
+      const token = newRecoveryToken();
+      const hh = await this.remote.createHousehold(name, displayName, token);
+      this.state = { ...emptyState(userId), household: hh, memberId: userId, token, tokenSent: true, ...(data.datasetId ? { datasetId: data.datasetId } : {}) };
       await this.save();
-      this.setStatus({ household: hh, userId, members: [], error: null, phase: 'idle', reload: false, held: 0 });
+      this.setStatus({ household: hh, userId, memberId: userId, members: [], error: null, phase: 'idle', reload: false, held: 0 });
       this.attach();
       await this.cycle();
       await this.refreshMembers().catch(() => {});
@@ -411,28 +448,38 @@ export class SyncEngine {
 
   /**
    * Se une al hogar del código. Lo de acá se reemplaza por lo del hogar (de acá quedan el nombre y la clave de Claude);
-   * con `keepLocal`, lo de acá se suma al hogar. Tira RemoteError('invalid-code') si el código no es de ningún hogar;
-   * si no se pudo bajar lo del hogar, tira y no cambia nada (unirse de nuevo no duplica)
+   * con `keepLocal`, lo de acá se suma al hogar (domain/sync sumIntoHousehold: une categorías y rubros por nombre y no
+   * duplica lo que el hogar ya tiene). Con la llave de los datos (un respaldo restaurado, o la de antes si lo habían
+   * sacado o perdió la sesión), si es de un integrante de ese hogar, vuelve a entrar como ese integrante. Tira
+   * RemoteError('invalid-code') si el código no es de ningún hogar; si no se pudo bajar lo del hogar, tira y no cambia
+   * nada (unirse de nuevo no duplica)
    */
-  async joinHousehold(code: string, displayName: string | null, opts: { keepLocal?: boolean } = {}): Promise<Household> {
+  async joinHousehold(code: string, displayName: string | null, opts: { keepLocal?: boolean } = {}): Promise<JoinOutcome> {
     await this.loadedOrThrow();
     return this.exclusive(async () => {
       if (this.state.household && this.status.phase !== 'removed') throw new SyncError('in-household', 'Ya estás en un hogar');
+      const token = this.host.getData().settings.recovery?.token ?? this.state.token ?? newRecoveryToken();
       const { userId } = await this.remote.session({ create: true });
-      const hh = await this.remote.joinHousehold(code, displayName);
+      const joined = await this.remote.joinHousehold(code, displayName, token);
+      const hh = joined.household;
       const remote = await this.remote.pull(hh.id, null);
       this.detach();
       const data = this.host.getData();
-      this.state = { ...emptyState(userId), household: hh };
+      this.state = { ...emptyState(userId), household: hh, memberId: joined.memberId, token, tokenSent: true };
+      let sum: SumResult | undefined;
       if (opts.keepLocal && syncable(data)) {
-        if (data.datasetId) this.state.datasetId = data.datasetId;
-        await this.applyRemote(remote);
+        await this.replaceLocal(remote, (d) => (sum = sumIntoHousehold(d, data)).data);
       } else await this.replaceLocal(remote);
-      this.setStatus({ household: hh, userId, members: [], error: null, phase: 'idle', reload: false, held: 0 });
+      this.setStatus({ household: hh, userId, memberId: joined.memberId, members: [], error: null, phase: 'idle', reload: false, held: 0 });
       this.attach();
       await this.cycle();
       await this.refreshMembers().catch(() => {});
-      return hh;
+      const outcome: JoinOutcome = { household: this.state.household ?? hh, reclaimed: joined.reclaimed, name: joined.displayName };
+      if (sum) {
+        const { data: _merged, ...rest } = sum;
+        outcome.sum = rest;
+      }
+      return outcome;
     });
   }
 
@@ -468,9 +515,14 @@ export class SyncEngine {
       clearTimeout(this.retryTimer);
       clearTimeout(this.debounceTimer);
       this.failures = 0;
+      // La llave de este hogar ya no sirve (el integrante se fue): no va más en los respaldos
+      if (this.host.getData().settings.recovery?.householdId === hh.id) {
+        this.host.setData((d) => ({ ...d, settings: { ...d.settings, recovery: undefined } }));
+        await this.host.saveData().catch((e) => console.warn('Hogar compartido: no se pudo guardar', e));
+      }
       this.state = emptyState(this.state.userId);
       await this.save();
-      this.setStatus({ household: null, members: [], phase: 'off', pending: 0, rejected: 0, reload: false, held: 0, error: null });
+      this.setStatus({ household: null, memberId: null, members: [], phase: 'off', pending: 0, rejected: 0, reload: false, held: 0, error: null });
     });
   }
 
@@ -542,11 +594,14 @@ export class SyncEngine {
       return [];
     }
     await this.updateHousehold(fresh);
-    if (JSON.stringify(members) !== JSON.stringify(this.state.members ?? [])) {
+    // Quién es este teléfono (los que estaban antes de las llaves lo saben recién acá)
+    const mine = members.find((m) => m.userId === this.state.userId)?.memberId;
+    if (JSON.stringify(members) !== JSON.stringify(this.state.members ?? []) || (mine && mine !== this.state.memberId)) {
       this.state.members = members;
+      if (mine) this.state.memberId = mine;
       await this.save();
     }
-    this.setStatus({ members });
+    this.setStatus({ members, memberId: this.state.memberId ?? null });
     return members;
   }
 
@@ -603,6 +658,7 @@ export class SyncEngine {
           loaded: true,
           household: this.state.household,
           userId: this.state.userId,
+          memberId: this.state.memberId ?? null,
           members: this.state.members ?? [],
           phase: this.state.household ? 'idle' : 'off',
           reload: this.state.reload,
@@ -634,6 +690,7 @@ export class SyncEngine {
     if (cur.name !== hh.name || cur.inviteCode !== hh.inviteCode) {
       this.state.household = { id: hh.id, name: hh.name, inviteCode: hh.inviteCode };
       await this.save();
+      this.stampRecovery();
     }
     this.setStatus({ household: this.state.household });
   }
@@ -736,7 +793,9 @@ export class SyncEngine {
         }
         // Un archivo que no sube no frena lo demás: se reintenta con el resto
         await this.syncFiles(hh);
+        await this.ensureRecovery(hh);
       }
+      this.stampRecovery();
       this.failures = 0;
       clearTimeout(this.retryTimer);
       this.setStatus({ phase: 'idle', error: null, lastSyncAt: this.o.now(), reload: this.state.reload, held: 0, ...this.counts() });
@@ -814,9 +873,46 @@ export class SyncEngine {
     return failed;
   }
 
+  /**
+   * La llave de quien estaba en el hogar antes de las llaves (o que la perdió): se arma una y se manda. Si no se puede
+   * (sin conexión, o falta la migración nueva en Supabase), se vuelve a probar en la próxima vuelta sin frenar lo demás
+   */
+  private async ensureRecovery(hh: Household): Promise<void> {
+    if (!this.state.token) {
+      this.state.token = newRecoveryToken();
+      this.state.tokenSent = false;
+      await this.save();
+    }
+    if (this.state.tokenSent) return;
+    try {
+      await this.remote.setRecovery(hh.id, this.state.token);
+      this.state.tokenSent = true;
+      await this.save();
+    } catch (e) {
+      if (!this.tokenWarned) console.warn('Hogar compartido: no se pudo guardar la llave en el servidor', e);
+      this.tokenWarned = true;
+    }
+  }
+
+  /**
+   * La llave va también en los datos (settings.recovery), para que quede en los respaldos: con datos propios del hogar
+   * y una vez que el servidor la tiene. Otra que haya (la de un respaldo de otro teléfono) se cambia por la de este
+   */
+  private stampRecovery(): void {
+    const hh = this.state.household;
+    const { token, tokenSent, reload } = this.state;
+    if (!hh || !token || !tokenSent || reload || this.status.phase === 'removed') return;
+    const data = this.host.getData();
+    if (!syncable(data)) return;
+    const want: Recovery = { token, householdId: hh.id, householdName: hh.name };
+    const have = data.settings.recovery;
+    if (have && have.token === want.token && have.householdId === want.householdId && have.householdName === want.householdName) return;
+    this.host.setData((d) => ({ ...d, settings: { ...d.settings, recovery: want } }));
+  }
+
   /** Los movimientos nuevos llevan quién los anotó (los recibidos ya lo traen, o no se les inventa) */
   private stampMovements(): void {
-    const me = this.state.userId;
+    const me = this.state.memberId ?? this.state.userId;
     const synced = this.state.synced;
     const fresh = (m: Data['movements'][number]) => !m.createdBy && !has(synced, recordKey('movement', m.id));
     const data = this.host.getData();
@@ -945,10 +1041,14 @@ export class SyncEngine {
     }
   }
 
-  /** Lo del hogar en lugar de lo de acá (al unirse, o después de «Borrar todo» o el ejemplo) */
-  private async replaceLocal(remote: RemoteRecord[]): Promise<void> {
+  /**
+   * Lo del hogar en lugar de lo de acá (al unirse, o después de «Borrar todo» o el ejemplo). `add`: lo que se le suma
+   * a lo del hogar («Sumar mis datos al hogar»); lo sumado queda como cambio de acá y se manda en la próxima vuelta
+   */
+  private async replaceLocal(remote: RemoteRecord[], add?: (household: Data) => Data): Promise<void> {
     const res = replaceWithRemote(remote, this.host.getData());
-    this.host.setData(() => res.data);
+    const next = add ? add(res.data) : res.data;
+    this.host.setData(() => next);
     this.dataDirty = true;
     const seen = seenOf(remote, undefined);
     this.state = {
@@ -959,7 +1059,7 @@ export class SyncEngine {
       files: {},
       rejected: {},
       reload: false,
-      ...(res.data.datasetId ? { datasetId: res.data.datasetId } : {}),
+      ...(next.datasetId ? { datasetId: next.datasetId } : {}),
       goals: {},
     };
     setGoalBases(this.state, res.goalBases);
@@ -967,7 +1067,8 @@ export class SyncEngine {
     else delete this.state.seen;
     this.setStatus({ reload: false, held: 0 });
     await this.save();
-    await this.host.pruneFiles(new Set(res.data.invoices.map((i) => i.id))).catch((e) => console.warn('No se pudieron borrar los archivos de antes', e));
+    this.stampRecovery();
+    await this.host.pruneFiles(new Set(next.invoices.map((i) => i.id))).catch((e) => console.warn('No se pudieron borrar los archivos de antes', e));
   }
 
   private async fail(e: unknown): Promise<void> {
@@ -1002,7 +1103,7 @@ export class SyncEngine {
 
 let engine: SyncEngine | null = null;
 const OFF: SyncStatus = {
-  configured: false, loaded: false, household: null, userId: null, members: [], phase: 'off', pending: 0, rejected: 0, reload: false, held: 0, lastSyncAt: null, error: null,
+  configured: false, loaded: false, household: null, userId: null, memberId: null, members: [], phase: 'off', pending: 0, rejected: 0, reload: false, held: 0, lastSyncAt: null, error: null,
 };
 const statusListeners = new Set<() => void>();
 /** La pantalla de bloqueo está puesta (holdSync): el motor no arranca ni sigue hasta que se saque */
@@ -1088,7 +1189,7 @@ const subscribeStatus = (l: () => void) => {
 /** El estado del hogar compartido para las pantallas */
 export const useSync = (): SyncStatus => useSyncExternalStore(subscribeStatus, getSyncStatus);
 
-/** Quién anotó cada movimiento: el usuario de este teléfono y el nombre de los demás integrantes */
+/** Quién anotó cada movimiento: el integrante de este teléfono y el nombre de cada integrante (por su memberId) */
 export interface Authors {
   me: string | null;
   /** Solo en un hogar: sin hogar (o después de salir) no se dice quién anotó */
@@ -1099,9 +1200,10 @@ let authors: { from: SyncStatus['members']; me: string | null; hh: string | null
 const getAuthors = (): Authors => {
   const s = getSyncStatus();
   const hh = s.household?.id ?? null;
-  if (!authors || authors.from !== s.members || authors.me !== s.userId || authors.hh !== hh) {
-    const names = new Map(s.members.flatMap((m) => (m.displayName ? [[m.userId, m.displayName] as const] : [])));
-    authors = { from: s.members, me: s.userId, hh, value: { me: s.userId, inHousehold: hh !== null, names } };
+  const me = s.memberId ?? s.userId;
+  if (!authors || authors.from !== s.members || authors.me !== me || authors.hh !== hh) {
+    const names = new Map(s.members.flatMap((m) => (m.displayName ? [[m.memberId, m.displayName] as const] : [])));
+    authors = { from: s.members, me, hh, value: { me, inHousehold: hh !== null, names } };
   }
   return authors.value;
 };

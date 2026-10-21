@@ -31,7 +31,7 @@ describe('FakeRemote sigue las reglas de la migración', () => {
     const server = new FakeRemote();
     const ana = server.connect();
     const carla = server.connect();
-    const hh = await ana.createHousehold('  ', 'Ana');
+    const hh = await ana.createHousehold('  ', 'Ana', 'llave-de-ana-0123456789abcdefghijklmnop');
     expect(hh.name).toBe('Casa');
     expect(hh.inviteCode).toMatch(/^[A-HJ-NP-Z2-9]{12}$/);
     await ana.push(hh.id, [{ kind: 'movement', id: 'm1', data: { b: 1, a: undefined, cc: [undefined] }, deleted: false }]);
@@ -46,6 +46,31 @@ describe('FakeRemote sigue las reglas de la migración', () => {
     // Desde una hora: incluida
     expect(await ana.pull(hh.id, row.updatedAt)).toHaveLength(1);
     expect(await ana.pull(hh.id, new Date(Date.parse(row.updatedAt) + 1).toISOString())).toHaveLength(0);
+  });
+
+  it('con el código y la llave de un integrante, otro teléfono pasa a ser ese integrante (como pengar_join_household)', async () => {
+    const llave = 'llave-de-dani-0123456789abcdefghijklmnop';
+    const server = new FakeRemote();
+    const ana = server.connect();
+    const dani = server.connect();
+    const daniNuevo = server.connect();
+    const hh = await ana.createHousehold('Casa', 'Ana', 'llave-de-ana-0123456789abcdefghijklmnop');
+    expect(await dani.joinHousehold(hh.inviteCode, 'Dani', llave)).toMatchObject({ memberId: dani.userId, reclaimed: false, displayName: 'Dani' });
+    expect(await daniNuevo.joinHousehold(hh.inviteCode, '', llave)).toMatchObject({ household: hh, memberId: dani.userId, reclaimed: true, displayName: 'Dani' });
+    const members = await ana.members(hh.id);
+    expect(members.map((m) => [m.memberId, m.userId])).toEqual([[ana.userId, ana.userId], [dani.userId, daniNuevo.userId]]);
+    // La llave no la ve nadie
+    expect(JSON.stringify(members)).not.toContain(llave);
+    // El teléfono de antes queda afuera
+    await expect(dani.pull(hh.id, null)).rejects.toMatchObject({ kind: 'denied' });
+    // Otra llave es otro integrante; una corta no sirve
+    const otro = server.connect();
+    expect(await otro.joinHousehold(hh.inviteCode, 'Otro', 'x'.repeat(43))).toMatchObject({ memberId: otro.userId, reclaimed: false });
+    await expect(otro.joinHousehold(hh.inviteCode, 'Otro', 'corta')).rejects.toMatchObject({ kind: 'rejected' });
+    // Si sacan al integrante, su llave ya no sirve
+    await ana.removeMember(hh.id, daniNuevo.userId);
+    const daniOtroMas = server.connect();
+    expect(await daniOtroMas.joinHousehold(hh.inviteCode, 'Dani', llave)).toMatchObject({ memberId: daniOtroMas.userId, reclaimed: false });
   });
 
   it('sin conexión todo falla como sin conexión', async () => {

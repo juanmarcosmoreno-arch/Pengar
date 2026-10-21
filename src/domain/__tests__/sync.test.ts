@@ -9,6 +9,7 @@ import {
   localChanges,
   mergeRemote,
   mergeShared,
+  newRecoveryToken,
   outRecords,
   parseKey,
   pendingKeys,
@@ -19,6 +20,7 @@ import {
   replaceWithRemote,
   SETTINGS_ID,
   sharedSettings,
+  sumIntoHousehold,
   syncable,
   toRecords,
   type RemoteRecord,
@@ -95,6 +97,27 @@ describe('los datos como registros', () => {
     // Sin cotización, la clave no va
     const d = sample();
     expect(sharedSettings({ ...d.settings, usdRate: undefined })).not.toHaveProperty('usdRate');
+  });
+
+  it('la llave para volver a entrar no viaja al hogar (va en los respaldos: está en los datos)', () => {
+    const token = newRecoveryToken();
+    const d = normalizeData({ ...sample(), settings: { ...sample().settings, recovery: { token, householdId: 'h1', householdName: 'Casa' } } });
+    expect(d.settings.recovery?.token).toBe(token);
+    expect(JSON.stringify(toRecords(d))).not.toContain(token);
+    expect(localChanges(recordHashes(toRecords(sample())), d)).toEqual({ changed: [], deleted: [] });
+    // Al recibir lo del hogar, queda la de acá
+    expect(fromRecords(asRemote(toRecords(sample())), d).settings.recovery?.token).toBe(token);
+  });
+
+  it('las llaves: 43 letras al azar (base64url); una rota o corta se descarta al leer los datos', () => {
+    const a = newRecoveryToken();
+    expect(a).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    expect(newRecoveryToken()).not.toBe(a);
+    const read = (recovery: unknown) => normalizeData({ settings: { ...defaultSettings(), recovery } as never }).settings.recovery;
+    expect(read({ token: 'corta', householdId: 'h' })).toBeUndefined();
+    expect(read({ token: a })).toBeUndefined();
+    expect(read('x')).toBeUndefined();
+    expect(read({ token: a, householdId: 'h' })).toEqual({ token: a, householdId: 'h', householdName: '' });
   });
 
   it('el hash no depende del orden de las claves ni de lo undefined', () => {
@@ -346,5 +369,105 @@ describe('de vuelta a datos', () => {
     expect(cursorOf([rem('goal', 'a', {}, { at: '2026-10-21T12:00:03.123456+00:00' })], Date.parse('2026-10-21T12:00:01Z')))
       .toBe(Date.parse('2026-10-21T12:00:03.123Z'));
     expect(cursorOf([rem('goal', 'a', {}, { at: '2026-10-21T12:00:00Z' })], Date.parse('2026-10-21T12:00:01Z'))).toBe(Date.parse('2026-10-21T12:00:01Z'));
+  });
+});
+
+describe('sumar mis datos al hogar', () => {
+  const cat = (id: string, name: string, extra: Record<string, unknown> = {}) =>
+    ({ id, name, kind: 'gasto', icon: 'm:otros', color: '#000', budget: { type: 'none' }, order: 0, ...extra }) as Data['categories'][number];
+  const hogar = (): Data =>
+    normalizeData({
+      ...sample(),
+      categories: [...sample().categories, cat('c2', 'Ingresos', { kind: 'ingreso' })],
+      rubros: [...sample().rubros, { id: 'r2', name: 'Sueldo', categoryId: 'c2', keywords: [] }],
+      movements: [
+        ...sample().movements,
+        mov('h-ago', 800, { date: '2026-08-01', origin: 'planilla', monthly: true }),
+        mov('h-set', 900, { date: '2026-09-01', origin: 'planilla', monthly: true }),
+      ],
+    });
+  const mio = (): Data =>
+    normalizeData({
+      categories: [cat('k1', 'ALIMENTACION'), cat('k2', 'Mascotas', { budget: { type: 'fixed', amount: 300 } }), cat('k3', 'Vacía'), cat('k4', 'Comida')],
+      rubros: [
+        { id: 's1', name: 'feria', categoryId: 'k1', keywords: [] },
+        { id: 's2', name: 'Veterinaria', categoryId: 'k2', keywords: [] },
+        // Otro nombre de categoría, pero el único rubro del hogar que se llama así
+        { id: 's3', name: 'Feria ', categoryId: 'k4', keywords: [] },
+      ],
+      movements: [
+        // La misma planilla (otros ids) y un mes que el hogar no tiene
+        mov('p-ago', 800, { date: '2026-08-01', origin: 'planilla', monthly: true, rubroId: 's1' }),
+        mov('p-set', 950, { date: '2026-09-01', origin: 'planilla', monthly: true, rubroId: 's1' }),
+        mov('p-jul', 700, { date: '2026-07-01', origin: 'planilla', monthly: true, rubroId: 's1' }),
+        // Igual a uno del hogar (m1: 100 en Feria el 20/10) y otro igual que no está dos veces en el hogar
+        mov('x1', 100, { rubroId: 's1' }),
+        mov('x2', 100, { rubroId: 's3' }),
+        mov('x3', 40, { rubroId: 's2', invoiceId: 'fv', createdBy: 'otro-hogar' }),
+        // El mismo id que uno del hogar (un respaldo de ese hogar): queda el del hogar
+        mov('m2', 999, { rubroId: 's1' }),
+        mov('y1', 10, { rubroId: 's1', invoiceId: 'fy' }),
+      ],
+      invoices: [
+        { id: 'fv', fileName: 'vet.jpg', mime: 'image/jpeg', items: [{ description: 'Consulta', amount: 40, rubroId: 's2' }], createdAt: 1 },
+        // Su único movimiento ya estaba en el hogar: el mismo estado de cuenta, no se suma
+        { id: 'fx', fileName: 'oca.pdf', mime: 'application/pdf', items: [{ description: 'Feria', amount: 100, rubroId: 's1' }], createdAt: 1 },
+        { id: 'fy', fileName: 'ticket.jpg', mime: 'image/jpeg', items: [{ description: 'Pan', amount: 10, rubroId: 's1' }], createdAt: 1 },
+      ],
+      goals: [{ id: 'g9', name: 'viaje', icon: 'plane', target: 5, saved: 1 }, { id: 'g8', name: 'Auto', icon: 'car', target: 9, saved: 2 }],
+      recurring: [
+        { id: 'q9', rubroId: 's1', kind: 'gasto', amount: 400, day: 3, createdAt: 1 },
+        { id: 'q8', rubroId: 's2', kind: 'gasto', amount: 50, day: 9, createdAt: 1 },
+      ],
+      settings: { ...defaultSettings(), onboarded: true, learned: { 'la pasiva': 's1', vete: 's2', disco: 's2' }, usdRate: 39 },
+    });
+  // x1 y fx: el estado de cuenta de x1
+  const mine = (): Data => {
+    const d = mio();
+    return { ...d, movements: d.movements.map((m) => (m.id === 'x1' ? { ...m, invoiceId: 'fx' } : m)) };
+  };
+
+  it('une categorías y rubros por nombre y lo de acá pasa a usar los del hogar', () => {
+    const { data, added } = sumIntoHousehold(hogar(), mine());
+    // «ALIMENTACION» es Alimentación; «Mascotas» (con presupuesto) se suma; «Vacía» y «Comida» sin rubros nuevos, no
+    expect(data.categories.map((c) => c.name)).toEqual(['Alimentación', 'Ingresos', 'Mascotas']);
+    expect(data.categories.find((c) => c.name === 'Mascotas')?.order).toBe(2);
+    expect(data.rubros.map((r) => [r.name, r.categoryId])).toEqual([['Feria', 'c1'], ['Sueldo', 'c2'], ['Veterinaria', 'k2']]);
+    expect(added).toMatchObject({ categories: 1, rubros: 1 });
+    const byId = new Map(data.movements.map((m) => [m.id, m]));
+    expect(byId.get('p-jul')?.rubroId).toBe('r1');
+    expect(byId.get('x2')?.rubroId).toBe('r1');
+    expect(byId.get('x3')?.rubroId).toBe('s2');
+    // Lo sumado queda sin «Anotado por» (lo pone el motor: quien se une)
+    expect(byId.get('x3')?.createdBy).toBeUndefined();
+    // Del hogar quedan su presupuesto y lo aprendido; lo de acá que el hogar no tiene, se suma (con sus rubros)
+    expect(data.categories[0].budget).toEqual({ type: 'fixed', amount: 1000 });
+    expect(data.settings.learned).toEqual({ disco: 'r1', 'la pasiva': 'r1', vete: 's2' });
+    expect(data.settings.usdRate).toBe(40.1);
+  });
+
+  it('no duplica: la planilla de los meses que el hogar ya tiene, lo repetido ni lo del mismo id', () => {
+    const { data, added, repeated, sheetMonths } = sumIntoHousehold(hogar(), mine());
+    expect(sheetMonths).toEqual(['2026-08', '2026-09']);
+    expect(data.movements.filter((m) => m.monthly).map((m) => m.id)).toEqual(['h-ago', 'h-set', 'p-jul']);
+    // x1 es igual a m1; x2 también, pero el hogar lo tiene una sola vez; m2 ya estaba
+    expect(repeated).toBe(2);
+    expect(data.movements.find((m) => m.id === 'm2')?.amount).toBe(50);
+    expect(data.movements.map((m) => m.id).filter((id) => /^[xy]/.test(id))).toEqual(['x2', 'x3', 'y1']);
+    expect(added.movements).toBe(4);
+    // Facturas: la del veterinario y el ticket; el estado de cuenta de x1 (que ya estaba), no
+    expect(data.invoices.map((i) => i.id)).toEqual(['f1', 'fv', 'fy']);
+    expect(data.invoices.find((i) => i.id === 'fy')?.items[0].rubroId).toBe('r1');
+    // La meta «viaje» ya está en el hogar; el fijo de Feria también
+    expect(data.goals.map((g) => g.name)).toEqual(['Viaje', 'Auto']);
+    expect(data.recurring.map((r) => r.id)).toEqual(['q1', 'q8']);
+    expect(added).toMatchObject({ invoices: 2, goals: 1, recurring: 1 });
+  });
+
+  it('sumar lo mismo que ya está no cambia nada', () => {
+    const hh = hogar();
+    const res = sumIntoHousehold(hh, hh);
+    expect(res.data).toEqual(hh);
+    expect(res.added).toEqual({ movements: 0, categories: 0, rubros: 0, invoices: 0, goals: 0, recurring: 0 });
   });
 });

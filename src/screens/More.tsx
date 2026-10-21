@@ -19,9 +19,14 @@ const ITEMS: { id: MorePage; label: string; sub: string; Icon: typeof Wallet }[]
 ];
 
 export function More({ onOpen }: { onOpen: (p: MorePage) => void }) {
-  const { household, phase } = useSync();
-  const { demo } = useStore();
-  const hogar = (sub: string) => (!household ? sub : phase === 'held' ? `«${household.name}»: hay algo para revisar` : `Estás en «${household.name}»`);
+  const { household, phase, configured } = useSync();
+  const { data, demo } = useStore();
+  // Después de restaurar un respaldo con la llave de un hogar: se puede volver como el mismo integrante
+  const key = configured && !household && !data.settings.example ? data.settings.recovery : undefined;
+  const hogar = (sub: string) => {
+    if (!household) return key ? `Tenés tu llave de «${key.householdName || 'tu hogar'}»: entrá con el código` : sub;
+    return phase === 'held' ? `«${household.name}»: hay algo para revisar` : `Estás en «${household.name}»`;
+  };
   const subOf = (id: MorePage, sub: string) => (id === 'hogar' ? hogar(sub) : id === 'ajustes' && demo ? 'Estás en el modo demo: para salir, acá' : sub);
   return (
     <div>

@@ -156,13 +156,46 @@ o, si querés, compartido con tu casa (cada uno anota en el suyo).
   - **Crear un hogar**: tu nombre (viene de Ajustes) y el del hogar; sube todos los datos (con los archivos de las
     facturas) y muestra el código con «Copiar» y, en el iPhone, «Compartir» (la hoja de compartir con un texto listo).
   - **Unirme con un código** (también en la bienvenida: «Tengo un código de hogar»): tu nombre y el código (con guion,
-    espacios o minúsculas también vale). Si el teléfono ya tenía datos propios, avisa que se reemplazan por los del
-    hogar y ofrece «Guardar un respaldo antes» (el automático en el iPhone, el manual en la web). Trae todo; los
-    archivos de las facturas se bajan cuando se abren. Es también cómo se recupera todo en un teléfono nuevo («Si
-    cambiás de teléfono, entrá con el código y vuelven tus datos»): el teléfono nuevo es otro usuario, así que el de
-    antes queda en Integrantes (lo que se anotó en él dice «Anotado por» tu nombre) y se saca con «Sacar». El nombre
-    escrito al crear o al unirse queda también en Ajustes, y cambiarlo en Ajustes cambia cómo te ven los demás.
-  - **En un hogar**: el nombre, los integrantes («Ana (vos) · desde hoy», con «Sacar» en los demás: un teléfono que ya
+    espacios o minúsculas también vale). Trae todo; los archivos de las facturas se bajan cuando se abren. Si el
+    teléfono ya tenía datos propios, pregunta qué hacer con ellos («Tus datos y los del hogar») y ofrece «Guardar un
+    respaldo antes» (el automático en el iPhone, el manual en la web):
+    - **Reemplazar por los del hogar**: el teléfono queda con lo del hogar (de acá quedan el nombre, la clave de Claude
+      y la llave del hogar).
+    - **Sumar mis datos al hogar** (`sumIntoHousehold` en `src/domain/sync.ts`): lo del hogar más lo de acá. Las
+      categorías se unen como al sumar una planilla (`sameCategory`: el mismo nombre sin mayúsculas ni tildes, o la
+      misma letra con un nombre parecido) y los rubros por nombre (en la misma categoría o, si no, el único del hogar
+      con ese nombre); lo de acá pasa a usar los del hogar (movimientos, renglones de facturas, gastos fijos y lo
+      aprendido) y lo que el hogar no tiene se agrega (una categoría nueva, solo si la usa un rubro nuevo o tiene
+      presupuesto). No duplica: lo que tiene el mismo id que algo del hogar (un respaldo de ese hogar) queda como en
+      el hogar; los meses de planilla que el hogar ya tiene no se suman (si los dos importaron la misma planilla,
+      queda la del hogar); un movimiento igual a uno del hogar (fecha, tipo, rubro, monto, nota y comercio, contando
+      cuántas veces está cada uno), tampoco; ni un estado de cuenta cuyos movimientos ya estaban todos, ni un fijo de un
+      rubro que el hogar ya tiene como fijo, ni una meta con el mismo nombre. Del hogar quedan el presupuesto, la
+      moneda, la cotización y lo aprendido (lo de acá que no tiene, se suma). Lo sumado queda con quien se une en
+      «Anotado por» y se manda en la vuelta siguiente (con los archivos de sus facturas). La pantalla avisa antes lo de
+      la planilla y, al terminar, dice qué se sumó y qué ya estaba («Se sumaron 120 movimientos y 2 metas», «24 meses
+      de planilla (de noviembre 2024 a octubre) ya estaban en el hogar: quedaron los del hogar»).
+
+    El nombre escrito al crear o al unirse queda también en Ajustes, y cambiarlo en Ajustes cambia cómo te ven los
+    demás.
+  - **Volver a entrar desde otro teléfono** (la llave): al crear o unirse, el teléfono arma un secreto al azar (32
+    bytes, `newRecoveryToken`) y el servidor guarda solo su hash (sha256, `pengar_members.recovery_hash`, que nadie
+    puede leer: los integrantes ven las demás columnas). La llave queda en el estado del motor y, copiada, en los datos
+    (`settings.recovery`, con el id y el nombre del hogar), así va en los respaldos manuales y automáticos; nunca al
+    hogar (`sharedSettings` no la lleva, y hay una prueba). En el teléfono nuevo se restaura un respaldo y se entra
+    con el código: si la llave es de un integrante de ese hogar, ese integrante pasa a ser el usuario nuevo
+    (`pengar_join_household`: se le cambia el `user_id`, quedan su nombre y su historia), no se suma otro y el
+    teléfono de antes queda afuera («Ya no estás en…»). La pantalla dice «Volviste a entrar como Juan». Cada
+    integrante tiene un id que no cambia (`member_id`): es el de `createdBy` en los movimientos, así lo anotado en el
+    teléfono de antes sigue siendo suyo; los que ya estaban quedan con su usuario (lo que ya decían sus movimientos).
+    Después de restaurar, el hogar y «Unirme con un código» dicen «Tenés tu llave de «Casa»»; si es el mismo hogar,
+    recomiendan reemplazar (lo del respaldo ya está allá). También sirve si el teléfono perdió su sesión (vuelve como
+    el mismo). Sin respaldo, el teléfono nuevo es otro integrante y el de antes se saca con «Sacar». El código hace
+    falta igual. Quien estaba en el hogar antes de las llaves recibe una sola en la vuelta siguiente
+    (`pengar_set_recovery`; si el servidor no tiene la migración nueva, lo demás sigue andando). Al salir del hogar
+    (o si lo sacan) la llave deja de servir.
+  - **En un hogar**: el nombre (con «Cambiar el nombre»: una hoja con el nombre de ahora; lo ven todos y la llave de
+    los datos se actualiza), los integrantes («Ana (vos) · desde hoy», con «Sacar» en los demás: un teléfono que ya
     no se usa), el código con «Copiar», «Compartir» y «Cambiar el código» (el viejo deja de servir), cómo va la
     sincronización («Sincronizado hace 1 min», «Enviando 3 cambios…», «Sin conexión: se manda cuando vuelva (1
     cambio)», «En pausa» con los datos de ejemplo) con «Sincronizar ahora», y **Salir del hogar**: antes sube lo que
@@ -170,8 +203,9 @@ o, si querés, compartido con tu casa (cada uno anota en el suyo).
     igual?»), y los datos quedan en el teléfono como copia propia; si eras la última persona, se borran los archivos
     del servidor y después el hogar (si los archivos no se pueden borrar, no sale). Con los datos de ejemplo puestos
     (o después de «Borrar todo») no deja salir: lo del hogar no está en el teléfono. Si a alguien lo sacan (o el hogar
-    se borró), la pantalla lo dice y ofrece unirse de nuevo o seguir sin hogar (eso anda también sin conexión). Si el
-    teléfono pierde su sesión, no se crea otra (sería otra persona): lo dice y se vuelve a entrar con el código.
+    se borró, o la persona volvió a entrar desde otro teléfono), la pantalla lo dice y ofrece unirse de nuevo o seguir
+    sin hogar (eso anda también sin conexión). Si el teléfono pierde su sesión, no se crea otra (sería otra persona):
+    lo dice y se vuelve a entrar con el código (con la llave, como el mismo integrante).
   - **Red de seguridad**: si lo de un teléfono borraría casi todo el hogar de una vez (20 o más registros, el 80 % o
     más) y la persona no lo confirmó antes (restaurar, reemplazar por la planilla), no se manda: la pantalla pregunta
     «Volver a los datos del hogar» o «Borrar igual en el hogar». Además, los datos llevan un id (`datasetId`) que
@@ -182,7 +216,8 @@ o, si querés, compartido con tu casa (cada uno anota en el suyo).
   - Se comparten las categorías, los rubros, los movimientos (cada uno con quién lo anotó, `createdBy`), las facturas y
     estados de cuenta con su archivo, las metas, los gastos fijos, la moneda, lo aprendido y la última cotización
     escrita. El nombre de cada uno va en los integrantes (así te ven los demás). No se comparten la clave de Claude,
-    el último resumen abierto ni los ajustes del teléfono (bloqueo, aviso del día 1, respaldo automático). Reemplazar
+    el último resumen abierto, la llave para volver a entrar ni los ajustes del teléfono (bloqueo, aviso del día 1,
+    respaldo automático). Reemplazar
     todo por una planilla, restaurar un respaldo y «Olvidar lo aprendido» cambian para todos: lo preguntan antes.
   - Cada cambio se manda a los 1,5 s: lo que difiere de lo que tiene el servidor (un hash por registro). Lo de los demás
     llega al abrir, al volver a la app, cada minuto con la app abierta y apenas el servidor avisa (Realtime). Sin
@@ -208,8 +243,9 @@ o, si querés, compartido con tu casa (cada uno anota en el suyo).
     cambia también para los demás (la confirmación lo avisa). El respaldo completo baja antes las fotos que este
     teléfono no tenía.
   - Las reglas, en `src/domain/sync.ts`; el motor, en `src/lib/sync.ts` (con pruebas de dos teléfonos contra un servidor
-    en memoria); la pantalla, en `src/screens/Household.tsx`; la base, en `supabase/migrations/20261021000000_pengar.sql`
-    y `20261021000001_pengar_revision.sql` (`npm run test:db` las prueba en un Postgres local). Realtime avisa por una
+    en memoria); la pantalla, en `src/screens/Household.tsx`; la base, en `supabase/migrations/20261021000000_pengar.sql`,
+    `20261021000001_pengar_revision.sql` y `20261021000002_pengar_recuperacion.sql` (la llave y el id de integrante;
+    `npm run test:db` las prueba en un Postgres local). Realtime avisa por una
     tabla propia, `pengar_signals` (qué cambió y quién), y no por las tablas de verdad: Realtime no aplica la RLS a los
     DELETE. Cómo
     prepararlo: «Hogar compartido (Supabase)», más abajo; cómo probarlo sin Supabase: «Probar el hogar compartido».
@@ -281,7 +317,7 @@ npm run shots        # capturas en docs/capturas (importa datos/ejemplo.xlsx; el
 npm run e2e:dolar    # recorrido de la cotización del dólar con el BCU simulado: responde, se cae, la web sin BCU
 npm run e2e:lock     # recorrido del bloqueo con Face ID con el iPhone simulado (scripts/native-mock.mjs)
 npm run e2e:backup   # recorrido del respaldo automático con el iPhone simulado (PengarBackup en memoria)
-npm run e2e:hogar    # hogar compartido: dos pestañas (Ana y Bruno) contra un servidor de mentira en el navegador
+npm run e2e:hogar    # hogar compartido: varias pestañas (Ana, Bruno, Dani…) contra un servidor de mentira en el navegador
 npm run e2e:demo     # modo demo con el iPhone simulado y el hogar de mentira: entrar, anotar, que el hogar no reciba nada, salir con Face ID
 npm run icons        # íconos a partir del suricata principal
 ```
@@ -300,8 +336,10 @@ Supabase. Desde la consola, `window.__pengarFake` (lo que pidió cada pestaña, 
 Con el flag, `vite build` compila en `dist-fake` y **se niega a compilar en `dist`**, que es lo que va al iPhone: nunca
 llega a una build real. `npm run shots` (capturas 33 a 39) y `npm run e2e:hogar` arman esa build solos
 (`scripts/fake-remote.mjs`). El recorrido usa el iPhone simulado: crear, copiar el código, unirse desde la bienvenida,
-«Anotado por», sin conexión, la pausa con la pantalla de bloqueo, otro teléfono que vuelve a entrar, código nuevo,
-«Borrar todo» y el ejemplo (no tocan el hogar) y salir.
+«Anotado por», sin conexión, la pausa con la pantalla de bloqueo, otro teléfono que entra reemplazando lo suyo, código
+nuevo, «Borrar todo» y el ejemplo (no tocan el hogar), «Cambiar el nombre», alguien que se une sumando lo suyo (las
+categorías y los rubros iguales se unen), volver a entrar con la llave de un respaldo («Volviste a entrar como Ana»,
+sin sumar otra Ana; el teléfono de antes queda afuera) y salir.
 
 ### Vista previa web
 
@@ -423,9 +461,12 @@ Para compartir los datos entre teléfonos hace falta un proyecto de Supabase (al
 de Kvar**: todo lo de Pengar lleva el prefijo `pengar_` (tablas, funciones y políticas) y su propio bucket,
 `pengar-files`; no toca nada de Kvar. Sin esto la app anda igual, solo en el teléfono.
 
-1. **SQL Editor → New query**: pegá todo `supabase/migrations/20261021000000_pengar.sql` y **Run**; después, en otra
-   query, todo `supabase/migrations/20261021000001_pengar_revision.sql` y **Run** (si ya habías pegado la primera
-   antes, pegá solo la segunda). Crean las tablas con RLS, las funciones, el bucket privado y los avisos de Realtime. Con el proyecto de Kvar no uses `npx supabase db push`
+1. **SQL Editor → New query**: pegá todo `supabase/migrations/20261021000000_pengar.sql` y **Run**; después, cada una
+   en otra query y en orden, todo `supabase/migrations/20261021000001_pengar_revision.sql` y todo
+   `supabase/migrations/20261021000002_pengar_recuperacion.sql` (**Run** cada vez). Si ya habías pegado las primeras,
+   pegá solo las que falten (la tercera se puede correr de nuevo sin problema; sin ella la app no puede crear un hogar
+   ni unirse, y la pantalla dice que falta la migración). Crean las tablas con RLS, las funciones, el bucket privado,
+   los avisos de Realtime y la llave para volver a entrar. Con el proyecto de Kvar no uses `npx supabase db push`
    desde esta carpeta: el historial de migraciones de ese proyecto es el de Kvar (que ya tiene una migración con la
    misma fecha, `20261021000000`) y la CLI la daría por aplicada.
 2. **Authentication → Sign In / Providers** → **Allow anonymous sign-ins** prendido (en el proyecto de Kvar ya lo está).
@@ -443,9 +484,9 @@ app, ese teléfono vuelve a entrar con el código (y vuelven los datos).
 
 | Carpeta | Qué hay |
 |---|---|
-| `src/domain` | Lógica pura, con pruebas: modelo, modo demo (`demo.ts`: dónde se guarda cada juego de datos, el armado de los inventados y el ticket en PDF), hogar compartido (`sync.ts`: los datos como registros, qué cambió y cómo se mezcla lo recibido), importar planillas, estadísticas, lectura de facturas (`invoice.ts`) y de tickets del súper (`receipt.ts`, de Kvar; `ocrLines.ts` arma los renglones de la foto) y de estados de cuenta de la tarjeta (`statement.ts`, `statementReview.ts`), e-Tickets de la DGI y el ticket oficial del súper (`cfe.ts`), rubros sugeridos, diezmo acumulado (`ledger.ts`), resumen del mes (`report.ts`) y la respuesta del BCU (`fx.ts`, probada con respuestas reales) |
+| `src/domain` | Lógica pura, con pruebas: modelo, modo demo (`demo.ts`: dónde se guarda cada juego de datos, el armado de los inventados y el ticket en PDF), hogar compartido (`sync.ts`: los datos como registros, qué cambió, cómo se mezcla lo recibido, cómo se suma lo de acá al unirse y la llave para volver a entrar), importar planillas, estadísticas, lectura de facturas (`invoice.ts`) y de tickets del súper (`receipt.ts`, de Kvar; `ocrLines.ts` arma los renglones de la foto) y de estados de cuenta de la tarjeta (`statement.ts`, `statementReview.ts`), e-Tickets de la DGI y el ticket oficial del súper (`cfe.ts`), rubros sugeridos, diezmo acumulado (`ledger.ts`), resumen del mes (`report.ts`) y la respuesta del BCU (`fx.ts`, probada con respuestas reales) |
 | `src/lib` | Teléfono: guardado (IndexedDB; los datos de verdad y los del modo demo, aparte), ajustes de este teléfono que no se comparten (`device.ts`, también si está el modo demo), lector de fotos (Vision / Tesseract), PDF (pdf.js), Claude, Apple Intelligence, rubros sugeridos (`suggest.ts`), archivos, aviso del día 1 (`reportReminder.ts`), bloqueo con Face ID (`lock.ts`; cuándo bloquear, en `src/domain/lock.ts`), cotización del dólar del BCU con su caché (`fx.ts`), respaldo automático (`autoBackup.ts`; cuándo y cuáles quedan, en `src/domain/autoBackup.ts`), hogar compartido (`remote.ts`: Supabase y el servidor en memoria de las pruebas; `sync.ts`: el motor; `fakeRemote.ts` y `fakePhone.ts`: el servidor de mentira entre pestañas, solo con `VITE_FAKE_REMOTE=1`) |
-| `supabase/` | La base del hogar compartido (`migrations/`) y su prueba en un Postgres local (`tests/`, `npm run test:db`) |
+| `supabase/` | La base del hogar compartido (`migrations/`, en orden: la primera, la revisión y la de la llave para volver a entrar) y su prueba en un Postgres local (`tests/`, `npm run test:db`) |
 | `src/screens`, `src/components` | Pantallas y piezas de la interfaz (gráficas en SVG propio, con d3-shape) |
 | `ios/App/App/PengarOCRPlugin.swift` | Plugin nativo: texto y QR de una foto con Vision, y el ticket oficial del súper (`fetchCfe`: Rondanet y Tienda Inglesa) |
 | `ios/App/App/PengarAIPlugin.swift` | Plugin nativo: rubro sugerido con Apple Intelligence (Foundation Models, iOS 26+) |
@@ -479,8 +520,8 @@ son una paleta validada para daltonismo; pasadas las 8 más grandes, se juntan e
   (`npm run test:db`), sola y junto con las de Kvar; el motor, con dos teléfonos contra un servidor en memoria; y la
   pantalla, con dos pestañas contra el servidor de mentira del navegador (`npm run e2e:hogar`). No se probó contra un
   proyecto de Supabase real ni en un iPhone (Realtime, Storage y «Compartir» el código).
-- Hogar compartido, ideas: cambiar el nombre del hogar desde la pantalla (el motor ya lo tiene: `household.rename`;
-  el tuyo ya se cambia en Ajustes) y, al unirse, ofrecer sumar lo propio al hogar en vez de reemplazarlo (`keepLocal`,
-  también en el motor). Volver a entrar desde otro teléfono deja al de antes como otro integrante (se saca a mano): un
-  token de recuperación permitiría reemplazarlo solo. Las nuevas funciones de la base (`pengar_signals`, el límite de
-  códigos, salir en dos pasos) se probaron en Postgres, no en un Supabase real.
+- Hogar compartido: las funciones de la base de la revisión y de la llave (`pengar_signals`, el límite de códigos,
+  salir en dos pasos, `pengar_join_household` con la llave, `pengar_set_recovery`, los permisos por columna de
+  `pengar_members`) se probaron en Postgres (también con las migraciones de Kvar en la misma base), no en un Supabase
+  real. «Sumar mis datos al hogar» no detecta un mismo gasto anotado por los dos con otra fecha o monto (queda dos
+  veces; la pantalla lo avisa).

@@ -1,24 +1,25 @@
 /**
  * Hogar compartido (Más → Hogar compartido): crear un hogar con los datos de este teléfono, unirse con el código (que
- * también sirve para recuperarlos en otro teléfono), quiénes están, el código para sumar a alguien, cómo va la
+ * también sirve para recuperarlos en otro teléfono: con la llave de un respaldo, como el mismo integrante), reemplazar
+ * lo de acá por lo del hogar o sumarlo, quiénes están, el nombre del hogar, el código para sumar a alguien, cómo va la
  * sincronización y salir. El motor es lib/sync.ts. Sin Supabase configurado (o en la vista previa) solo se explica; en el
  * modo demo, tampoco se muestra nada del hogar.
  */
 import { Share } from '@capacitor/share';
-import { Check, CloudCheck, CloudDownload, CloudOff, CloudUpload, Copy, HousePlus, KeyRound, LogOut, Pause, RefreshCw, Share2, TriangleAlert, UserRound } from 'lucide-react';
+import { Check, CloudCheck, CloudDownload, CloudOff, CloudUpload, Copy, HousePlus, KeyRound, LogOut, Pause, Pencil, RefreshCw, Share2, TriangleAlert, UserRound } from 'lucide-react';
 import { useEffect, useId, useState, type ReactNode } from 'react';
 import { ConfirmSheet } from '../components/ConfirmSheet';
 import { PageHeader, Sheet } from '../components/Sheet';
 import { Suricata } from '../components/Suricata';
 import { useToast } from '../components/Toast';
-import { sinceDay, timeAgo, toISODate, today } from '../domain/dates';
-import { plural } from '../domain/text';
+import { monthName, sinceDay, timeAgo, toISODate, today } from '../domain/dates';
+import { joinAnd, plural } from '../domain/text';
 import { canAutoBackup } from '../lib/autoBackup';
 import { makeBackup } from '../lib/backup';
 import { NO_DOWNLOADS, saveOrShare } from '../lib/files';
 import { isNative, isPreview } from '../lib/platform';
 import { RemoteError, type Household as HouseholdT } from '../lib/remote';
-import { household, LOST_SESSION, SyncError, useSync, type SyncStatus } from '../lib/sync';
+import { household, LOST_SESSION, SyncError, useSync, type JoinOutcome, type SyncStatus } from '../lib/sync';
 import { useStore } from '../store/store';
 
 /** Cuántas letras y números tiene el código del hogar */
@@ -130,9 +131,78 @@ function BackupFirst() {
   );
 }
 
+/** Lo que se cuenta después de «Sumar mis datos al hogar» */
+export function sumLines(sum: NonNullable<JoinOutcome['sum']>): string[] {
+  const { added, repeated, sheetMonths } = sum;
+  const lines: string[] = [];
+  const parts = [
+    added.movements && plural(added.movements, 'movimiento', 'movimientos'),
+    added.invoices && plural(added.invoices, 'factura o estado de cuenta', 'facturas y estados de cuenta'),
+    added.goals && plural(added.goals, 'meta', 'metas'),
+    added.recurring && plural(added.recurring, 'gasto fijo', 'gastos fijos'),
+  ].filter((x): x is string => !!x);
+  const one = parts.length === 1 && /^1 /.test(parts[0]);
+  lines.push(parts.length ? `${one ? 'Se sumó' : 'Se sumaron'} ${joinAnd(parts)}.` : 'No había nada nuevo para sumar: todo ya estaba en el hogar.');
+  const fresh = [added.categories && plural(added.categories, 'categoría', 'categorías'), added.rubros && plural(added.rubros, 'rubro', 'rubros')].filter((x): x is string => !!x);
+  lines.push(
+    fresh.length
+      ? `Se ${added.categories + added.rubros === 1 ? 'agregó' : 'agregaron'} ${joinAnd(fresh)}; las categorías y los rubros con el mismo nombre se unieron con los del hogar.`
+      : 'Las categorías y los rubros se unieron con los del hogar (por el nombre).',
+  );
+  if (sheetMonths.length === 1) lines.push(`La planilla de ${monthName(sheetMonths[0])} ya estaba en el hogar: quedó la del hogar.`);
+  else if (sheetMonths.length > 1) {
+    lines.push(`${sheetMonths.length} meses de planilla (de ${monthName(sheetMonths[0])} a ${monthName(sheetMonths.at(-1)!)}) ya estaban en el hogar: quedaron los del hogar.`);
+  }
+  if (repeated > 0) lines.push(`${plural(repeated, 'movimiento', 'movimientos')} ${repeated === 1 ? 'ya estaba' : 'ya estaban'} en el hogar: no se ${repeated === 1 ? 'sumó' : 'sumaron'} de nuevo.`);
+  return lines;
+}
+
 /**
- * Unirse con el código: también desde la bienvenida y para volver a entrar desde otro teléfono. Si hay datos propios,
- * avisa que se reemplazan por los del hogar (y ofrece un respaldo antes)
+ * Antes de unirse con datos propios: reemplazarlos por los del hogar o sumarlos. `fromBackup`: hay una llave (de un
+ * respaldo restaurado): si es del mismo hogar, lo del respaldo ya está allá
+ */
+function MergeChoice({ fromBackup, onChoose, onClose }: { fromBackup: string | null; onChoose: (keepLocal: boolean) => void; onClose: () => void }) {
+  const choose = (keepLocal: boolean) => {
+    onChoose(keepLocal);
+    onClose();
+  };
+  return (
+    <Sheet title="Tus datos y los del hogar" onClose={onClose} footer={<button className="btn-outline w-full" onClick={onClose}>Cancelar</button>}>
+      <div className="space-y-3">
+        <div className="flex items-center gap-4">
+          <Suricata pose="cara-pensando" size={72} className="shrink-0" />
+          <p className="text-lg">Este teléfono ya tiene datos tuyos. ¿Qué hacemos con ellos?</p>
+        </div>
+        <div className="card space-y-2 p-4">
+          <h3 className="text-xl">Reemplazar por los del hogar</h3>
+          <p className="text-[16px] text-muted">
+            Este teléfono queda con lo del hogar y lo tuyo se borra de acá: movimientos, categorías, presupuesto, metas y facturas. Quedan tu nombre y la clave de Claude.
+          </p>
+          {fromBackup && (
+            <p className="text-[16px]">Si es el mismo hogar de tu respaldo («{fromBackup}»), elegí esta: lo del respaldo ya está en el hogar.</p>
+          )}
+          <button className="btn-outline w-full" onClick={() => choose(false)}>Reemplazar por los del hogar</button>
+        </div>
+        <div className="card space-y-2 p-4">
+          <h3 className="text-xl">Sumar mis datos al hogar</h3>
+          <p className="text-[16px] text-muted">
+            Tus movimientos, facturas, metas y gastos fijos se suben al hogar y los ven todos. Las categorías y los rubros con el mismo nombre se unen con los del hogar; los que no tiene, se agregan. Del hogar quedan su presupuesto, la moneda y lo aprendido.
+          </p>
+          <p className="rounded-2xl bg-sunken px-3 py-2 text-[15px]">
+            Ojo si los dos usan la misma planilla: los meses de planilla que el hogar ya tiene no se suman (quedan los del hogar), ni los movimientos iguales (misma fecha, rubro y monto). Lo que anotaron los dos con otra fecha o monto queda dos veces: revisalo después en Movimientos.
+          </p>
+          <button className="btn-outline w-full" onClick={() => choose(true)}>Sumar mis datos al hogar</button>
+        </div>
+        <BackupFirst />
+      </div>
+    </Sheet>
+  );
+}
+
+/**
+ * Unirse con el código: también desde la bienvenida y para volver a entrar desde otro teléfono (con la llave de un
+ * respaldo, como el mismo integrante). Si hay datos propios, pregunta si reemplazarlos por los del hogar o sumarlos
+ * (y ofrece un respaldo antes)
  */
 export function JoinSheet({ onClose }: { onClose: () => void }) {
   const { data, updateSettings } = useStore();
@@ -143,24 +213,50 @@ export function JoinSheet({ onClose }: { onClose: () => void }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [asking, setAsking] = useState(false);
+  // Después de sumar los datos: qué se sumó
+  const [done, setDone] = useState<JoinOutcome | null>(null);
   const own = data.settings.onboarded && !data.settings.example;
+  // La llave de un respaldo restaurado (o de cuando estaba en el hogar): con el código de ese hogar, vuelve como el mismo
+  const key = own ? data.settings.recovery ?? null : null;
   const clean = cleanCode(code);
   const valid = !!name.trim() && clean.length === CODE_LENGTH;
 
-  const join = async () => {
+  const join = async (keepLocal = false) => {
     setBusy(true);
     setError('');
     try {
       // El nombre con que te ven los demás es también el de Ajustes
       if (name.trim() !== data.settings.name) updateSettings({ name: name.trim() });
-      const hh = await household.join(clean, name.trim());
-      toast(`Listo: estás en «${hh.name}»`);
+      const out = await household.join(clean, name.trim(), { keepLocal });
+      if (out.sum) {
+        setDone(out);
+        return;
+      }
+      toast(out.reclaimed ? `Volviste a entrar como ${out.name || name.trim()}` : `Listo: estás en «${out.household.name}»`);
       onClose();
     } catch (e) {
       setError(householdError(e));
       setBusy(false);
     }
   };
+
+  if (done?.sum) {
+    return (
+      <Sheet title="Listo" onClose={onClose} footer={<button className="btn-primary w-full" onClick={onClose}>Listo</button>}>
+        <div className="space-y-4">
+          <div className="flex items-center gap-3">
+            <Suricata pose="celebrando" size={88} className="shrink-0" />
+            <p className="text-lg">
+              {done.reclaimed ? `Volviste a entrar como ${done.name || name.trim()}` : `Estás en «${done.household.name}»`} y tus datos se sumaron al hogar.
+            </p>
+          </div>
+          <ul className="list-disc space-y-2 pl-5 text-[17px]">
+            {sumLines(done.sum).map((line) => <li key={line}>{line}</li>)}
+          </ul>
+        </div>
+      </Sheet>
+    );
+  }
 
   return (
     <>
@@ -175,8 +271,16 @@ export function JoinSheet({ onClose }: { onClose: () => void }) {
       >
         <div className="space-y-4">
           <p className="text-[17px] text-muted">
-            Pedile el código a alguien del hogar (está en su Pengar, en Más → Hogar compartido). Si cambiás de teléfono, entrá con el código y vuelven tus datos; el teléfono de antes queda en Integrantes y lo sacás desde ahí.
+            Pedile el código a alguien del hogar (está en su Pengar, en Más → Hogar compartido). Si cambiás de teléfono, restaurá antes un respaldo del de antes (Ajustes) y entrá con el código: volvés a ser vos, sin sumar otro integrante.
           </p>
+          {key && (
+            <p className="flex items-start gap-2 rounded-2xl bg-sunken px-4 py-3 text-[16px]">
+              <KeyRound size={20} className="mt-0.5 shrink-0 text-primary" />
+              <span>
+                Este teléfono tiene tu llave de «{key.householdName || 'tu hogar'}»: con el código de ese hogar volvés a entrar como vos, con tu nombre y lo que anotaste.
+              </span>
+            </p>
+          )}
           <div>
             <label className="label" htmlFor={`${id}-nombre`}>Tu nombre (así te ven los demás)</label>
             <input id={`${id}-nombre`} className="field" value={name} maxLength={60} onChange={(e) => setName(e.target.value)} placeholder="Tu nombre" />
@@ -201,18 +305,54 @@ export function JoinSheet({ onClose }: { onClose: () => void }) {
           {error && <p role="alert" className="text-danger">{error}</p>}
         </div>
       </Sheet>
-      {asking && (
-        <ConfirmSheet
-          title="¿Reemplazar tus datos?"
-          message="Los movimientos, categorías, presupuesto, metas y facturas de este teléfono se reemplazan por los del hogar. Tu nombre y la clave de Claude quedan."
-          confirmLabel="Unirme"
-          danger
-          extra={<BackupFirst />}
-          onConfirm={() => void join()}
-          onClose={() => setAsking(false)}
-        />
-      )}
+      {asking && <MergeChoice fromBackup={key ? key.householdName || 'tu hogar' : null} onChoose={(keepLocal) => void join(keepLocal)} onClose={() => setAsking(false)} />}
     </>
+  );
+}
+
+/** Cambiar el nombre del hogar (lo ven todos) */
+function RenameSheet({ hh, onClose }: { hh: HouseholdT; onClose: () => void }) {
+  const toast = useToast();
+  const id = useId();
+  const [name, setName] = useState(hh.name);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const next = name.trim();
+  const ok = !!next && next !== hh.name && !busy;
+  const save = async () => {
+    setBusy(true);
+    setError('');
+    try {
+      await household.rename(next);
+      toast(`Listo: el hogar se llama «${next}»`);
+      onClose();
+    } catch (e) {
+      setError(householdError(e));
+      setBusy(false);
+    }
+  };
+  return (
+    <Sheet
+      title="Cambiar el nombre"
+      onClose={onClose}
+      footer={<button className="btn-primary w-full" disabled={!ok} onClick={() => void save()}>{busy ? 'Guardando…' : 'Guardar'}</button>}
+    >
+      <div className="space-y-2">
+        <label className="label" htmlFor={`${id}-hogar`}>Nombre del hogar</label>
+        <input
+          id={`${id}-hogar`}
+          className="field"
+          value={name}
+          maxLength={80}
+          autoFocus
+          onChange={(e) => setName(e.target.value)}
+          onKeyDown={(e) => e.key === 'Enter' && ok && void save()}
+          placeholder="Casa"
+        />
+        <p className="text-[15px] text-muted">Lo ven todos los del hogar. Tu nombre se cambia en Ajustes.</p>
+        {error && <p role="alert" className="text-danger">{error}</p>}
+      </div>
+    </Sheet>
   );
 }
 
@@ -311,8 +451,9 @@ function useNow(ms = 30_000): number {
 function InHousehold({ s, hh }: { s: SyncStatus; hh: HouseholdT }) {
   const toast = useToast();
   const now = useNow();
-  const [membersFailed, setMembersFailed] = useState(false);
-  const [asking, setAsking] = useState<'code' | 'leave' | 'force' | 'send' | null>(null);
+  // Por qué no se pudieron traer los integrantes (sin la migración nueva, se dice)
+  const [membersFailed, setMembersFailed] = useState<string | null>(null);
+  const [asking, setAsking] = useState<'code' | 'leave' | 'force' | 'send' | 'rename' | null>(null);
   // Archivos que no se pudieron bajar antes de salir
   const [notFetched, setNotFetched] = useState(0);
   // El integrante que se va a sacar
@@ -320,7 +461,10 @@ function InHousehold({ s, hh }: { s: SyncStatus; hh: HouseholdT }) {
   const [busy, setBusy] = useState(false);
   // Al abrir: los integrantes, el nombre y el código al día
   useEffect(() => {
-    household.refreshMembers().then(() => setMembersFailed(false), () => setMembersFailed(true));
+    household.refreshMembers().then(
+      () => setMembersFailed(null),
+      (e) => setMembersFailed(e instanceof RemoteError && e.kind === 'setup' ? householdError(e) : 'Se ven cuando vuelva la conexión.'),
+    );
   }, []);
   const { Icon, text, tone, spin } = syncText(s, now);
   const alone = s.members.length <= 1;
@@ -372,6 +516,9 @@ function InHousehold({ s, hh }: { s: SyncStatus; hh: HouseholdT }) {
         <div className="min-w-0 flex-1">
           <h2 className="break-words text-2xl leading-tight">{hh.name}</h2>
           <p className="text-[15px] text-muted">Hogar compartido{s.members.length ? ` · ${plural(s.members.length, 'integrante', 'integrantes')}` : ''}</p>
+          <button className="btn-ghost -ml-5 px-5 text-[17px]" disabled={busy} onClick={() => setAsking('rename')}>
+            <Pencil size={16} /> Cambiar el nombre
+          </button>
         </div>
       </div>
 
@@ -427,17 +574,19 @@ function InHousehold({ s, hh }: { s: SyncStatus; hh: HouseholdT }) {
             ))}
           </ul>
         ) : (
-          <p className="text-[16px] text-muted">{membersFailed || s.phase === 'offline' ? 'Se ven cuando vuelva la conexión.' : 'Buscando…'}</p>
+          <p className="text-[16px] text-muted">{membersFailed ?? (s.phase === 'offline' ? 'Se ven cuando vuelva la conexión.' : 'Buscando…')}</p>
         )}
         {s.members.length > 1 && (
-          <p className="text-[14px] text-muted">Cada teléfono es un integrante. Si cambiaste de teléfono, el de antes sigue en la lista: sacalo con «Sacar».</p>
+          <p className="text-[14px] text-muted">
+            Cada teléfono es un integrante. Si cambiás de teléfono, en el nuevo restaurá un respaldo y después entrá con el código: volvés a ser vos. Sin el respaldo, el de antes sigue en la lista: sacalo con «Sacar».
+          </p>
         )}
       </Section>
 
       <Section title="Código para sumar a alguien">
         <CodeBox hh={hh} />
         <p className="text-[15px] text-muted">
-          Quien lo escriba en su Pengar (Más → Hogar compartido → «Unirme con un código») ve y anota lo mismo que vos. Guardalo: si cambiás de teléfono, entrá con el código y vuelven tus datos (lo que anotaste en el de antes dice «Anotado por» tu nombre).
+          Quien lo escriba en su Pengar (Más → Hogar compartido → «Unirme con un código») ve y anota lo mismo que vos. Guardalo: si cambiás de teléfono, entrá con el código y vuelven tus datos (con un respaldo de este teléfono restaurado antes, volvés a ser vos).
         </p>
         <button className="btn-ghost -ml-4" disabled={busy} onClick={() => setAsking('code')}>Cambiar el código</button>
       </Section>
@@ -451,6 +600,7 @@ function InHousehold({ s, hh }: { s: SyncStatus; hh: HouseholdT }) {
         </p>
       )}
 
+      {asking === 'rename' && <RenameSheet hh={hh} onClose={() => setAsking(null)} />}
       {asking === 'code' && (
         <ConfirmSheet
           title="¿Cambiar el código?"
@@ -510,6 +660,8 @@ function InHousehold({ s, hh }: { s: SyncStatus; hh: HouseholdT }) {
 function NoHousehold({ onOpen }: { onOpen: (sheet: 'create' | 'join') => void }) {
   const { data } = useStore();
   const example = data.settings.example === true;
+  // Un respaldo restaurado con la llave de un hogar: se puede volver como el mismo integrante
+  const key = !example && data.settings.onboarded ? data.settings.recovery : undefined;
   return (
     <>
       <div className="card flex flex-col items-center p-5 text-center">
@@ -522,12 +674,18 @@ function NoHousehold({ onOpen }: { onOpen: (sheet: 'create' | 'join') => void })
       {example && (
         <p className="rounded-2xl bg-sunken px-4 py-3 text-[16px]">Estás viendo los datos de ejemplo: para crear un hogar, primero empezá con los tuyos.</p>
       )}
+      {key && (
+        <p className="flex items-start gap-2 rounded-2xl bg-sunken px-4 py-3 text-[16px]">
+          <KeyRound size={20} className="mt-0.5 shrink-0 text-primary" />
+          <span>Tenés tu llave de «{key.householdName || 'tu hogar'}» (de un respaldo): tocá «Unirme con un código» y escribí el código de ese hogar para volver a entrar como vos.</span>
+        </p>
+      )}
       <div className="space-y-3">
         <button className="btn-primary w-full" disabled={example} onClick={() => onOpen('create')}><HousePlus size={20} /> Crear un hogar</button>
         <button className="btn-outline w-full" onClick={() => onOpen('join')}><KeyRound size={20} /> Unirme con un código</button>
       </div>
       <p className="px-1 text-[16px] text-muted">
-        «Crear un hogar» sube tus datos y te da un código para sumar a alguien. Con «Unirme con un código» traés los del hogar a este teléfono. Si cambiás de teléfono, entrá con el código y vuelven tus datos (el teléfono de antes queda en Integrantes: sacalo desde ahí).
+        «Crear un hogar» sube tus datos y te da un código para sumar a alguien. Con «Unirme con un código» traés los del hogar a este teléfono (o sumás los tuyos). Si cambiás de teléfono, restaurá un respaldo del de antes (Ajustes) y entrá con el código: volvés a ser vos, sin sumar otro integrante.
       </p>
     </>
   );
@@ -549,8 +707,8 @@ function Removed({ hh, lost, onJoin }: { hh: HouseholdT; lost: boolean; onJoin: 
           <h2 className="text-2xl leading-tight">Ya no estás en «{hh.name}»</h2>
           <p className="mt-1 text-[16px] text-muted">
             {lost
-              ? 'Este teléfono perdió su acceso al hogar (pasa si se borra lo que guarda la app). Tus datos quedan acá; para volver a sincronizar, entrá de nuevo con el código.'
-              : 'Te sacaron del hogar o se borró. Tus datos quedan en este teléfono, pero ya no se sincronizan.'}
+              ? 'Este teléfono perdió su acceso al hogar (pasa si se borra lo que guarda la app). Tus datos quedan acá; entrá de nuevo con el código y volvés a ser vos.'
+              : 'Te sacaron del hogar, se borró o entraste como vos desde otro teléfono. Tus datos quedan en este teléfono, pero ya no se sincronizan.'}
           </p>
         </div>
       </div>

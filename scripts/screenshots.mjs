@@ -444,7 +444,7 @@ async function runHousehold() {
   const code = (await ana.getByRole('dialog').last().locator('p.font-mono [aria-hidden="true"]').innerText()).replace(/\s/g, '');
   await shot(ana, '35-hogar-codigo');
   await ana.getByRole('dialog').last().getByRole('button', { name: 'Listo' }).click();
-  // Bruno ya había empezado: unirse le avisa que sus datos se reemplazan
+  // Bruno ya había empezado: unirse le pregunta si reemplazar sus datos por los del hogar o sumarlos
   const bruno = await open('bruno');
   await bruno.getByRole('button', { name: 'Comenzar' }).click();
   await bruno.getByPlaceholder('Tu nombre').fill('Bruno');
@@ -454,9 +454,9 @@ async function runHousehold() {
   await bruno.getByLabel('Código del hogar').fill(code);
   await shot(bruno, '36-hogar-unirse');
   await bruno.getByRole('dialog').last().getByRole('button', { name: 'Unirme' }).click();
-  await bruno.getByRole('dialog', { name: '¿Reemplazar tus datos?' }).waitFor();
+  await bruno.getByRole('dialog', { name: 'Tus datos y los del hogar' }).waitFor();
   await shot(bruno, '37-hogar-reemplazar');
-  await bruno.getByRole('dialog', { name: '¿Reemplazar tus datos?' }).getByRole('button', { name: 'Unirme' }).click();
+  await bruno.getByRole('dialog', { name: 'Tus datos y los del hogar' }).getByRole('button', { name: 'Reemplazar por los del hogar' }).click();
   await bruno.getByText(/Listo: estás en «Casa»/).waitFor({ timeout: 20000 });
   await expense(bruno, '980', 'Comer afuera');
   // A Ana le llegan Bruno y su gasto

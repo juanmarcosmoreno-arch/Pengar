@@ -3,7 +3,8 @@
  * run dev`, o la build en dist-fake de las capturas y de npm run e2e:hogar) la app habla con un FakeRemote (lib/remote)
  * en lugar de Supabase. vite.config no deja compilarlo en dist, que es lo que va al iPhone.
  *
- * El «servidor» queda en el navegador y lo comparten las pestañas: hogares, integrantes y registros en localStorage; los
+ * El «servidor» queda en el navegador y lo comparten las pestañas: hogares, integrantes (con el hash de sus llaves) y
+ * registros en localStorage; los
  * archivos, en otra base de IndexedDB (pengar-fake). Cada pestaña con ?telefono=ana es otro teléfono y otro usuario
  * (lib/fakePhone). Los avisos de Realtime llegan a las demás pestañas con el evento storage. Sin conexión (la del
  * navegador, context.setOffline en Playwright, o `offline` acá abajo para una sola pestaña) todo falla como en Supabase.
@@ -20,6 +21,7 @@ interface Saved {
   households: Household[];
   members: [string, Member[]][];
   records: [string, Row[]][];
+  tokens?: [string, string][];
 }
 interface Notice {
   hh: string;
@@ -79,8 +81,11 @@ export function createFakeRemote(phone: string): RemoteStore {
     server.households.clear();
     server.members.clear();
     server.records.clear();
+    server.tokens.clear();
     for (const h of saved?.households ?? []) server.households.set(h.id, h);
-    for (const [hh, list] of saved?.members ?? []) server.members.set(hh, list);
+    // Los de antes de las llaves: su id de integrante es su usuario
+    for (const [hh, list] of saved?.members ?? []) server.members.set(hh, list.map((m) => ({ ...m, memberId: m.memberId ?? m.userId })));
+    for (const [k, v] of saved?.tokens ?? []) server.tokens.set(k, v);
     for (const [hh, rows] of saved?.records ?? []) server.records.set(hh, new Map(rows.map((r) => [recordKey(r.kind, r.id), r])));
     // La hora sigue a la de las otras pestañas (nunca para atrás: el motor pide «desde» la última que recibió)
     server.time = Math.max(server.time, saved?.clock ?? 0, Date.now());
@@ -91,6 +96,7 @@ export function createFakeRemote(phone: string): RemoteStore {
       households: [...server.households.values()],
       members: [...server.members],
       records: [...server.records].map(([hh, rows]) => [hh, [...rows.values()]]),
+      tokens: [...server.tokens],
     };
     localStorage.setItem(KEY, JSON.stringify(saved));
     for (const n of notices.splice(0)) localStorage.setItem(NOTICE, JSON.stringify({ ...n, nonce: Math.random() }));
@@ -111,8 +117,9 @@ export function createFakeRemote(phone: string): RemoteStore {
 
   return {
     session: (opts) => call('session', false, () => client.session(opts)),
-    createHousehold: (name, displayName) => call('createHousehold', true, () => client.createHousehold(name, displayName)),
-    joinHousehold: (code, displayName) => call('joinHousehold', true, () => client.joinHousehold(code, displayName)),
+    createHousehold: (name, displayName, token) => call('createHousehold', true, () => client.createHousehold(name, displayName, token)),
+    joinHousehold: (code, displayName, token) => call('joinHousehold', true, () => client.joinHousehold(code, displayName, token)),
+    setRecovery: (hh, token) => call('setRecovery', true, () => client.setRecovery(hh, token)),
     household: (hh) => call('household', false, () => client.household(hh)),
     leave: (hh) =>
       call('leave', true, async () => {

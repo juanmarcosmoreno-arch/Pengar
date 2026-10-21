@@ -4,8 +4,9 @@
  *
  * Qué se comparte: categorías, rubros, movimientos, facturas y estados de cuenta (sin el archivo, que va aparte),
  * metas, gastos fijos y un único registro 'settings' con la moneda, lo aprendido y la última cotización escrita.
- * Qué no: el nombre de la persona, la clave de Claude, si ya pasó la bienvenida, el último resumen abierto y los
- * ajustes del teléfono (lib/device.ts, que ni siquiera están en los datos). Los datos de ejemplo nunca se sincronizan.
+ * Qué no: el nombre de la persona, la clave de Claude, si ya pasó la bienvenida, el último resumen abierto, la llave para
+ * volver a entrar desde otro teléfono (settings.recovery: va en los respaldos, nunca al hogar) y los ajustes del teléfono
+ * (lib/device.ts, que ni siquiera están en los datos). Los datos de ejemplo nunca se sincronizan.
  *
  * Reglas al recibir: gana el último (el servidor pone updated_at), salvo que acá haya un cambio todavía sin mandar,
  * que se queda y se manda después. Lo borrado viaja como lápida (deleted). Los ajustes compartidos se mezclan campo
@@ -14,7 +15,9 @@
  * categoría que otro borró, pero que algo de acá sin mandar todavía usa, se queda (y vuelve al hogar). Lo que esta
  * versión no conoce (un campo de los ajustes, un tipo de factura) se guarda tal cual y se manda tal cual.
  */
+import { monthOf } from './dates';
 import { cyrb53, stableStringify } from './hash';
+import { norm, sameCategory } from './importSheet';
 import { round2 } from './money';
 import { emptyData, normalizeData } from './template';
 import type { Budget, Category, Data, Goal, Invoice, Movement, Recurring, Rubro, Settings } from './types';
@@ -441,12 +444,13 @@ function finalHashes(res: MergeResult, data: Data, waiting: Set<string>): MergeR
 
 /**
  * Los datos del hogar en lugar de los de acá (al unirse, o al volver a tener datos después de «Borrar todo»). De acá
- * quedan el nombre, la clave de Claude y el último resumen abierto; la moneda, si el hogar no tiene ajustes
+ * quedan el nombre, la clave de Claude, el último resumen abierto y la llave del hogar; la moneda, si el hogar no tiene
+ * ajustes
  */
 export function replaceWithRemote(remote: RemoteRecord[], local: Data): MergeResult {
   const s = local.settings;
   const base = emptyData();
-  base.settings = { ...base.settings, name: s.name, ai: s.ai, currency: s.currency, lastReportSeen: s.lastReportSeen, onboarded: true };
+  base.settings = { ...base.settings, name: s.name, ai: s.ai, currency: s.currency, lastReportSeen: s.lastReportSeen, recovery: s.recovery, onboarded: true };
   return mergeRemote(base, remote, []);
 }
 
@@ -456,3 +460,151 @@ export const fromRecords = (remote: RemoteRecord[], local: Data): Data => replac
 /** Los hashes de lo que tiene el servidor, sin los borrados */
 export const presentHashes = (hashes: MergeResult['hashes']): Hashes =>
   Object.fromEntries(Object.entries(hashes).filter((e): e is [string, string] => e[1] !== null));
+
+// --- La llave para volver a entrar ---
+
+/**
+ * Una llave nueva: 32 bytes al azar (base64url, 43 letras). El servidor guarda solo su hash; con ella y el código, otro
+ * teléfono vuelve a entrar como el mismo integrante (lib/sync)
+ */
+export function newRecoveryToken(): string {
+  const bytes = crypto.getRandomValues(new Uint8Array(32));
+  let s = '';
+  for (const b of bytes) s += String.fromCharCode(b);
+  return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+// --- «Sumar mis datos al hogar» al unirse ---
+
+export interface SumResult {
+  data: Data;
+  /** Lo que se sumó de acá */
+  added: { movements: number; categories: number; rubros: number; invoices: number; goals: number; recurring: number };
+  /** Movimientos que el hogar ya tenía (el mismo, o uno igual: fecha, tipo, rubro, monto, nota y comercio) */
+  repeated: number;
+  /** Meses de planilla que el hogar ya tenía (YYYY-MM, en orden): los de acá de esos meses no se suman */
+  sheetMonths: string[];
+}
+
+const looseKey = (m: Movement) => [m.date, m.kind, m.rubroId, round2(m.amount), m.note ?? '', m.merchant ?? ''].join('|');
+
+/**
+ * Lo de acá sumado a lo del hogar (`hh`: los datos del hogar como quedan en este teléfono, replaceWithRemote). Las
+ * categorías y los rubros con el mismo nombre se unen (como al sumar una planilla: importSheet) y lo de acá pasa a usar
+ * los del hogar; lo que el hogar no tiene, se agrega. No duplica: lo que tiene el mismo id que algo del hogar (un
+ * respaldo de ese hogar) queda como en el hogar, los movimientos iguales se saltean (contando cuántas veces está cada
+ * uno, así dos compras iguales no se pierden) y los meses de planilla que el hogar ya tiene no se suman (si los dos
+ * importaron la misma planilla, queda una vez). Un gasto fijo de un rubro que el hogar ya tiene como fijo y una meta
+ * con el mismo nombre, tampoco. Del hogar quedan el presupuesto, la moneda y lo aprendido (lo de acá que el hogar no
+ * tiene, se suma). Los movimientos sumados quedan sin «Anotado por»: el motor les pone quién se une
+ */
+export function sumIntoHousehold(hh: Data, mine: Data): SumResult {
+  const hhCats = new Map(hh.categories.map((c) => [c.id, c]));
+  const catMap = new Map<string, string>();
+  for (const c of mine.categories) {
+    const same = hhCats.has(c.id) ? hhCats.get(c.id) : hh.categories.find((x) => sameCategory(x, c));
+    if (same) catMap.set(c.id, same.id);
+  }
+  const kindOf = new Map([...hh.categories, ...mine.categories].map((c) => [catMap.get(c.id) ?? c.id, c.kind]));
+
+  const hhRubros = new Map(hh.rubros.map((r) => [r.id, r]));
+  const rubroMap = new Map<string, string>();
+  const newRubros: Rubro[] = [];
+  for (const r of mine.rubros) {
+    if (hhRubros.has(r.id)) {
+      rubroMap.set(r.id, r.id);
+      continue;
+    }
+    const categoryId = catMap.get(r.categoryId) ?? r.categoryId;
+    const name = norm(r.name);
+    // En la misma categoría o, si no, el único del hogar con ese nombre (en una categoría del mismo tipo)
+    const same =
+      hh.rubros.find((x) => x.categoryId === categoryId && norm(x.name) === name) ??
+      ((xs) => (xs.length === 1 ? xs[0] : undefined))(hh.rubros.filter((x) => norm(x.name) === name && kindOf.get(x.categoryId) === kindOf.get(categoryId)));
+    if (same) rubroMap.set(r.id, same.id);
+    else newRubros.push({ ...r, categoryId });
+  }
+  const rubro = (id: string) => rubroMap.get(id) ?? id;
+
+  // Las categorías de acá que no están en el hogar: si las usa un rubro nuevo o tienen presupuesto
+  const used = new Set(newRubros.map((r) => r.categoryId));
+  const newCats = mine.categories
+    .filter((c) => !catMap.has(c.id) && (used.has(c.id) || c.budget.type !== 'none'))
+    .map((c, i) => ({ ...c, order: hh.categories.length + i }));
+
+  const ids = new Set(hh.movements.map((m) => m.id));
+  const loose = new Map<string, number>();
+  const sheet = new Set<string>();
+  for (const m of hh.movements) {
+    if (m.monthly) sheet.add(monthOf(m.date));
+    else loose.set(looseKey(m), (loose.get(looseKey(m)) ?? 0) + 1);
+  }
+  const movements: Movement[] = [];
+  const skippedMonths = new Set<string>();
+  let repeated = 0;
+  for (const local of mine.movements) {
+    if (ids.has(local.id)) {
+      repeated++;
+      continue;
+    }
+    const m: Movement = { ...local, rubroId: rubro(local.rubroId), createdBy: undefined };
+    if (m.monthly) {
+      if (sheet.has(monthOf(m.date))) {
+        skippedMonths.add(monthOf(m.date));
+        continue;
+      }
+    } else {
+      const left = loose.get(looseKey(m)) ?? 0;
+      if (left > 0) {
+        loose.set(looseKey(m), left - 1);
+        repeated++;
+        continue;
+      }
+    }
+    movements.push(m);
+  }
+
+  // Facturas y estados de cuenta: los que no están en el hogar y siguen con algún movimiento sumado (o no tenían
+  // ninguno). Si todos sus movimientos ya estaban, es el mismo estado de cuenta: no se suma otra vez
+  const hhInvoices = new Set(hh.invoices.map((i) => i.id));
+  const withMovements = new Set(mine.movements.flatMap((m) => (m.invoiceId ? [m.invoiceId] : [])));
+  const addedInvoices = new Set(movements.flatMap((m) => (m.invoiceId ? [m.invoiceId] : [])));
+  const invoices: Invoice[] = mine.invoices
+    .filter((i) => !hhInvoices.has(i.id) && (addedInvoices.has(i.id) || !withMovements.has(i.id)))
+    .map((i) => ({ ...i, items: i.items.map((it) => (it.rubroId ? { ...it, rubroId: rubro(it.rubroId) } : it)) }));
+
+  const goalNames = new Set(hh.goals.map((g) => norm(g.name)));
+  const goals = mine.goals.filter((g) => !hh.goals.some((x) => x.id === g.id) && !goalNames.has(norm(g.name)));
+
+  const fixed = new Set(hh.recurring.map((r) => `${r.rubroId}|${r.kind}`));
+  const recurring = mine.recurring
+    .filter((r) => !hh.recurring.some((x) => x.id === r.id))
+    .map((r) => ({ ...r, rubroId: rubro(r.rubroId) }))
+    .filter((r) => !fixed.has(`${r.rubroId}|${r.kind}`));
+
+  const rubros = [...hh.rubros, ...newRubros];
+  const live = new Set(rubros.map((r) => r.id));
+  const learned: Settings['learned'] = {};
+  for (const [k, v] of Object.entries(mine.settings.learned)) if (live.has(rubro(v))) learned[k] = rubro(v);
+
+  const data = normalizeData({
+    ...hh,
+    categories: [...hh.categories, ...newCats],
+    rubros,
+    movements: [...hh.movements, ...movements],
+    invoices: [...hh.invoices, ...invoices],
+    goals: [...hh.goals, ...goals],
+    recurring: [...hh.recurring, ...recurring],
+    settings: {
+      ...hh.settings,
+      learned: { ...learned, ...hh.settings.learned },
+      ...(hh.settings.usdRate || !mine.settings.usdRate ? {} : { usdRate: mine.settings.usdRate }),
+    },
+  });
+  return {
+    data,
+    added: { movements: movements.length, categories: newCats.length, rubros: newRubros.length, invoices: invoices.length, goals: goals.length, recurring: recurring.length },
+    repeated,
+    sheetMonths: [...skippedMonths].sort(),
+  };
+}

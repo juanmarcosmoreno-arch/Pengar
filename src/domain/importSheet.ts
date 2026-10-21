@@ -343,7 +343,7 @@ const nameWords = (name: string) => new Set(norm(name).split(/[^a-z0-9]+/).filte
  * no) como ahorro y los nombres se parecen («Inversión / Ahorro» y «Ahorro e inversión»). La letra sola no alcanza:
  * I = Impuestos no es «Ahorro e inversión». Una «Categoría X» (sin nombre en la planilla) va por la letra.
  */
-function sameCategory(x: Category, c: Category): boolean {
+export function sameCategory(x: Category, c: Category): boolean {
   if (x.kind !== c.kind) return false;
   if (norm(x.name) === norm(c.name)) return true;
   if (!c.code || x.code !== c.code) return false;

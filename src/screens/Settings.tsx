@@ -653,6 +653,11 @@ export function Settings({ onBack }: { onBack: () => void }) {
                 ? 'Además del automático, podés guardar un respaldo cuando quieras (en Archivos, iCloud Drive o por mail), por ejemplo para pasarlo a otro teléfono.'
                 : 'Los datos viven solo en este teléfono. Guardá un respaldo de vez en cuando (en Archivos o iCloud Drive) por si lo cambiás o se pierde.'}
             </p>
+            {hh && (
+              <p className="text-[14px] text-muted">
+                Los respaldos llevan tu llave del hogar «{hh.name}»: restaurado en otro teléfono, entrás con el código y volvés a ser vos. Guardalos donde solo los veas vos.
+              </p>
+            )}
             <input
               ref={restore}
               type="file"

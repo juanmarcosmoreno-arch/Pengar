@@ -1,12 +1,15 @@
 /**
  * El servidor del hogar compartido. El motor (lib/sync.ts) habla solo con RemoteStore: la implementación de Supabase
  * (createSupabaseRemote) y FakeRemote, en memoria, para las pruebas (varios teléfonos contra el mismo servidor, con las
- * reglas de la migración supabase/migrations/20261021000000_pengar.sql).
+ * reglas de las migraciones de supabase/migrations).
  *
  * Sin correo ni contraseña: cada teléfono es un usuario anónimo de Supabase (signInAnonymously); lo que se comparte es
- * el hogar, con su código de invitación. Supabase se carga recién cuando hace falta (no pesa al abrir la app).
+ * el hogar, con su código de invitación. Cada integrante tiene además una llave (un secreto al azar del que el servidor
+ * guarda solo el hash): con el código y la llave, otro teléfono vuelve a entrar como el mismo integrante. Supabase se
+ * carga recién cuando hace falta (no pesa al abrir la app).
  */
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { cyrb53 } from '../domain/hash';
 import { recordKey, type OutRecord, type RecordKind, type RemoteRecord } from '../domain/sync';
 import { deleteAuth, readAuth, writeAuth } from './db';
 import { fakePhone } from './fakePhone';
@@ -20,9 +23,22 @@ export interface Household {
 }
 
 export interface Member {
+  /** El usuario de Supabase del teléfono de ese integrante (cambia si vuelve a entrar desde otro) */
   userId: string;
+  /** El integrante: no cambia aunque vuelva a entrar desde otro teléfono. Es el de Movement.createdBy */
+  memberId: string;
   displayName: string | null;
   joinedAt: string;
+}
+
+/** Cómo quedó al unirse */
+export interface Joined {
+  household: Household;
+  /** Con quién se entró (el integrante nuevo, o el de la llave) */
+  memberId: string;
+  /** La llave era de un integrante del hogar: este teléfono pasó a ser ese integrante (no se sumó otro) */
+  reclaimed: boolean;
+  displayName: string | null;
 }
 
 /** Qué avisó el servidor que cambió */
@@ -50,9 +66,15 @@ export interface RemoteStore {
    * RemoteError('session'); si no se pudo leer la sesión, tira (no es lo mismo que no tenerla)
    */
   session(opts?: { create?: boolean }): Promise<{ userId: string }>;
-  createHousehold(name: string, displayName: string | null): Promise<Household>;
-  /** Tira RemoteError('invalid-code') si el código no es de ningún hogar. Repetirlo no duplica */
-  joinHousehold(code: string, displayName: string | null): Promise<Household>;
+  /** `token`: la llave de quien lo crea (el servidor guarda su hash) */
+  createHousehold(name: string, displayName: string | null, token: string): Promise<Household>;
+  /**
+   * Con la llave de un integrante de ese hogar, este teléfono pasa a ser ese integrante; si no, se suma uno nuevo con esa
+   * llave. Tira RemoteError('invalid-code') si el código no es de ningún hogar. Repetirlo no duplica
+   */
+  joinHousehold(code: string, displayName: string | null, token: string): Promise<Joined>;
+  /** Cambia la llave de este integrante (la de quien ya estaba antes de que existieran, o si se perdió) */
+  setRecovery(householdId: string, token: string): Promise<void>;
   /** El hogar (nombre y código al día), o null si ya no sos miembro */
   household(householdId: string): Promise<Household | null>;
   /** Salir. Si eras el último, el hogar se borra con sus registros y sus archivos (si los archivos no se pueden borrar, tira y no sale) */
@@ -137,7 +159,7 @@ function toRemoteError(e: PgError | null | undefined, what: string): RemoteError
   else if (code === 'PT429' || e?.status === 429) kind = 'limit';
   else if (code === '42501' || e?.status === 403 || e?.statusCode === '403' || /row-level security/i.test(msg)) kind = 'denied';
   else if (code === '28000' || code === 'PGRST301' || code === 'PGRST302' || e?.status === 401) kind = 'auth';
-  else if (['PGRST202', 'PGRST205', '42P01', '42883', 'anonymous_provider_disabled'].includes(code) || /anonymous/i.test(msg)) kind = 'setup';
+  else if (['PGRST202', 'PGRST204', 'PGRST205', '42P01', '42703', '42883', 'anonymous_provider_disabled'].includes(code) || /anonymous/i.test(msg)) kind = 'setup';
   else if (/^(22|23)/.test(code) || code === 'PGRST102' || e?.status === 413 || e?.statusCode === '413') kind = 'rejected';
   // Sin código ni estado: no hubo respuesta (sin conexión, «Load failed» en el iPhone)
   else if (!code && !e?.status) kind = 'offline';
@@ -159,6 +181,11 @@ interface HouseholdRow {
   id: string;
   name: string;
   invite_code: string;
+}
+interface JoinRow extends HouseholdRow {
+  member_id: string;
+  display_name: string | null;
+  reclaimed: boolean;
 }
 interface RecordRow {
   kind: RecordKind;
@@ -218,17 +245,21 @@ export function createSupabaseRemote(): RemoteStore {
       if (res.error || !res.data.user) throw toRemoteError(res.error ?? { message: 'Sin usuario' }, 'Ingresar');
       return { userId: res.data.user.id };
     },
-    async createHousehold(name, displayName) {
+    async createHousehold(name, displayName, token) {
       const c = await client();
-      const row = check(await c.rpc('pengar_create_household', { p_name: name, p_display_name: displayName }).single(), 'Crear el hogar');
+      const row = check(await c.rpc('pengar_create_household', { p_name: name, p_display_name: displayName, p_token: token }).single(), 'Crear el hogar');
       return toHousehold(row as HouseholdRow);
     },
-    async joinHousehold(code, displayName) {
+    async joinHousehold(code, displayName, token) {
       const c = await client();
       // Un código que no es de ningún hogar no devuelve nada (el servidor lleva la cuenta de los intentos)
-      const row = check(await c.rpc('pengar_join_household', { p_code: code, p_display_name: displayName }).maybeSingle(), 'Unirse al hogar');
+      const row = check(await c.rpc('pengar_join_household', { p_code: code, p_display_name: displayName, p_token: token }).maybeSingle(), 'Unirse al hogar') as JoinRow | null;
       if (!row) throw new RemoteError('invalid-code', 'Unirse al hogar: código inválido');
-      return toHousehold(row as HouseholdRow);
+      return { household: toHousehold(row), memberId: row.member_id, reclaimed: row.reclaimed === true, displayName: row.display_name };
+    },
+    async setRecovery(hh, token) {
+      const c = await client();
+      check(await c.rpc('pengar_set_recovery', { p_household_id: hh, p_token: token }), 'Guardar la llave');
     },
     async household(hh) {
       const c = await client();
@@ -255,10 +286,10 @@ export function createSupabaseRemote(): RemoteStore {
     async members(hh) {
       const c = await client();
       const rows = check(
-        await c.from('pengar_members').select('user_id,display_name,joined_at').eq('household_id', hh).order('joined_at'),
+        await c.from('pengar_members').select('user_id,member_id,display_name,joined_at').eq('household_id', hh).order('joined_at'),
         'Leer los miembros',
-      ) as { user_id: string; display_name: string | null; joined_at: string }[];
-      return rows.map((r) => ({ userId: r.user_id, displayName: r.display_name, joinedAt: r.joined_at }));
+      ) as { user_id: string; member_id: string | null; display_name: string | null; joined_at: string }[];
+      return rows.map((r) => ({ userId: r.user_id, memberId: r.member_id ?? r.user_id, displayName: r.display_name, joinedAt: r.joined_at }));
     },
     async setDisplayName(hh, name) {
       const c = await client();
@@ -395,6 +426,8 @@ const CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 export class FakeRemote {
   readonly households = new Map<string, Household>();
   readonly members = new Map<string, Member[]>();
+  /** El hash de la llave de cada integrante («hogar|integrante»): como recovery_hash, nadie lo lee */
+  readonly tokens = new Map<string, string>();
   readonly records = new Map<string, Map<string, FakeRow>>();
   readonly files = new Map<string, Blob>();
   /** Para simular un registro que el servidor no acepta (como un check de la tabla) */
@@ -465,6 +498,21 @@ export class FakeRemote {
     this.members.delete(hh);
     this.records.delete(hh);
     for (const k of [...this.files.keys()]) if (k.startsWith(`${hh}/`)) this.files.delete(k);
+    for (const k of [...this.tokens.keys()]) if (k.startsWith(`${hh}|`)) this.tokens.delete(k);
+  }
+
+  /** Como pengar_recovery_hash: una llave que no tiene el largo de las de la app no sirve */
+  tokenHash(token: string | null | undefined): string | null {
+    if (token == null) return null;
+    if (token.length < 32 || token.length > 200) throw new RemoteError('rejected', 'Llave inválida');
+    return cyrb53(`llave:${token}`);
+  }
+
+  /** Saca integrantes (y sus llaves) */
+  dropMembers(hh: string, gone: (m: Member) => boolean): void {
+    const list = this.members.get(hh) ?? [];
+    for (const m of list) if (gone(m)) this.tokens.delete(`${hh}|${m.memberId}`);
+    this.members.set(hh, list.filter((m) => !gone(m)));
   }
 }
 
@@ -493,26 +541,54 @@ export class FakeClient implements RemoteStore {
     return { userId: this.userId };
   }
 
-  async createHousehold(name: string, displayName: string | null): Promise<Household> {
+  async createHousehold(name: string, displayName: string | null, token: string): Promise<Household> {
     await this.enter('createHousehold');
+    const hash = this.server.tokenHash(token);
     const hh: Household = { id: crypto.randomUUID(), name: name.trim().slice(0, 80) || 'Casa', inviteCode: this.server.newCode() };
     this.server.households.set(hh.id, hh);
-    this.server.members.set(hh.id, [{ userId: this.userId, displayName: displayName?.trim() || null, joinedAt: this.server.stamp() }]);
+    this.server.members.set(hh.id, [{ userId: this.userId, memberId: this.userId, displayName: displayName?.trim() || null, joinedAt: this.server.stamp() }]);
+    if (hash) this.server.tokens.set(`${hh.id}|${this.userId}`, hash);
     this.server.records.set(hh.id, new Map());
     return { ...hh };
   }
 
-  async joinHousehold(code: string, displayName: string | null): Promise<Household> {
+  async joinHousehold(code: string, displayName: string | null, token: string): Promise<Joined> {
     await this.enter('joinHousehold');
+    const hash = this.server.tokenHash(token);
     const clean = code.replace(/[^A-Za-z0-9]/g, '').toUpperCase();
     const hh = [...this.server.households.values()].find((h) => h.inviteCode === clean);
     if (!hh) throw new RemoteError('invalid-code', 'Código inválido');
+    const name = displayName?.trim() || null;
+    const key = (m: Member) => `${hh.id}|${m.memberId}`;
+    // Como pengar_join_household: con la llave de un integrante, este teléfono pasa a ser ese integrante
+    const owner = hash ? this.server.members.get(hh.id)!.find((m) => this.server.tokens.get(key(m)) === hash) : undefined;
+    if (owner) {
+      if (owner.userId !== this.userId) {
+        this.server.dropMembers(hh.id, (m) => m.userId === this.userId);
+        owner.userId = this.userId;
+      }
+      if (name) owner.displayName = name;
+      this.server.notify(hh.id, 'members');
+      return { household: { ...hh }, memberId: owner.memberId, reclaimed: true, displayName: owner.displayName };
+    }
     const list = this.server.members.get(hh.id)!;
-    const mine = list.find((m) => m.userId === this.userId);
-    if (mine) mine.displayName = displayName?.trim() || mine.displayName;
-    else list.push({ userId: this.userId, displayName: displayName?.trim() || null, joinedAt: this.server.stamp() });
+    let mine = list.find((m) => m.userId === this.userId);
+    if (mine) mine.displayName = name || mine.displayName;
+    else {
+      mine = { userId: this.userId, memberId: this.userId, displayName: name, joinedAt: this.server.stamp() };
+      list.push(mine);
+    }
+    if (hash) this.server.tokens.set(key(mine), hash);
     this.server.notify(hh.id, 'members');
-    return { ...hh };
+    return { household: { ...hh }, memberId: mine.memberId, reclaimed: false, displayName: mine.displayName };
+  }
+
+  async setRecovery(hh: string, token: string): Promise<void> {
+    await this.enter('setRecovery');
+    const hash = this.server.tokenHash(token);
+    const mine = this.server.members.get(hh)?.find((m) => m.userId === this.userId);
+    if (!mine || !hash) throw new RemoteError('denied', 'Guardar la llave: sin permiso');
+    this.server.tokens.set(`${hh}|${mine.memberId}`, hash);
   }
 
   async household(hh: string): Promise<Household | null> {
@@ -528,7 +604,7 @@ export class FakeClient implements RemoteStore {
     const rest = list.filter((m) => m.userId !== this.userId);
     if (!rest.length) this.server.dropHousehold(hh);
     else {
-      this.server.members.set(hh, rest);
+      this.server.dropMembers(hh, (m) => m.userId === this.userId);
       this.server.notify(hh, 'members');
     }
   }
@@ -536,8 +612,7 @@ export class FakeClient implements RemoteStore {
   async removeMember(hh: string, userId: string): Promise<void> {
     await this.enter('removeMember');
     this.member(hh, 'Sacar al integrante');
-    const list = this.server.members.get(hh)!;
-    this.server.members.set(hh, list.filter((m) => m.userId !== userId || userId === this.userId));
+    this.server.dropMembers(hh, (m) => m.userId === userId && userId !== this.userId);
     this.server.notify(hh, 'members');
   }
 
