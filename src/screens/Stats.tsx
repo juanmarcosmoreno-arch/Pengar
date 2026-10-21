@@ -1,4 +1,4 @@
-import { ChevronLeft, ChevronRight, ClipboardList } from 'lucide-react';
+import { ChevronDown, ChevronLeft, ChevronRight, ClipboardList } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { BudgetRows } from '../components/charts/BudgetRows';
 import { Donut } from '../components/charts/Donut';
@@ -159,7 +159,23 @@ function Trends() {
                 </span>
                 <span className="w-12 shrink-0 text-right text-[15px] text-muted tabular max-[359px]:hidden">{formatPct(g.share)}</span>
                 <span className="shrink-0 text-right tabular">{money(g.total)}</span>
+                {g.children && <ChevronDown size={18} className={`shrink-0 text-muted transition-transform ${active === g.key ? 'rotate-180' : ''}`} />}
               </button>
+              {/* Tocando «Otras»: cuáles son, con su parte del total y de «Otras» */}
+              {g.children && active === g.key && (
+                <ul className="mb-2 ml-5 space-y-1 border-l-2 border-line pl-3" aria-label={`Qué hay en ${g.name}`}>
+                  {g.children.map((c) => (
+                    <li key={c.key} className="flex items-center gap-2 py-1 text-[15px]">
+                      {by === 'category' && <Icon name={c.icon} size={16} className="shrink-0 text-muted max-[359px]:hidden" />}
+                      <span className="min-w-0 flex-1">
+                        <span className="line-clamp-2 break-words leading-tight">{c.name}</span>
+                        <span className="block text-[13px] text-muted tabular">{formatPct(c.share)} del total · {formatPct(g.total ? c.total / g.total : 0)} de {by === 'category' ? 'otras' : 'otros'}</span>
+                      </span>
+                      <span className="shrink-0 text-right tabular">{money(c.total)}</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
             </li>
           ))}
         </ul>

@@ -111,6 +111,8 @@ export interface GroupTotal {
   /** Promedio por mes del período (meses con datos) */
   average: number;
   share: number;
+  /** En «Otras categorías» / «Otros rubros»: las que junta, de mayor a menor */
+  children?: GroupTotal[];
 }
 
 export function groupTotals(data: Data, ix: Index, f: Filter, by: GroupBy): GroupTotal[] {
@@ -167,6 +169,7 @@ export function foldOthers(list: GroupTotal[], max: number, by: GroupBy): GroupT
       total,
       average: tail.reduce((s, g) => s + g.average, 0),
       share: tail.reduce((s, g) => s + g.share, 0),
+      children: tail,
     },
   ];
 }
