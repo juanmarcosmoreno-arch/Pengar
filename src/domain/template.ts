@@ -211,13 +211,23 @@ export const ART: [string, string][] = [
   ['telefonia', 'Telefonía e internet'], ['tecnologia', 'Tecnología'], ['mascotas', 'Mascotas'], ['familia', 'Hijos / familia'],
   ['seguros', 'Seguros'], ['ahorro', 'Ahorro'], ['inversiones', 'Inversiones'], ['otros', 'Otros'], ['imprevistos', 'Imprevistos'],
   ['compras-online', 'Compras online'], ['impuestos', 'Impuestos y trámites'],
+  ['diezmo', 'Diezmos y ofrendas'], ['donaciones', 'Donaciones'], ['cuidado-personal', 'Cuidado personal'],
+  ['vacaciones', 'Vacaciones'], ['hobbies', 'Hobbies'], ['cursos', 'Cursos'], ['trabajo', 'Trabajo'], ['jubilacion', 'Jubilación'],
+  ['compra-vivienda', 'Compra de vivienda'], ['alquileres', 'Alquileres'], ['mejoras-hogar', 'Mejoras del hogar'],
+  ['deudas', 'Deudas'], ['planificacion', 'Planificación'], ['metas-financieras', 'Metas financieras'],
+  ['lista-deseos', 'Lista de deseos'], ['logros', 'Logros'], ['medio-ambiente', 'Medio ambiente'],
 ];
 
-/** Segundo juego de ilustraciones: otra versión de las mismas categorías («m:salud-2»…) */
+/** Otras versiones de las mismas categorías: «m:salud-2» (segundo juego), «m:salud-3» (tercero) */
 export const ART_VARIANTS = [
   'super', 'comida', 'restaurantes', 'salidas', 'servicios', 'vivienda', 'mant-casa', 'hogar', 'limpieza', 'jardin', 'mant-auto',
   'viajes', 'salud', 'deporte', 'educacion', 'libros', 'ropa', 'regalos', 'entretenimiento', 'tecnologia', 'mascotas', 'familia',
-  'seguros', 'ahorro', 'inversiones', 'otros',
+  'seguros', 'ahorro', 'inversiones', 'otros', 'telefonia', 'imprevistos', 'compras-online', 'impuestos',
+];
+export const ART_VARIANTS_3 = [
+  'super', 'comida', 'restaurantes', 'servicios', 'vivienda', 'mant-casa', 'limpieza', 'jardin', 'mant-auto', 'viajes', 'salud',
+  'deporte', 'educacion', 'libros', 'ropa', 'regalos', 'entretenimiento', 'tecnologia', 'mascotas', 'familia', 'seguros', 'ahorro',
+  'inversiones', 'otros',
 ];
 
 /** Íconos de línea de versiones anteriores → ilustración equivalente (los que no tienen equivalente quedan igual) */
@@ -232,8 +242,8 @@ export const LEGACY_ICON_TO_ART: Record<string, string> = {
 
 /** Íconos que se pueden elegir para una categoría o una meta: primero las ilustraciones, después los de línea */
 export const ICON_CHOICES = [
-  // Cada ilustración seguida de su otra versión, si tiene
-  ...ART.flatMap(([n]) => (ART_VARIANTS.includes(n) ? [`m:${n}`, `m:${n}-2`] : [`m:${n}`])),
+  // Cada ilustración seguida de sus otras versiones, si tiene
+  ...ART.flatMap(([n]) => [`m:${n}`, ...(ART_VARIANTS.includes(n) ? [`m:${n}-2`] : []), ...(ART_VARIANTS_3.includes(n) ? [`m:${n}-3`] : [])]),
   'cart', 'home', 'car', 'fuel', 'bus', 'heart', 'pill', 'graduation', 'book', 'sparkles', 'wrench', 'sofa', 'shirt',
   'tv', 'music', 'wifi', 'phone', 'zap', 'droplet', 'flame', 'utensils', 'coffee', 'plane', 'palm', 'gift', 'hand-heart',
   'paw', 'baby', 'dumbbell', 'piggy', 'coins', 'briefcase', 'landmark', 'receipt', 'tag', 'target',

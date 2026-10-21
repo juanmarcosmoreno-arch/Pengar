@@ -26,16 +26,16 @@ const LINE_LABELS: Record<string, string> = {
 /** Nombre de un ícono para el lector de pantalla («Compras del súper, dibujo», «Chanchito, ícono»), no su id interno */
 export function iconLabel(name: string): string {
   if (name.startsWith('m:')) {
-    const base = name.slice(2).replace(/-2$/, '');
+    const base = name.slice(2).replace(/-[23]$/, '');
     const label = ART_NAMES.get(base) ?? base.replace(/-/g, ' ');
-    return `${label}, ${name.endsWith('-2') ? 'otro dibujo' : 'dibujo'}`;
+    return `${label}, ${/-[23]$/.test(name) ? 'otro dibujo' : 'dibujo'}`;
   }
   return `${LINE_LABELS[name] ?? name}, ícono`;
 }
 
 /** Ilustraciones del suricata (categorías): «m:super», «m:salud»… */
 const ART = import.meta.glob<string>('../assets/suricata/cat/*.webp', { eager: true, query: '?url', import: 'default' });
-const artUrl = (name: string) => (name.startsWith('m:') ? ART[`../assets/suricata/cat/${name.slice(2)}.webp`] : undefined);
+export const artUrl = (name: string) => (name.startsWith('m:') ? ART[`../assets/suricata/cat/${name.slice(2)}.webp`] : undefined);
 
 export function Icon({ name, size = 22, className, strokeWidth = 1.75 }: { name: string; size?: number; className?: string; strokeWidth?: number }) {
   const art = artUrl(name);

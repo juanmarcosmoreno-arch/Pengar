@@ -1,13 +1,14 @@
 import { ChevronRight, Plus } from 'lucide-react';
 import { useId, useState } from 'react';
-import { CategoryBubble, Icon, iconLabel } from '../components/Icon';
+import { CategoryBubble } from '../components/Icon';
+import { IconPicker } from '../components/IconPicker';
 import { PageHeader, Sheet } from '../components/Sheet';
 import { Suricata } from '../components/Suricata';
 import { Segmented, Toggle } from '../components/Toggle';
 import { useToast } from '../components/Toast';
 import { guessIcon, norm } from '../domain/importSheet';
 import { recurringOf } from '../domain/recurring';
-import { ICON_CHOICES, newId, OTHER_COLOR, PALETTE } from '../domain/template';
+import { newId, OTHER_COLOR, PALETTE } from '../domain/template';
 import { plural } from '../domain/text';
 import type { Category, Kind, Rubro } from '../domain/types';
 import { useMoney } from '../lib/useMoney';
@@ -141,19 +142,7 @@ function CategorySheet({ value, onClose }: { value: Category | 'new-gasto' | 'ne
         </div>
         <div>
           <div className="label">Ícono</div>
-          <div className="grid grid-cols-6 gap-2" role="group" aria-label="Ícono">
-            {ICON_CHOICES.map((name) => (
-              <button
-                key={name}
-                className={`relative flex h-12 items-center justify-center rounded-2xl border after:absolute after:inset-y-0 after:-inset-x-1 after:content-[''] ${c.icon === name ? 'border-primary bg-soft/30' : 'border-line bg-surface'}`}
-                onClick={() => { setC({ ...c, icon: name }); setIconTouched(true); }}
-                aria-label={iconLabel(name)}
-                aria-pressed={c.icon === name}
-              >
-                <Icon name={name} size={22} />
-              </button>
-            ))}
-          </div>
+          <IconPicker value={c.icon} onChange={(name) => { setC({ ...c, icon: name }); setIconTouched(true); }} />
         </div>
         {c.kind === 'gasto' && (
           <Toggle checked={!!c.savings} onChange={(v) => setC({ ...c, savings: v || undefined })} label="Cuenta como ahorro o inversión" />

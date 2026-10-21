@@ -1,12 +1,13 @@
 import { Plus } from 'lucide-react';
 import { useEffect, useId, useState } from 'react';
-import { CategoryBubble, Icon, iconLabel } from '../components/Icon';
+import { CategoryBubble } from '../components/Icon';
+import { IconPicker } from '../components/IconPicker';
 import { PageHeader, Sheet } from '../components/Sheet';
 import { EmptyState, Suricata } from '../components/Suricata';
 import { useToast } from '../components/Toast';
 import { Segmented } from '../components/Toggle';
 import { parseAmount } from '../domain/money';
-import { ICON_CHOICES, newId } from '../domain/template';
+import { newId } from '../domain/template';
 import type { Goal } from '../domain/types';
 import { useMoney } from '../lib/useMoney';
 import { useStore } from '../store/store';
@@ -105,13 +106,7 @@ function GoalSheet({ value, onClose }: { value: Goal | 'new'; onClose: () => voi
           <div><label className="label" htmlFor={`${id}-necesito`}>Necesito</label><input id={`${id}-necesito`} className="field" inputMode="decimal" value={target} onChange={(e) => setTarget(e.target.value)} /></div>
           <div><label className="label" htmlFor={`${id}-tengo`}>Ya tengo</label><input id={`${id}-tengo`} className="field" inputMode="decimal" value={saved} onChange={(e) => setSaved(e.target.value)} /></div>
         </div>
-        <div className="grid grid-cols-6 gap-2" role="group" aria-label="Ícono">
-          {ICON_CHOICES.map((name) => (
-            <button key={name} className={`relative flex h-12 items-center justify-center rounded-2xl border after:absolute after:inset-y-0 after:-inset-x-1 after:content-[''] ${g.icon === name ? 'border-primary bg-soft/30' : 'border-line bg-surface'}`} onClick={() => setG({ ...g, icon: name })} aria-label={iconLabel(name)} aria-pressed={g.icon === name}>
-              <Icon name={name} size={22} />
-            </button>
-          ))}
-        </div>
+        <IconPicker value={g.icon} onChange={(name) => setG({ ...g, icon: name })} />
       </div>
     </Sheet>
   );
