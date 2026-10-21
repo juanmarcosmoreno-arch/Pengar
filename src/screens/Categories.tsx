@@ -37,7 +37,8 @@ export function Categories({ onBack }: { onBack: () => void }) {
             return (
               <div key={c.id}>
                 <div className="flex items-center gap-3 py-2.5">
-                  <button onClick={() => setEditCat(c)} aria-label={`Editar ${c.name}`}><CategoryBubble icon={c.icon} color={c.color} size={40} /></button>
+                  {/* El dibujo mide 40: el toque llega a 44 sin correr nada */}
+                  <button className="relative shrink-0 rounded-full after:absolute after:-inset-0.5 after:content-['']" onClick={() => setEditCat(c)} aria-label={`Editar ${c.name}`}><CategoryBubble icon={c.icon} color={c.color} size={40} /></button>
                   <button className="flex min-w-0 flex-1 items-center gap-2 text-left" onClick={() => setOpen(isOpen ? null : c.id)}>
                     <div className="min-w-0 flex-1">
                       <div className="truncate text-lg">{c.name}</div>
@@ -49,7 +50,7 @@ export function Categories({ onBack }: { onBack: () => void }) {
                 {isOpen && (
                   <div className="space-y-1 pb-3 pl-[52px]">
                     {rubros.map((r) => (
-                      <button key={r.id} className="flex w-full items-center justify-between py-1.5 text-left" onClick={() => setEditRubro(r)}>
+                      <button key={r.id} className="flex min-h-tap w-full items-center justify-between py-1 text-left" onClick={() => setEditRubro(r)}>
                         <span className={r.archived ? 'text-muted line-through' : ''}>{r.name}</span>
                         <span className="text-[14px] text-muted">{counts.get(r.id) ?? 0}</span>
                       </button>
@@ -129,7 +130,7 @@ function CategorySheet({ value, onClose }: { value: Category | 'new-gasto' | 'ne
             {COLORS.map((col, i) => (
               <button
                 key={col}
-                className={`h-9 w-9 rounded-full ${c.color === col ? 'ring-2 ring-ink ring-offset-2 ring-offset-bg' : ''}`}
+                className={`relative h-9 w-9 rounded-full after:absolute after:-inset-1 after:content-[''] ${c.color === col ? 'ring-2 ring-ink ring-offset-2 ring-offset-bg' : ''}`}
                 style={{ background: col }}
                 onClick={() => setC({ ...c, color: col })}
                 aria-label={COLOR_NAMES[i]}
@@ -144,7 +145,7 @@ function CategorySheet({ value, onClose }: { value: Category | 'new-gasto' | 'ne
             {ICON_CHOICES.map((name) => (
               <button
                 key={name}
-                className={`flex h-12 items-center justify-center rounded-2xl border ${c.icon === name ? 'border-primary bg-soft/30' : 'border-line bg-surface'}`}
+                className={`relative flex h-12 items-center justify-center rounded-2xl border after:absolute after:inset-y-0 after:-inset-x-1 after:content-[''] ${c.icon === name ? 'border-primary bg-soft/30' : 'border-line bg-surface'}`}
                 onClick={() => { setC({ ...c, icon: name }); setIconTouched(true); }}
                 aria-label={iconLabel(name)}
                 aria-pressed={c.icon === name}

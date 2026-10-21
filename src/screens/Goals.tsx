@@ -107,7 +107,7 @@ function GoalSheet({ value, onClose }: { value: Goal | 'new'; onClose: () => voi
         </div>
         <div className="grid grid-cols-6 gap-2" role="group" aria-label="Ícono">
           {ICON_CHOICES.map((name) => (
-            <button key={name} className={`flex h-12 items-center justify-center rounded-2xl border ${g.icon === name ? 'border-primary bg-soft/30' : 'border-line bg-surface'}`} onClick={() => setG({ ...g, icon: name })} aria-label={iconLabel(name)} aria-pressed={g.icon === name}>
+            <button key={name} className={`relative flex h-12 items-center justify-center rounded-2xl border after:absolute after:inset-y-0 after:-inset-x-1 after:content-[''] ${g.icon === name ? 'border-primary bg-soft/30' : 'border-line bg-surface'}`} onClick={() => setG({ ...g, icon: name })} aria-label={iconLabel(name)} aria-pressed={g.icon === name}>
               <Icon name={name} size={22} />
             </button>
           ))}

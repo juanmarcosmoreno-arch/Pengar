@@ -280,6 +280,22 @@ do $$ begin
   assert (select count(*) from public.pengar_records) = 0, 'el teléfono de antes ya no ve nada';
   assert (select count(*) from public.pengar_households) = 0, 'ni el hogar';
 end $$;
+-- Ese teléfono de antes se suma de nuevo (sin la llave, o con otra: por ejemplo, para otra persona): es un integrante
+-- nuevo, con otro id (el de su usuario ya es el de Dani). Antes chocaba con pengar_members_member_key. Después sale
+do $$
+declare
+  r record;
+begin
+  select * into r from public.pengar_join_household(current_setting('t.newcode'), 'Tablet', null);
+  assert not r.reclaimed, 'sin la llave, un integrante nuevo';
+  assert r.member_id <> '00000000-0000-0000-0000-00000000000d', 'con otro id: el de su usuario es el de Dani';
+  assert (select count(*) from public.pengar_members) = 4, 'Ana, Bruno, Dani y la tablet';
+  select * into r from public.pengar_join_household(current_setting('t.newcode'), null, 'llave-de-la-tablet-0123456789abcdefghijk');
+  assert not r.reclaimed and (select count(*) from public.pengar_members) = 4, 'un reintento con otra llave no duplica';
+  assert (select user_id from public.pengar_members where member_id = '00000000-0000-0000-0000-00000000000d') = '00000000-0000-0000-0000-00000000000e',
+    'Dani sigue en su teléfono nuevo';
+  assert public.pengar_leave_household(current_setting('t.hh')::uuid) = 'left', 'sale';
+end $$;
 
 -- Otro teléfono más de Dani entra primero sin la llave (un integrante nuevo) y después con ella: queda uno solo
 set local request.jwt.claim.sub = '00000000-0000-0000-0000-00000000000f';
@@ -326,6 +342,28 @@ end $$;
 set local request.jwt.claim.sub = '00000000-0000-0000-0000-00000000000f';
 do $$ begin
   assert (select count(*) from public.pengar_records) = 0, 'Dani ya no ve nada';
+end $$;
+-- Dani vuelve con su llave (lo sacaron por error): es el mismo integrante, con su nombre, sin desplazar a nadie
+do $$
+declare
+  r record;
+begin
+  select * into r from public.pengar_join_household(current_setting('t.newcode'), null, 'otra-llave-de-dani-0123456789abcdefghijklm');
+  assert r.reclaimed and r.member_id = '00000000-0000-0000-0000-00000000000d' and r.display_name = 'Dani', 'vuelve como Dani';
+  assert (select data ->> 'createdBy' from public.pengar_records where id = 'de-dani') = r.member_id::text, 'lo que anotó sigue siendo suyo';
+  assert (select count(*) from public.pengar_members) = 3, 'Ana, Bruno y Dani';
+  select * into r from public.pengar_join_household(current_setting('t.newcode'), null, 'otra-llave-de-dani-0123456789abcdefghijklm');
+  assert r.reclaimed and r.member_id = '00000000-0000-0000-0000-00000000000d' and (select count(*) from public.pengar_members) = 3, 'un reintento es lo mismo';
+  begin
+    perform count(*) from public.pengar_departed;
+    raise exception 'a los que se fueron no los lee nadie';
+  exception when insufficient_privilege then null;
+  end;
+end $$;
+set local request.jwt.claim.sub = '00000000-0000-0000-0000-00000000000a';
+do $$ begin
+  perform public.pengar_remove_member(current_setting('t.hh')::uuid, '00000000-0000-0000-0000-00000000000f');
+  assert (select count(*) from public.pengar_members) = 2, 'Ana lo saca de nuevo';
 end $$;
 
 -- Bruno sale: deja de ver el hogar; el hogar sigue con Ana

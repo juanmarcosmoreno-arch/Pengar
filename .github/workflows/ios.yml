@@ -1,12 +1,23 @@
 # Compila la app de iPhone para el simulador, sin firmar, con Xcode 26 (README → «Compilación automática»).
-# Es lo que verifica el código Swift (los plugins propios y los de Capacitor) sin una Mac a mano.
+# Es lo que verifica el código Swift (los plugins propios y los de Capacitor) sin una Mac a mano. Lo de src/ no cambia
+# la compilación de Swift (public/ se copia tal cual) y ya lo prueba ci.yml: no la dispara. Para una corrida completa,
+# Run workflow (workflow_dispatch)
 name: iOS
 
 on:
   push:
+    # Solo ramas: los path filters no se miran en los tags (cada tag la dispararía)
+    branches: ['**']
     paths:
       - 'ios/**'
-      - 'src/**'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'capacitor.config.ts'
+      - '.github/workflows/ios.yml'
+  # Los de un fork no tienen push en este repositorio (los de una rama de acá ya corren por el push: ver el if del job)
+  pull_request:
+    paths:
+      - 'ios/**'
       - 'package.json'
       - 'package-lock.json'
       - 'capacitor.config.ts'
@@ -27,6 +38,7 @@ defaults:
 jobs:
   build:
     name: Compilar para el simulador (Xcode 26)
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
     # La imagen con Xcode 26: Capacitor 8 y Foundation Models (Apple Intelligence) piden el SDK de iOS 26
     runs-on: macos-26
     timeout-minutes: 45
@@ -34,7 +46,7 @@ jobs:
       NSUnbufferedIO: 'YES'
       LOG: build/xcodebuild.log
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Xcode y SDK de iOS
         run: |
@@ -61,7 +73,7 @@ jobs:
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: 22
           cache: npm
@@ -87,6 +99,8 @@ jobs:
         run: |
           set -o pipefail
           mkdir -p build
+          # Con el destino genérico no hay arquitectura activa y se compilarían las dos (arm64 y x86_64): el runner y
+          # el simulador de hoy son arm64 (el xcframework de Capacitor trae ese slice), así que alcanza con una (ARCHS)
           # xcbeautify deja el log legible y marca cada error en el resumen del job; si no está, va el log tal cual
           command -v xcbeautify >/dev/null || HOMEBREW_NO_AUTO_UPDATE=1 brew install xcbeautify || true
           HELP=$(xcbeautify --help 2>&1 || true)
@@ -104,6 +118,7 @@ jobs:
             -derivedDataPath build/DerivedData \
             -clonedSourcePackagesDirPath build/SourcePackages \
             -resultBundlePath build/App.xcresult \
+            ARCHS=arm64 \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
@@ -114,8 +129,13 @@ jobs:
         env:
           OUTCOME: ${{ steps.build.outcome }}
         run: |
+          # Cancelada (una corrida más nueva de la misma rama, o se acabó el tiempo): ni «No compiló» ni el artifact
+          if [ "$OUTCOME" = "cancelled" ]; then
+            echo '### Cancelada (una corrida más nueva, o se acabó el tiempo)' >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
           [ -f "$LOG" ] || exit 0
-          # Rutas cortas (sin la carpeta del runner) y sin repetidos (cada arquitectura repite los errores)
+          # Rutas cortas (sin la carpeta del runner) y sin repetidos (el mismo error puede salir más de una vez)
           short() { sed "s|$GITHUB_WORKSPACE/||g" | sort -u; }
           if [ "$OUTCOME" = "success" ]; then
             echo '### Compiló para el simulador' >> "$GITHUB_STEP_SUMMARY"
@@ -142,7 +162,7 @@ jobs:
 
       - name: Subir el log
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: ios-build-log
           path: |

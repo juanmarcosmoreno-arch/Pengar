@@ -43,6 +43,7 @@ export function householdError(e: unknown): string {
     if (e.kind === 'session') return 'Este teléfono perdió su acceso al hogar: entrá de nuevo con el código.';
     if (e.kind === 'setup') return 'El servidor del hogar no está listo: falta la migración o el ingreso anónimo en Supabase (ver README).';
     if (e.kind === 'denied') return 'Ya no estás en ese hogar.';
+    if (e.kind === 'rejected') return 'El servidor del hogar no lo aceptó. Probá de nuevo; si sigue igual, puede faltar una migración en Supabase (ver README).';
   }
   return 'No se pudo. Probá de nuevo en un rato.';
 }
@@ -133,7 +134,7 @@ function BackupFirst() {
 
 /** Lo que se cuenta después de «Sumar mis datos al hogar» */
 export function sumLines(sum: NonNullable<JoinOutcome['sum']>): string[] {
-  const { added, repeated, sheetMonths } = sum;
+  const { added, repeated, sheetMonths, deleted, goalsJoined, recurringKept } = sum;
   const lines: string[] = [];
   const parts = [
     added.movements && plural(added.movements, 'movimiento', 'movimientos'),
@@ -149,10 +150,17 @@ export function sumLines(sum: NonNullable<JoinOutcome['sum']>): string[] {
       ? `Se ${added.categories + added.rubros === 1 ? 'agregó' : 'agregaron'} ${joinAnd(fresh)}; las categorías y los rubros con el mismo nombre se unieron con los del hogar.`
       : 'Las categorías y los rubros se unieron con los del hogar (por el nombre).',
   );
-  if (sheetMonths.length === 1) lines.push(`La planilla de ${monthName(sheetMonths[0])} ya estaba en el hogar: quedó la del hogar.`);
+  // Por mes y rubro: de esos meses, lo de otros rubros sí se sumó
+  if (sheetMonths.length === 1) lines.push(`La planilla de ${monthName(sheetMonths[0])} ya estaba en el hogar en los mismos rubros: quedó la del hogar.`);
   else if (sheetMonths.length > 1) {
-    lines.push(`${sheetMonths.length} meses de planilla (de ${monthName(sheetMonths[0])} a ${monthName(sheetMonths.at(-1)!)}) ya estaban en el hogar: quedaron los del hogar.`);
+    lines.push(`${sheetMonths.length} meses de planilla (de ${monthName(sheetMonths[0])} a ${monthName(sheetMonths.at(-1)!)}) ya estaban en el hogar en los mismos rubros: quedaron los del hogar.`);
   }
+  if (goalsJoined.length) {
+    const names = joinAnd(goalsJoined.map((n) => `«${n}»`));
+    lines.push(goalsJoined.length === 1 ? `La meta ${names} ya estaba en el hogar: se le sumó lo que tenías ahorrado.` : `Las metas ${names} ya estaban en el hogar: se les sumó lo que tenías ahorrado.`);
+  }
+  if (recurringKept > 0) lines.push(`${plural(recurringKept, 'gasto fijo', 'gastos fijos')} ${recurringKept === 1 ? 'ya estaba' : 'ya estaban'} en el hogar (del mismo rubro): ${recurringKept === 1 ? 'quedó el' : 'quedaron los'} del hogar.`);
+  if (deleted > 0) lines.push(`${plural(deleted, 'cosa', 'cosas')} que el hogar ya había borrado no ${deleted === 1 ? 'volvió' : 'volvieron'}.`);
   if (repeated > 0) lines.push(`${plural(repeated, 'movimiento', 'movimientos')} ${repeated === 1 ? 'ya estaba' : 'ya estaban'} en el hogar: no se ${repeated === 1 ? 'sumó' : 'sumaron'} de nuevo.`);
   return lines;
 }
@@ -189,7 +197,7 @@ function MergeChoice({ fromBackup, onChoose, onClose }: { fromBackup: string | n
             Tus movimientos, facturas, metas y gastos fijos se suben al hogar y los ven todos. Las categorías y los rubros con el mismo nombre se unen con los del hogar; los que no tiene, se agregan. Del hogar quedan su presupuesto, la moneda y lo aprendido.
           </p>
           <p className="rounded-2xl bg-sunken px-3 py-2 text-[15px]">
-            Ojo si los dos usan la misma planilla: los meses de planilla que el hogar ya tiene no se suman (quedan los del hogar), ni los movimientos iguales (misma fecha, rubro y monto). Lo que anotaron los dos con otra fecha o monto queda dos veces: revisalo después en Movimientos.
+            Ojo si los dos usan la misma planilla: los totales de planilla de un mes y rubro que el hogar ya tiene no se suman (quedan los del hogar), ni los movimientos iguales (misma fecha, rubro, monto, nota y comercio), ni lo que el hogar ya borró. Lo que anotaron los dos con otra fecha, monto o nota queda dos veces: revisalo después en Movimientos.
           </p>
           <button className="btn-outline w-full" onClick={() => choose(true)}>Sumar mis datos al hogar</button>
         </div>
@@ -218,6 +226,9 @@ export function JoinSheet({ onClose }: { onClose: () => void }) {
   const own = data.settings.onboarded && !data.settings.example;
   // La llave de un respaldo restaurado (o de cuando estaba en el hogar): con el código de ese hogar, vuelve como el mismo
   const key = own ? data.settings.recovery ?? null : null;
+  // Quedó afuera de ese hogar: puede ser que haya entrado otro teléfono con esta misma llave (el nuevo de la persona)
+  const sync = useSync();
+  const displaced = !!key && sync.phase === 'removed' && sync.household?.id === key.householdId;
   const clean = cleanCode(code);
   const valid = !!name.trim() && clean.length === CODE_LENGTH;
 
@@ -278,6 +289,7 @@ export function JoinSheet({ onClose }: { onClose: () => void }) {
               <KeyRound size={20} className="mt-0.5 shrink-0 text-primary" />
               <span>
                 Este teléfono tiene tu llave de «{key.householdName || 'tu hogar'}»: con el código de ese hogar volvés a entrar como vos, con tu nombre y lo que anotaste.
+                {displaced && ' Ojo: si ya entraste con ella desde otro teléfono (el nuevo), al entrar acá ese otro queda afuera. Para sumar este teléfono como otra persona, primero tocá «Seguir sin hogar».'}
               </span>
             </p>
           )}

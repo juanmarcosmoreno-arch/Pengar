@@ -291,13 +291,20 @@ export function createSupabaseRemote(): RemoteStore {
       ) as { user_id: string; member_id: string | null; display_name: string | null; joined_at: string }[];
       return rows.map((r) => ({ userId: r.user_id, memberId: r.member_id ?? r.user_id, displayName: r.display_name, joinedAt: r.joined_at }));
     },
+    // Quien ya no es miembro no ve la fila (RLS): el UPDATE no cambia nada y no da error. Se pide qué cambió (solo columnas
+    // que se pueden leer: `select *` daría 42501 por recovery_hash) y, si nada, es que no tiene permiso
     async setDisplayName(hh, name) {
       const c = await client();
-      check(await c.from('pengar_members').update({ display_name: name?.trim().slice(0, 60) || null }).eq('household_id', hh).eq('user_id', await me(c)), 'Cambiar el nombre');
+      const rows = check(
+        await c.from('pengar_members').update({ display_name: name?.trim().slice(0, 60) || null }).eq('household_id', hh).eq('user_id', await me(c)).select('user_id'),
+        'Cambiar el nombre',
+      ) as unknown[] | null;
+      if (!rows?.length) throw new RemoteError('denied', 'Cambiar el nombre: sin permiso');
     },
     async renameHousehold(hh, name) {
       const c = await client();
-      check(await c.from('pengar_households').update({ name: name.trim().slice(0, 80) || 'Casa' }).eq('id', hh), 'Cambiar el nombre del hogar');
+      const rows = check(await c.from('pengar_households').update({ name: name.trim().slice(0, 80) || 'Casa' }).eq('id', hh).select('id'), 'Cambiar el nombre del hogar') as unknown[] | null;
+      if (!rows?.length) throw new RemoteError('denied', 'Cambiar el nombre del hogar: sin permiso');
     },
     async pull(hh, since) {
       const c = await client();
@@ -428,6 +435,8 @@ export class FakeRemote {
   readonly members = new Map<string, Member[]>();
   /** El hash de la llave de cada integrante («hogar|integrante»): como recovery_hash, nadie lo lee */
   readonly tokens = new Map<string, string>();
+  /** Los que se sacaron con «Sacar», con el hash de su llave (como pengar_departed): vuelven como el mismo integrante */
+  readonly departed = new Map<string, { memberId: string; hash: string; displayName: string | null }[]>();
   readonly records = new Map<string, Map<string, FakeRow>>();
   readonly files = new Map<string, Blob>();
   /** Para simular un registro que el servidor no acepta (como un check de la tabla) */
@@ -499,6 +508,7 @@ export class FakeRemote {
     this.records.delete(hh);
     for (const k of [...this.files.keys()]) if (k.startsWith(`${hh}/`)) this.files.delete(k);
     for (const k of [...this.tokens.keys()]) if (k.startsWith(`${hh}|`)) this.tokens.delete(k);
+    this.departed.delete(hh);
   }
 
   /** Como pengar_recovery_hash: una llave que no tiene el largo de las de la app no sirve */
@@ -571,14 +581,31 @@ export class FakeClient implements RemoteStore {
       this.server.notify(hh.id, 'members');
       return { household: { ...hh }, memberId: owner.memberId, reclaimed: true, displayName: owner.displayName };
     }
-    const list = this.server.members.get(hh.id)!;
-    let mine = list.find((m) => m.userId === this.userId);
+    const list = () => this.server.members.get(hh.id)!;
+    const gone = this.server.departed.get(hh.id) ?? [];
+    const forget = (memberId: string) => this.server.departed.set(hh.id, gone.filter((d) => d.memberId !== memberId));
+    // Lo habían sacado y vuelve con su llave: el mismo integrante, si su id está libre
+    const back = hash ? gone.find((d) => d.hash === hash && !list().some((m) => m.memberId === d.memberId)) : undefined;
+    if (back) {
+      this.server.dropMembers(hh.id, (m) => m.userId === this.userId);
+      const restored: Member = { userId: this.userId, memberId: back.memberId, displayName: name ?? back.displayName, joinedAt: this.server.stamp() };
+      list().push(restored);
+      this.server.tokens.set(key(restored), back.hash);
+      forget(back.memberId);
+      this.server.notify(hh.id, 'members');
+      return { household: { ...hh }, memberId: restored.memberId, reclaimed: true, displayName: restored.displayName };
+    }
+    let mine = list().find((m) => m.userId === this.userId);
     if (mine) mine.displayName = name || mine.displayName;
     else {
-      mine = { userId: this.userId, memberId: this.userId, displayName: name, joinedAt: this.server.stamp() };
-      list.push(mine);
+      // Como en la base: el id de integrante es único en el hogar. Si el de este usuario ya es de otro (alguien que volvió
+      // a entrar desde otro teléfono con la llave de este), uno nuevo
+      const taken = list().some((m) => m.memberId === this.userId);
+      mine = { userId: this.userId, memberId: taken ? crypto.randomUUID() : this.userId, displayName: name, joinedAt: this.server.stamp() };
+      list().push(mine);
     }
     if (hash) this.server.tokens.set(key(mine), hash);
+    forget(mine.memberId);
     this.server.notify(hh.id, 'members');
     return { household: { ...hh }, memberId: mine.memberId, reclaimed: false, displayName: mine.displayName };
   }
@@ -612,6 +639,13 @@ export class FakeClient implements RemoteStore {
   async removeMember(hh: string, userId: string): Promise<void> {
     await this.enter('removeMember');
     this.member(hh, 'Sacar al integrante');
+    // Como pengar_remove_member: queda su id con el hash de su llave, para que vuelva como el mismo
+    const out = userId === this.userId ? undefined : this.server.members.get(hh)?.find((m) => m.userId === userId);
+    const hash = out && this.server.tokens.get(`${hh}|${out.memberId}`);
+    if (out && hash) {
+      const gone = (this.server.departed.get(hh) ?? []).filter((d) => d.memberId !== out.memberId);
+      this.server.departed.set(hh, [...gone, { memberId: out.memberId, hash, displayName: out.displayName }]);
+    }
     this.server.dropMembers(hh, (m) => m.userId === userId && userId !== this.userId);
     this.server.notify(hh, 'members');
   }
@@ -633,8 +667,10 @@ export class FakeClient implements RemoteStore {
 
   async setDisplayName(hh: string, name: string | null): Promise<void> {
     await this.enter('setDisplayName');
+    // Como en Supabase (con el .select() que lo detecta): quien ya no es miembro no cambia nada
     const m = this.server.members.get(hh)?.find((x) => x.userId === this.userId);
-    if (m) m.displayName = name?.trim() || null;
+    if (!m) throw new RemoteError('denied', 'Cambiar el nombre: sin permiso');
+    m.displayName = name?.trim() || null;
     this.server.notify(hh, 'members');
   }
 

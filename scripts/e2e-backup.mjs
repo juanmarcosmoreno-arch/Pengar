@@ -106,7 +106,7 @@ const toast = (page, text) => page.getByRole('status').getByText(text).waitFor({
   const toggle = page.getByRole('switch', { name: 'Hacer un respaldo por día' });
   check(await toggle.getAttribute('aria-checked') === 'true', 'prendido de fábrica');
   const text = await box.textContent();
-  check(text.includes('Último: hoy 9:12 · en Archivos › En mi iPhone › Pengar › Respaldos (para guardarlos en iCloud Drive, ver Ayuda: si borrás la app, los de «En mi iPhone» se borran con ella)'), `dice cuándo y dónde: ${text.slice(0, 160)}`);
+  check(text.includes('Último: hoy 9:12 · en Archivos › En mi iPhone › Pengar › Respaldos (para guardarlos en iCloud Drive, ver Más → Cómo se usa → Respaldo automático: si borrás la app, los de «En mi iPhone» se borran con ella)'), `dice cuándo y dónde: ${text.slice(0, 160)}`);
   await page.getByRole('heading', { name: 'Respaldo automático' }).evaluate((el) => el.scrollIntoView({ block: 'start' }));
   await shot(page, 'backup-ajustes');
 

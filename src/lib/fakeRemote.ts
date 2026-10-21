@@ -22,6 +22,7 @@ interface Saved {
   members: [string, Member[]][];
   records: [string, Row[]][];
   tokens?: [string, string][];
+  departed?: [string, NonNullable<ReturnType<FakeRemote['departed']['get']>>][];
 }
 interface Notice {
   hh: string;
@@ -82,10 +83,12 @@ export function createFakeRemote(phone: string): RemoteStore {
     server.members.clear();
     server.records.clear();
     server.tokens.clear();
+    server.departed.clear();
     for (const h of saved?.households ?? []) server.households.set(h.id, h);
     // Los de antes de las llaves: su id de integrante es su usuario
     for (const [hh, list] of saved?.members ?? []) server.members.set(hh, list.map((m) => ({ ...m, memberId: m.memberId ?? m.userId })));
     for (const [k, v] of saved?.tokens ?? []) server.tokens.set(k, v);
+    for (const [hh, list] of saved?.departed ?? []) server.departed.set(hh, list);
     for (const [hh, rows] of saved?.records ?? []) server.records.set(hh, new Map(rows.map((r) => [recordKey(r.kind, r.id), r])));
     // La hora sigue a la de las otras pestañas (nunca para atrás: el motor pide «desde» la última que recibió)
     server.time = Math.max(server.time, saved?.clock ?? 0, Date.now());
@@ -97,6 +100,7 @@ export function createFakeRemote(phone: string): RemoteStore {
       members: [...server.members],
       records: [...server.records].map(([hh, rows]) => [hh, [...rows.values()]]),
       tokens: [...server.tokens],
+      departed: [...server.departed],
     };
     localStorage.setItem(KEY, JSON.stringify(saved));
     for (const n of notices.splice(0)) localStorage.setItem(NOTICE, JSON.stringify({ ...n, nonce: Math.random() }));

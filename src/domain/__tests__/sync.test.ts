@@ -22,12 +22,13 @@ import {
   sharedSettings,
   sumIntoHousehold,
   syncable,
+  tombstones,
   toRecords,
   type RemoteRecord,
   type SharedSettings,
   type SyncRecord,
 } from '../sync';
-import { defaultSettings, normalizeData } from '../template';
+import { defaultSettings, normalizeData, templateData } from '../template';
 import type { Data, Movement } from '../types';
 
 const mov = (id: string, amount: number, extra: Partial<Movement> = {}): Movement => ({
@@ -469,5 +470,106 @@ describe('sumar mis datos al hogar', () => {
     const res = sumIntoHousehold(hh, hh);
     expect(res.data).toEqual(hh);
     expect(res.added).toEqual({ movements: 0, categories: 0, rubros: 0, invoices: 0, goals: 0, recurring: 0 });
+  });
+});
+
+describe('sumar mis datos al hogar: lo borrado, la planilla, los rubros sin uso, las metas y los fijos', () => {
+  const lapida = (kind: RemoteRecord['kind'], id: string): RemoteRecord => ({ kind, id, data: null, updatedAt: '2026-10-21T12:00:00.000Z', updatedBy: 'ana', deleted: true });
+
+  it('lo que el hogar borró no vuelve (aunque esté en la copia de acá) y no se le cambia el «Anotado por»', () => {
+    const hh = normalizeData({ ...sample(), movements: [mov('m2', 50, { note: 'Pan', createdBy: 'ana' })], goals: [], recurring: [] });
+    const mine = normalizeData({
+      ...sample(),
+      rubros: [...sample().rubros, { id: 'r2', name: 'Carnicería', categoryId: 'c1', keywords: [] }],
+      movements: [mov('m1', 100, { createdBy: 'ana' }), mov('m2', 50, { note: 'Pan', createdBy: 'ana' }), mov('m3', 300, { rubroId: 'r2', createdBy: 'ana' }), mov('m4', 70, { createdBy: 'ana' })],
+    });
+    // Ana borró m1, m3 y el rubro r2 (con su movimiento), la meta y el fijo; m4 es de Ana y sigue en la copia
+    const gone = tombstones([lapida('movement', 'm1'), lapida('movement', 'm3'), lapida('rubro', 'r2'), lapida('goal', 'g1'), lapida('recurring', 'q1'),
+      { ...lapida('movement', 'm4'), deleted: false, data: mov('m4', 70), updatedAt: '2026-10-21T12:00:01.000Z' }, { ...lapida('movement', 'm4'), updatedAt: '2026-10-21T11:00:00.000Z' }]);
+    expect([...gone].sort()).toEqual(['goal:g1', 'movement:m1', 'movement:m3', 'recurring:q1', 'rubro:r2']);
+    const res = sumIntoHousehold(hh, mine, gone);
+    expect(res.data.movements.map((m) => m.id)).toEqual(['m2', 'm4']);
+    expect(res.data.rubros.map((r) => r.id)).toEqual(['r1']);
+    expect(res.data.goals).toEqual([]);
+    expect(res.data.recurring).toEqual([]);
+    expect(res.deleted).toBe(5);
+    // m4 ya lo había anotado Ana (alguien del hogar): sigue siendo de Ana, no de quien se une
+    expect(res.data.movements.find((m) => m.id === 'm4')?.createdBy).toBe('ana');
+  });
+
+  it('un rubro que el hogar borró vuelve si lo usa algo nuevo de acá (como al sincronizar)', () => {
+    const hh = normalizeData({ ...sample(), movements: [], goals: [], recurring: [] });
+    const mine = normalizeData({ ...sample(), rubros: [...sample().rubros, { id: 'r2', name: 'Carnicería', categoryId: 'c1', keywords: [] }], movements: [mov('nuevo', 300, { rubroId: 'r2' })] });
+    const res = sumIntoHousehold(hh, mine, new Set(['rubro:r2']));
+    expect(res.data.rubros.map((r) => r.id)).toEqual(['r1', 'r2']);
+    expect(res.deleted).toBe(0);
+  });
+
+  it('la planilla se saltea por mes, rubro y tipo: otra planilla (otros rubros) del mismo mes se suma', () => {
+    const hh = normalizeData({ ...sample(), movements: [mov('pa-ago', 800, { date: '2026-08-01', origin: 'planilla', monthly: true })] });
+    const mine = normalizeData({
+      ...sample(),
+      rubros: [...sample().rubros, { id: 'rx', name: 'Alquiler', categoryId: 'c1', keywords: [] }],
+      movements: [
+        mov('pb-ago', 20000, { date: '2026-08-01', origin: 'planilla', monthly: true, rubroId: 'rx' }),
+        mov('pb-ago-ing', 50000, { date: '2026-08-01', origin: 'planilla', monthly: true, rubroId: 'rx', kind: 'ingreso' }),
+        mov('pb-ago-feria', 810, { date: '2026-08-01', origin: 'planilla', monthly: true }),
+      ],
+    });
+    const res = sumIntoHousehold(hh, mine);
+    expect(res.data.movements.map((m) => m.id)).toEqual(['pa-ago', 'pb-ago', 'pb-ago-ing']);
+    expect(res.sheetMonths).toEqual(['2026-08']);
+    expect(res.added.movements).toBe(2);
+  });
+
+  it('no trae los rubros ni las categorías que no usa nada de lo que se suma (lo que el hogar limpió de la plantilla)', () => {
+    const tpl = templateData();
+    const edu = tpl.categories.find((c) => c.name === 'Educación')!;
+    const hh = normalizeData({
+      categories: tpl.categories.filter((c) => c.id !== edu.id),
+      rubros: tpl.rubros.filter((r) => r.categoryId !== edu.id).map((r) => (r.name === 'Feria' ? { ...r, name: 'Feria y verdulería' } : r)),
+      settings: { ...defaultSettings(), onboarded: true },
+    });
+    // Otro teléfono que empezó con la plantilla (otros ids) y no anotó nada
+    const fresh = templateData();
+    const mine = normalizeData({ ...fresh, settings: { ...defaultSettings(), onboarded: true } });
+    const res = sumIntoHousehold(hh, mine);
+    expect(res.added).toMatchObject({ categories: 0, rubros: 0 });
+    expect(res.data.categories.map((c) => c.name)).not.toContain('Educación');
+    expect(res.data.rubros.map((r) => r.name)).not.toContain('Feria');
+    // Con un gasto en «Librería», vuelven ese rubro y su categoría (y nada más de ella)
+    const libreria = fresh.rubros.find((r) => r.name === 'Librería')!;
+    const withOne = sumIntoHousehold(hh, { ...mine, movements: [mov('lib', 350, { rubroId: libreria.id })] });
+    expect(withOne.added).toMatchObject({ categories: 1, rubros: 1 });
+    expect(withOne.data.rubros.filter((r) => r.categoryId === libreria.categoryId).map((r) => r.name)).toEqual(['Librería']);
+  });
+
+  it('una categoría nueva con presupuesto trae sus rubros (no queda vacía)', () => {
+    const hh = normalizeData({ ...sample(), movements: [], goals: [], recurring: [] });
+    const mine = normalizeData({
+      ...sample(),
+      categories: [...sample().categories, { id: 'k2', name: 'Mascotas', kind: 'gasto', icon: 'm:mascotas', color: '#000000', budget: { type: 'fixed', amount: 300 }, order: 1 }],
+      rubros: [...sample().rubros, { id: 's2', name: 'Veterinaria', categoryId: 'k2', keywords: [] }],
+      movements: [],
+    });
+    const res = sumIntoHousehold(hh, mine);
+    expect(res.data.rubros.map((r) => r.name)).toEqual(['Feria', 'Veterinaria']);
+    expect(res.added).toMatchObject({ categories: 1, rubros: 1 });
+  });
+
+  it('una meta con el nombre de una del hogar se junta (lo ahorrado se suma) y un fijo del mismo rubro queda anotado hasta el más nuevo', () => {
+    const hh = normalizeData({ ...sample(), movements: [] });
+    const mine = normalizeData({
+      ...sample(),
+      goals: [{ id: 'gb', name: 'viaje', icon: 'plane', target: 5000, saved: 4000 }],
+      recurring: [{ id: 'qb', rubroId: 'r1', kind: 'gasto', amount: 450, day: 3, createdAt: 1, doneThrough: '2026-10' }],
+      movements: [],
+    });
+    const res = sumIntoHousehold(hh, mine);
+    expect(res.data.goals.map((g) => [g.name, g.target, g.saved])).toEqual([['Viaje', 1000, 4100]]);
+    expect(res.goalsJoined).toEqual(['Viaje']);
+    expect(res.data.recurring.map((r) => [r.id, r.doneThrough])).toEqual([['q1', '2026-10']]);
+    expect(res.recurringKept).toBe(1);
+    expect(res.added).toMatchObject({ goals: 0, recurring: 0 });
   });
 });

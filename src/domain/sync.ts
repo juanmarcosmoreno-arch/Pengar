@@ -482,23 +482,46 @@ export interface SumResult {
   added: { movements: number; categories: number; rubros: number; invoices: number; goals: number; recurring: number };
   /** Movimientos que el hogar ya tenía (el mismo, o uno igual: fecha, tipo, rubro, monto, nota y comercio) */
   repeated: number;
-  /** Meses de planilla que el hogar ya tenía (YYYY-MM, en orden): los de acá de esos meses no se suman */
+  /**
+   * Meses con totales de planilla que el hogar ya tenía (YYYY-MM, en orden): de esos meses no se suman los de acá del
+   * mismo rubro y tipo (como al sumar una planilla); los de otros rubros, sí
+   */
   sheetMonths: string[];
+  /** Lo de acá que el hogar ya había borrado (movimientos, facturas, metas, gastos fijos, rubros y categorías): no vuelve */
+  deleted: number;
+  /** Metas de acá con el nombre de una del hogar (los nombres del hogar): a esa se le sumó lo ahorrado acá */
+  goalsJoined: string[];
+  /** Gastos fijos de acá de un rubro que el hogar ya tiene como fijo: queda el del hogar (anotado hasta el más nuevo) */
+  recurringKept: number;
 }
 
 const looseKey = (m: Movement) => [m.date, m.kind, m.rubroId, round2(m.amount), m.note ?? '', m.merchant ?? ''].join('|');
+/** Un total de planilla: su mes, rubro y tipo (como lo reemplaza importSheet) */
+const sheetKey = (m: Movement) => `${m.rubroId}|${m.kind}|${monthOf(m.date)}`;
+
+/** Lo que el hogar borró: los registros cuya última versión es una lápida (en lo bajado del servidor) */
+export function tombstones(remote: RemoteRecord[]): Set<string> {
+  return new Set([...latestByKey(remote)].filter(([, r]) => r.deleted).map(([key]) => key));
+}
 
 /**
- * Lo de acá sumado a lo del hogar (`hh`: los datos del hogar como quedan en este teléfono, replaceWithRemote). Las
- * categorías y los rubros con el mismo nombre se unen (como al sumar una planilla: importSheet) y lo de acá pasa a usar
- * los del hogar; lo que el hogar no tiene, se agrega. No duplica: lo que tiene el mismo id que algo del hogar (un
- * respaldo de ese hogar) queda como en el hogar, los movimientos iguales se saltean (contando cuántas veces está cada
- * uno, así dos compras iguales no se pierden) y los meses de planilla que el hogar ya tiene no se suman (si los dos
- * importaron la misma planilla, queda una vez). Un gasto fijo de un rubro que el hogar ya tiene como fijo y una meta
- * con el mismo nombre, tampoco. Del hogar quedan el presupuesto, la moneda y lo aprendido (lo de acá que el hogar no
- * tiene, se suma). Los movimientos sumados quedan sin «Anotado por»: el motor les pone quién se une
+ * Lo de acá sumado a lo del hogar (`hh`: los datos del hogar como quedan en este teléfono, replaceWithRemote; `gone`: lo
+ * que el hogar borró, tombstones). Las categorías y los rubros con el mismo nombre se unen (como al sumar una planilla:
+ * importSheet) y lo de acá pasa a usar los del hogar; lo que el hogar no tiene, se agrega: un rubro, solo si lo usa algo
+ * que se suma (o lo aprendido, o es de una categoría nueva con presupuesto), y una categoría, si la usa un rubro nuevo o
+ * tiene presupuesto. No duplica: lo que tiene el mismo id que algo del hogar (un respaldo de ese hogar) queda como en
+ * el hogar, lo que el hogar borró no vuelve (salvo un rubro o una categoría que use algo nuevo de acá, como al
+ * sincronizar), los movimientos iguales se saltean (contando cuántas veces está cada uno, así dos compras iguales no se
+ * pierden) y los totales de planilla de un mes, rubro y tipo que el hogar ya tiene no se suman (si los dos importaron la
+ * misma planilla, queda una vez). Un gasto fijo de un rubro que el hogar ya tiene como fijo no se suma (el del hogar
+ * queda anotado hasta el mes más nuevo de los dos) y una meta con el mismo nombre se junta con la del hogar (se suma lo
+ * ahorrado): se cuentan, para decirlo. Del hogar quedan el presupuesto, la moneda y lo aprendido (lo de acá que el
+ * hogar no tiene, se suma). Los movimientos sumados quedan sin «Anotado por» (el motor les pone quién se une), salvo
+ * que ya digan alguien que anotó en el hogar
  */
-export function sumIntoHousehold(hh: Data, mine: Data): SumResult {
+export function sumIntoHousehold(hh: Data, mine: Data, gone: ReadonlySet<string> = new Set()): SumResult {
+  const dead = (kind: RecordKind, id: string) => gone.has(recordKey(kind, id));
+  let deleted = 0;
   const hhCats = new Map(hh.categories.map((c) => [c.id, c]));
   const catMap = new Map<string, string>();
   for (const c of mine.categories) {
@@ -507,9 +530,10 @@ export function sumIntoHousehold(hh: Data, mine: Data): SumResult {
   }
   const kindOf = new Map([...hh.categories, ...mine.categories].map((c) => [catMap.get(c.id) ?? c.id, c.kind]));
 
+  // Los rubros de acá que el hogar no tiene: se agregan después, solo los que se usan
   const hhRubros = new Map(hh.rubros.map((r) => [r.id, r]));
   const rubroMap = new Map<string, string>();
-  const newRubros: Rubro[] = [];
+  const candidates = new Map<string, Rubro>();
   for (const r of mine.rubros) {
     if (hhRubros.has(r.id)) {
       rubroMap.set(r.id, r.id);
@@ -522,21 +546,16 @@ export function sumIntoHousehold(hh: Data, mine: Data): SumResult {
       hh.rubros.find((x) => x.categoryId === categoryId && norm(x.name) === name) ??
       ((xs) => (xs.length === 1 ? xs[0] : undefined))(hh.rubros.filter((x) => norm(x.name) === name && kindOf.get(x.categoryId) === kindOf.get(categoryId)));
     if (same) rubroMap.set(r.id, same.id);
-    else newRubros.push({ ...r, categoryId });
+    else candidates.set(r.id, { ...r, categoryId });
   }
   const rubro = (id: string) => rubroMap.get(id) ?? id;
 
-  // Las categorías de acá que no están en el hogar: si las usa un rubro nuevo o tienen presupuesto
-  const used = new Set(newRubros.map((r) => r.categoryId));
-  const newCats = mine.categories
-    .filter((c) => !catMap.has(c.id) && (used.has(c.id) || c.budget.type !== 'none'))
-    .map((c, i) => ({ ...c, order: hh.categories.length + i }));
-
   const ids = new Set(hh.movements.map((m) => m.id));
+  const authors = new Set(hh.movements.flatMap((m) => (m.createdBy ? [m.createdBy] : [])));
   const loose = new Map<string, number>();
   const sheet = new Set<string>();
   for (const m of hh.movements) {
-    if (m.monthly) sheet.add(monthOf(m.date));
+    if (m.monthly) sheet.add(sheetKey(m));
     else loose.set(looseKey(m), (loose.get(looseKey(m)) ?? 0) + 1);
   }
   const movements: Movement[] = [];
@@ -547,9 +566,19 @@ export function sumIntoHousehold(hh: Data, mine: Data): SumResult {
       repeated++;
       continue;
     }
-    const m: Movement = { ...local, rubroId: rubro(local.rubroId), createdBy: undefined };
+    if (dead('movement', local.id)) {
+      deleted++;
+      continue;
+    }
+    const m: Movement = {
+      ...local,
+      rubroId: rubro(local.rubroId),
+      createdBy: local.createdBy && authors.has(local.createdBy) ? local.createdBy : undefined,
+      // La factura la borró el hogar: el movimiento queda, sin ella (como al borrarla acá)
+      ...(local.invoiceId && dead('invoice', local.invoiceId) ? { invoiceId: undefined } : {}),
+    };
     if (m.monthly) {
-      if (sheet.has(monthOf(m.date))) {
+      if (sheet.has(sheetKey(m))) {
         skippedMonths.add(monthOf(m.date));
         continue;
       }
@@ -569,18 +598,80 @@ export function sumIntoHousehold(hh: Data, mine: Data): SumResult {
   const hhInvoices = new Set(hh.invoices.map((i) => i.id));
   const withMovements = new Set(mine.movements.flatMap((m) => (m.invoiceId ? [m.invoiceId] : [])));
   const addedInvoices = new Set(movements.flatMap((m) => (m.invoiceId ? [m.invoiceId] : [])));
-  const invoices: Invoice[] = mine.invoices
-    .filter((i) => !hhInvoices.has(i.id) && (addedInvoices.has(i.id) || !withMovements.has(i.id)))
-    .map((i) => ({ ...i, items: i.items.map((it) => (it.rubroId ? { ...it, rubroId: rubro(it.rubroId) } : it)) }));
+  const invoices: Invoice[] = [];
+  for (const i of mine.invoices) {
+    if (hhInvoices.has(i.id)) continue;
+    if (dead('invoice', i.id)) {
+      deleted++;
+      continue;
+    }
+    if (addedInvoices.has(i.id) || !withMovements.has(i.id)) {
+      invoices.push({ ...i, items: i.items.map((it) => (it.rubroId ? { ...it, rubroId: rubro(it.rubroId) } : it)) });
+    }
+  }
 
-  const goalNames = new Set(hh.goals.map((g) => norm(g.name)));
-  const goals = mine.goals.filter((g) => !hh.goals.some((x) => x.id === g.id) && !goalNames.has(norm(g.name)));
+  // Una meta con el nombre de una del hogar es la misma: se le suma lo ahorrado acá
+  const goalByName = new Map(hh.goals.map((g) => [norm(g.name), g]));
+  const extraSaved = new Map<string, number>();
+  const goals: Goal[] = [];
+  for (const g of mine.goals) {
+    if (hh.goals.some((x) => x.id === g.id)) continue;
+    if (dead('goal', g.id)) {
+      deleted++;
+      continue;
+    }
+    const same = goalByName.get(norm(g.name));
+    if (same) extraSaved.set(same.id, (extraSaved.get(same.id) ?? 0) + (g.saved || 0));
+    else goals.push(g);
+  }
+  const hhGoals = hh.goals.map((g) => (extraSaved.has(g.id) ? { ...g, saved: round2(g.saved + extraSaved.get(g.id)!) } : g));
 
-  const fixed = new Set(hh.recurring.map((r) => `${r.rubroId}|${r.kind}`));
-  const recurring = mine.recurring
-    .filter((r) => !hh.recurring.some((x) => x.id === r.id))
-    .map((r) => ({ ...r, rubroId: rubro(r.rubroId) }))
-    .filter((r) => !fixed.has(`${r.rubroId}|${r.kind}`));
+  // Un fijo de un rubro que el hogar ya tiene como fijo: queda el del hogar, anotado hasta el mes más nuevo
+  const fixed = new Map(hh.recurring.map((r) => [`${r.rubroId}|${r.kind}`, r]));
+  const doneThrough = new Map<string, string>();
+  let recurringKept = 0;
+  const recurring: Recurring[] = [];
+  for (const r0 of mine.recurring) {
+    if (hh.recurring.some((x) => x.id === r0.id)) continue;
+    if (dead('recurring', r0.id)) {
+      deleted++;
+      continue;
+    }
+    const r = { ...r0, rubroId: rubro(r0.rubroId) };
+    const same = fixed.get(`${r.rubroId}|${r.kind}`);
+    if (!same) {
+      recurring.push(r);
+      continue;
+    }
+    recurringKept++;
+    const newest = [same.doneThrough, doneThrough.get(same.id), r.doneThrough].filter((x): x is string => !!x).sort().at(-1);
+    if (newest && newest !== same.doneThrough) doneThrough.set(same.id, newest);
+  }
+  const hhRecurring = hh.recurring.map((r) => (doneThrough.has(r.id) ? { ...r, doneThrough: doneThrough.get(r.id) } : r));
+
+  // Los rubros de acá que el hogar no tiene: los que usa lo que se suma (o lo aprendido), y los de una categoría nueva
+  // con presupuesto (así no queda vacía). Lo que el hogar borró, solo si lo usa algo nuevo de acá
+  const usedBy = new Set<string>([
+    ...movements.map((m) => m.rubroId),
+    ...recurring.map((r) => r.rubroId),
+    ...invoices.flatMap((i) => i.items.flatMap((it) => (it.rubroId ? [it.rubroId] : []))),
+  ]);
+  const budgeted = new Set(mine.categories.filter((c) => !catMap.has(c.id) && c.budget.type !== 'none' && !dead('category', c.id)).map((c) => c.id));
+  const learnedRubros = new Set(Object.values(mine.settings.learned));
+  const newRubros: Rubro[] = [];
+  for (const r of candidates.values()) {
+    if (usedBy.has(r.id) || (!dead('rubro', r.id) && (learnedRubros.has(r.id) || budgeted.has(r.categoryId)))) newRubros.push(r);
+    else if (dead('rubro', r.id)) deleted++;
+  }
+
+  // Las categorías de acá que no están en el hogar: si las usa un rubro nuevo o tienen presupuesto (si el hogar no la borró)
+  const used = new Set(newRubros.map((r) => r.categoryId));
+  const newCats: Category[] = [];
+  for (const c of mine.categories) {
+    if (catMap.has(c.id)) continue;
+    if (used.has(c.id) || budgeted.has(c.id)) newCats.push({ ...c, order: hh.categories.length + newCats.length });
+    else if (dead('category', c.id)) deleted++;
+  }
 
   const rubros = [...hh.rubros, ...newRubros];
   const live = new Set(rubros.map((r) => r.id));
@@ -593,8 +684,8 @@ export function sumIntoHousehold(hh: Data, mine: Data): SumResult {
     rubros,
     movements: [...hh.movements, ...movements],
     invoices: [...hh.invoices, ...invoices],
-    goals: [...hh.goals, ...goals],
-    recurring: [...hh.recurring, ...recurring],
+    goals: [...hhGoals, ...goals],
+    recurring: [...hhRecurring, ...recurring],
     settings: {
       ...hh.settings,
       learned: { ...learned, ...hh.settings.learned },
@@ -606,5 +697,8 @@ export function sumIntoHousehold(hh: Data, mine: Data): SumResult {
     added: { movements: movements.length, categories: newCats.length, rubros: newRubros.length, invoices: invoices.length, goals: goals.length, recurring: recurring.length },
     repeated,
     sheetMonths: [...skippedMonths].sort(),
+    deleted,
+    goalsJoined: [...new Set(hh.goals.filter((g) => extraSaved.has(g.id)).map((g) => g.name))],
+    recurringKept,
   };
 }

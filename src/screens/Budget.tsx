@@ -70,7 +70,7 @@ function BudgetRow({ c, income }: { c: Category; income: number }) {
       <label className="flex items-center gap-1">
         {type === 'fixed' && <span className="text-muted">{symbol}</span>}
         <input
-          className="field min-h-[40px] w-24 px-3 text-right tabular"
+          className="field min-h-tap w-24 px-3 text-right tabular"
           inputMode="decimal"
           placeholder="—"
           value={text}

@@ -67,10 +67,32 @@ describe('FakeRemote sigue las reglas de la migración', () => {
     const otro = server.connect();
     expect(await otro.joinHousehold(hh.inviteCode, 'Otro', 'x'.repeat(43))).toMatchObject({ memberId: otro.userId, reclaimed: false });
     await expect(otro.joinHousehold(hh.inviteCode, 'Otro', 'corta')).rejects.toMatchObject({ kind: 'rejected' });
-    // Si sacan al integrante, su llave ya no sirve
+    // El teléfono de antes de Dani se suma de nuevo con otra llave (para otra persona): otro integrante, con otro id (el
+    // de su usuario ya es el de Dani). Como en la base, el id de integrante no se repite en el hogar
+    const tablet = await dani.joinHousehold(hh.inviteCode, 'Tablet', 'y'.repeat(43));
+    expect(tablet).toMatchObject({ reclaimed: false, displayName: 'Tablet' });
+    expect(tablet.memberId).not.toBe(dani.userId);
+    const ids = (await ana.members(hh.id)).map((m) => m.memberId);
+    expect(new Set(ids).size).toBe(ids.length);
+    await dani.leave(hh.id);
+    // Si sacan a Dani (por error), con su llave vuelve como el mismo integrante (lo que anotó sigue siendo suyo)
     await ana.removeMember(hh.id, daniNuevo.userId);
     const daniOtroMas = server.connect();
-    expect(await daniOtroMas.joinHousehold(hh.inviteCode, 'Dani', llave)).toMatchObject({ memberId: daniOtroMas.userId, reclaimed: false });
+    expect(await daniOtroMas.joinHousehold(hh.inviteCode, null, llave)).toMatchObject({ memberId: dani.userId, reclaimed: true, displayName: 'Dani' });
+    // Al salir por su cuenta, no: la app ya borró la llave y, si la manda, es otro integrante
+    await daniOtroMas.leave(hh.id);
+    const otraVez = server.connect();
+    expect(await otraVez.joinHousehold(hh.inviteCode, 'Dani', llave)).toMatchObject({ memberId: otraVez.userId, reclaimed: false });
+  });
+
+  it('cambiar el nombre (del hogar o el tuyo) sin ser miembro da «sin permiso», no un «Listo» que no cambió nada', async () => {
+    const server = new FakeRemote();
+    const ana = server.connect();
+    const bruno = server.connect();
+    const hh = await ana.createHousehold('Casa', 'Ana', 'llave-de-ana-0123456789abcdefghijklmnop');
+    await expect(bruno.renameHousehold(hh.id, 'Hackeado')).rejects.toMatchObject({ kind: 'denied' });
+    await expect(bruno.setDisplayName(hh.id, 'Bruno')).rejects.toMatchObject({ kind: 'denied' });
+    expect(server.households.get(hh.id)?.name).toBe('Casa');
   });
 
   it('sin conexión todo falla como sin conexión', async () => {

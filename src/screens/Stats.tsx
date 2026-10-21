@@ -150,7 +150,7 @@ function Trends() {
           {folded.map((g) => (
             <li key={g.key}>
               {/* En un teléfono angosto (menos de 360 px) el porcentaje va debajo del nombre y sin ícono: si no, el nombre queda en 3 letras. Un nombre largo baja a otro renglón (no se corta) */}
-              <button className={`flex w-full items-center gap-2.5 py-2 text-left ${active && active !== g.key ? 'opacity-50' : ''}`} onClick={() => setActive(active === g.key ? null : g.key)}>
+              <button className={`flex min-h-tap w-full items-center gap-2.5 py-2 text-left ${active && active !== g.key ? 'opacity-50' : ''}`} onClick={() => setActive(active === g.key ? null : g.key)}>
                 <span className="h-3 w-3 shrink-0 rounded-full" style={{ background: g.color }} />
                 {by === 'category' && <Icon name={g.icon} size={18} className="shrink-0 text-muted max-[359px]:hidden" />}
                 <span className="min-w-0 flex-1">
@@ -330,7 +330,7 @@ function MonthView({ month, setMonth, includeSavings, setIncludeSavings, onRepor
                 else rowRefs.current.delete(r.category.id);
               }}
             >
-              <button className="flex w-full items-center gap-2 py-2.5 text-left" onClick={() => setOpen(open === r.category.id ? null : r.category.id)}>
+              <button className="flex min-h-tap w-full items-center gap-2 py-2.5 text-left" onClick={() => setOpen(open === r.category.id ? null : r.category.id)}>
                 <Icon name={r.category.icon} size={18} className="text-muted" />
                 <span className="flex-1">{r.category.name}</span>
                 <span className="tabular">{money(r.real)}</span>

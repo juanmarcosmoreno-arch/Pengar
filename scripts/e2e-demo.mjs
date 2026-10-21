@@ -320,6 +320,8 @@ check(true, 'en la web, salir pide confirmar y vuelve a los datos');
 const ex = await phone('ejemplo', web);
 await ex.getByRole('button', { name: 'Mirar con datos de ejemplo' }).click();
 await ex.getByText('Estás viendo datos de ejemplo (inventados).').first().waitFor({ timeout: 20000 });
+await nav(ex, 'Más');
+check(await ex.getByText('Moneda, importar, respaldo, lectura con IA', { exact: true }).count() === 1 && await ex.getByText(/modo demo/).count() === 0, 'con los datos de ejemplo, Más no promete «modo demo» en Ajustes');
 await openSettings(ex);
 check(await ex.getByRole('heading', { name: 'Modo demo' }).count() === 0, 'con los datos de ejemplo, Ajustes no ofrece el modo demo');
 await web.close();

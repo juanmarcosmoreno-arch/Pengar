@@ -34,10 +34,18 @@ o, si querés, compartido con tu casa (cada uno anota en el suyo).
     renglones de cantidad × precio) se lee con los dos lectores y queda el que más se acerca al TOTAL (a igualdad, el de
     tickets); las facturas de servicios (UTE, Antel) siguen con el de facturas. El descuento de un producto queda como su
     propio renglón, abajo del producto y con su rubro (`discountOf`; si en la revisión se le cambia el rubro al producto, el
-    descuento lo sigue, y de un descuento no se aprende nada); las bolsas y los descuentos de toda la compra, sueltos. En el
-    iPhone, Vision manda la inclinación de cada pedazo de texto y, si los renglones así armados no cierran con el TOTAL,
+    descuento lo sigue, y de un descuento no se aprende nada); las bolsas y los descuentos de toda la compra, sueltos. Si
+    después del TOTAL viene un descuento (Ley 19.210) o la propina y otro total («TOTAL A PAGAR», «TOTAL CON PROPINA»),
+    queda lo que se pagó, con lo del medio como un renglón más (`laterTotal`). El súper se busca solo en el encabezado,
+    arriba del primer producto: «DISCO DURO 1TB» o «PELOTA DISCO» no cambian el comercio. En el iPhone, Vision manda la
+    inclinación de cada pedazo de texto y, si es un ticket del súper y los renglones así armados no cierran con el TOTAL,
     se prueban otras inclinaciones (una para toda la foto y una por franja, por el papel arrugado) y queda la que mejor
-    lee la factura (`bestGrouping` en `src/domain/ocrLines.ts`, con `invoiceLinesScore`).
+    lee la factura (`bestGrouping` en `src/domain/ocrLines.ts`, con `invoiceLinesScore`). Una factura de servicios nunca
+    cierra (el IVA no es un renglón): queda como la arma Vision, salvo que otra forma cierre (`invoicePhotoLines`); si
+    no, buscar «la que lee más renglones» le pegaba un monto al texto de al lado.
+  - **Facturas de servicios** (UTE, Antel, OSE): la fecha es la de emisión, no la del vencimiento (aunque venga antes o
+    en el mismo renglón que el total, y el año del vencimiento tampoco es el total); las lecturas del medidor y, si los
+    montos tienen centavos, los números enteros (minutos, kWh sueltos) no son renglones.
   - Los renglones que no reconoce por lo aprendido ni por las palabras clave se los pregunta a Apple Intelligence
     (iOS 26+, en el teléfono y sin costo) y, lo que siga sin rubro, a Claude si hay clave. Quedan marcados
     «sugerido por …» para revisarlos; al guardar, se aprenden. Ajustes muestra si el iPhone tiene Apple Intelligence.
@@ -140,7 +148,7 @@ o, si querés, compartido con tu casa (cada uno anota en el suyo).
     estaban en el iPhone pasan solos a iCloud). Si no, en Archivos › En mi iPhone › Pengar › Respaldos (la carpeta
     Documents de la app), que entra en el respaldo del iPhone en iCloud. Ajustes dice cuál: «Último: hoy 9:12 · en
     iCloud Drive › Pengar › Respaldos» o «… en Archivos › En mi iPhone › Pengar › Respaldos (para guardarlos en iCloud
-    Drive, ver Ayuda: si borrás la app, los de «En mi iPhone» se borran con ella)».
+    Drive, ver Más → Cómo se usa → Respaldo automático: si borrás la app, los de «En mi iPhone» se borran con ella)».
   - «Hacer un respaldo ahora» (aunque ya haya uno de hoy) y «Restaurar uno automático»: la lista con el día, la hora y
     el tamaño; uno que quedó solo en iCloud se baja primero (hasta 30 s). Antes de reemplazar pide confirmar; la clave
     de Claude y los ajustes del teléfono quedan como están. En iCloud Drive siguen ahí aunque se borre la app: al
@@ -168,16 +176,22 @@ o, si querés, compartido con tu casa (cada uno anota en el suyo).
       categorías se unen como al sumar una planilla (`sameCategory`: el mismo nombre sin mayúsculas ni tildes, o la
       misma letra con un nombre parecido) y los rubros por nombre (en la misma categoría o, si no, el único del hogar
       con ese nombre); lo de acá pasa a usar los del hogar (movimientos, renglones de facturas, gastos fijos y lo
-      aprendido) y lo que el hogar no tiene se agrega (una categoría nueva, solo si la usa un rubro nuevo o tiene
-      presupuesto). No duplica: lo que tiene el mismo id que algo del hogar (un respaldo de ese hogar) queda como en
-      el hogar; los meses de planilla que el hogar ya tiene no se suman (si los dos importaron la misma planilla,
-      queda la del hogar); un movimiento igual a uno del hogar (fecha, tipo, rubro, monto, nota y comercio, contando
-      cuántas veces está cada uno), tampoco; ni un estado de cuenta cuyos movimientos ya estaban todos, ni un fijo de un
-      rubro que el hogar ya tiene como fijo, ni una meta con el mismo nombre. Del hogar quedan el presupuesto, la
+      aprendido) y lo que el hogar no tiene se agrega: un rubro, solo si lo usa algo que se suma (o lo aprendido, o es
+      de una categoría nueva con presupuesto), y una categoría nueva, solo si la usa un rubro nuevo o tiene
+      presupuesto (así no vuelve lo que el hogar limpió de la plantilla). No duplica: lo que tiene el mismo id que algo
+      del hogar (un respaldo de ese hogar) queda como en el hogar; lo que el hogar borró (sus lápidas: `tombstones`)
+      no vuelve, salvo un rubro o una categoría que use algo nuevo de acá; los totales de planilla de un mes, rubro y
+      tipo que el hogar ya tiene no se suman (si los dos importaron la misma planilla, queda la del hogar; los de otros
+      rubros de ese mes, sí); un movimiento igual a uno del hogar (fecha, tipo, rubro, monto, nota y comercio, contando
+      cuántas veces está cada uno), tampoco; ni un estado de cuenta cuyos movimientos ya estaban todos. Un fijo de un
+      rubro que el hogar ya tiene como fijo no se suma (el del hogar queda anotado hasta el mes más nuevo de los dos) y
+      una meta con el mismo nombre se junta con la del hogar (se suma lo ahorrado). Del hogar quedan el presupuesto, la
       moneda, la cotización y lo aprendido (lo de acá que no tiene, se suma). Lo sumado queda con quien se une en
-      «Anotado por» y se manda en la vuelta siguiente (con los archivos de sus facturas). La pantalla avisa antes lo de
-      la planilla y, al terminar, dice qué se sumó y qué ya estaba («Se sumaron 120 movimientos y 2 metas», «24 meses
-      de planilla (de noviembre 2024 a octubre) ya estaban en el hogar: quedaron los del hogar»).
+      «Anotado por» (salvo lo que ya dice alguien que anotó en el hogar) y se manda en la vuelta siguiente (con los
+      archivos de sus facturas). La pantalla avisa antes lo de la planilla y, al terminar, dice qué se sumó y qué ya
+      estaba («Se sumaron 120 movimientos y 2 metas», «24 meses de planilla (de noviembre 2024 a octubre) ya estaban en
+      el hogar en los mismos rubros: quedaron los del hogar», «La meta «Viaje» ya estaba en el hogar: se le sumó lo que
+      tenías ahorrado», «3 cosas que el hogar ya había borrado no volvieron»).
 
     El nombre escrito al crear o al unirse queda también en Ajustes, y cambiarlo en Ajustes cambia cómo te ven los
     demás.
@@ -196,9 +210,16 @@ o, si querés, compartido con tu casa (cada uno anota en el suyo).
     el mismo). Sin respaldo, el teléfono nuevo es otro integrante y el de antes se saca con «Sacar». El código hace
     falta igual. Quien estaba en el hogar antes de las llaves recibe una sola en la vuelta siguiente
     (`pengar_set_recovery`; si el servidor no tiene la migración nueva, lo demás sigue andando). Al salir del hogar
-    (o si lo sacan) la llave deja de servir.
+    la llave deja de servir (la app la borra). Si lo sacan («Sacar», por ejemplo por error), con su llave vuelve como el
+    mismo integrante, con su id, sin desplazar a nadie (el servidor guarda su id y el hash de su llave en
+    `pengar_departed`, que los teléfonos no leen). El teléfono de antes de quien volvió a entrar desde otro se puede
+    sumar como otra persona (con otro id: el de su usuario ya es el de ese integrante); mientras tenga la llave, entrar
+    con ella deja afuera al otro teléfono, y «Unirme con un código» lo avisa (primero «Seguir sin hogar»). La llave de
+    un respaldo de otro hogar no queda en este: si no es de nadie de acá, se arma otra y se manda en la vuelta
+    siguiente (la misma llave en dos hogares serviría en los dos con un respaldo).
   - **En un hogar**: el nombre (con «Cambiar el nombre»: una hoja con el nombre de ahora; lo ven todos y la llave de
-    los datos se actualiza), los integrantes («Ana (vos) · desde hoy», con «Sacar» en los demás: un teléfono que ya
+    los datos se actualiza; desde un teléfono que ya no está en el hogar no dice «Listo»: dice «Ya no estás en ese
+    hogar» y pasa a «Ya no estás en…», y lo mismo con tu nombre), los integrantes («Ana (vos) · desde hoy», con «Sacar» en los demás: un teléfono que ya
     no se usa), el código con «Copiar», «Compartir» y «Cambiar el código» (el viejo deja de servir), cómo va la
     sincronización («Sincronizado hace 1 min», «Enviando 3 cambios…», «Sin conexión: se manda cuando vuelva (1
     cambio)», «En pausa» con los datos de ejemplo) con «Sincronizar ahora», y **Salir del hogar**: antes sube lo que
@@ -248,8 +269,9 @@ o, si querés, compartido con tu casa (cada uno anota en el suyo).
     teléfono no tenía.
   - Las reglas, en `src/domain/sync.ts`; el motor, en `src/lib/sync.ts` (con pruebas de dos teléfonos contra un servidor
     en memoria); la pantalla, en `src/screens/Household.tsx`; la base, en `supabase/migrations/20261021000000_pengar.sql`,
-    `20261021000001_pengar_revision.sql` y `20261021000002_pengar_recuperacion.sql` (la llave y el id de integrante;
-    `npm run test:db` las prueba en un Postgres local). Realtime avisa por una
+    `20261021000001_pengar_revision.sql`, `20261021000002_pengar_recuperacion.sql` (la llave y el id de integrante) y
+    `20261021000003_pengar_integrantes.sql` (los integrantes que vuelven: a quien sacaron, con su id; el teléfono de
+    antes de alguien, como otra persona); `npm run test:db` las prueba en un Postgres local. Realtime avisa por una
     tabla propia, `pengar_signals` (qué cambió y quién), y no por las tablas de verdad: Realtime no aplica la RLS a los
     DELETE. Cómo
     prepararlo: «Hogar compartido (Supabase)», más abajo; cómo probarlo sin Supabase: «Probar el hogar compartido».
@@ -344,22 +366,29 @@ npm run icons        # íconos a partir del suricata principal
 GitHub Actions corre dos workflows (`.github/workflows`); el resultado se ve en la pestaña **Actions** del repositorio
 y en los dos distintivos de arriba.
 
-- **CI** (`ci.yml`), en cada push y pull request, en Ubuntu:
+- **CI** (`ci.yml`), en cada push y en los pull request que vienen de un fork (los de una rama de acá ya corren por el
+  push: así no corre todo dos veces), en Ubuntu:
   - **Web**: `npm ci`, los tipos (`npx tsc -b`), las pruebas (`npx vitest run`), la build de la app (`npx vite build`)
     y la de la vista previa (`npm run build:preview`).
+  - **Recorridos y capturas**: con el Chromium de Playwright (`npx playwright install --with-deps chromium`), los
+    `npm run e2e:dolar`, `e2e:lock`, `e2e:backup`, `e2e:hogar` y `e2e:demo` (lo único que prueba la parte web de los
+    plugins nativos, con el puente simulado) y `node scripts/screenshots.mjs`.
   - **Base del hogar compartido**: `npm run test:db` contra un Postgres 16 del propio workflow (un servicio
     `postgres:16`). `supabase/tests/run-local.sh` usa ese servidor porque recibe `PENGAR_TEST_DB` (los datos de
     conexión, como `host=localhost port=5432 user=postgres password=postgres`): arma una base nueva para la corrida y la
     borra al terminar. Sin la variable, como en la compu, levanta su propio Postgres efímero.
-- **iOS** (`ios.yml`), en cada push que toca `ios/`, `src/`, `package.json`, `package-lock.json`,
-  `capacitor.config.ts` o el propio workflow (y a mano, con **Run workflow**), en una Mac de GitHub con Xcode 26
-  (`macos-26`; para un repositorio público es gratis): `npm ci`, `npm run build`, `npx cap sync ios` y
-  `xcodebuild` para el simulador, sin firmar (`CODE_SIGNING_ALLOWED=NO`), con el esquema compartido
+- **iOS** (`ios.yml`), en cada push a una rama que toca `ios/`, `package.json`, `package-lock.json`,
+  `capacitor.config.ts` o el propio workflow (`src/` no: no cambia la compilación de Swift y ya lo prueba CI; los tags
+  tampoco), en los pull request de un fork que tocan lo mismo y a mano, con **Run workflow**, en una Mac de GitHub con
+  Xcode 26 (`macos-26`; para un repositorio público es gratis): `npm ci`, `npm run build`, `npx cap sync ios` y
+  `xcodebuild` para el simulador, solo arm64 (`ARCHS=arm64`: con el destino genérico compilaría también x86_64), sin
+  firmar (`CODE_SIGNING_ALLOWED=NO`), con el esquema compartido
   `ios/App/App.xcodeproj/xcshareddata/xcschemes/App.xcscheme`. Compila el código Swift de los plugins propios
   (PengarOCR, PengarAI, PengarLock, PengarBackup) y los de Capacitor; si el Xcode de la Mac no trae el SDK de iOS 26,
   falla enseguida y lo dice. No firma, no instala en un iPhone ni sube a TestFlight. Si no compila, el resumen del
   job lista los errores (archivo, línea y mensaje) y el log completo de `xcodebuild` con el `.xcresult` quedan en el
-  artifact `ios-build-log`. Si compila, el resumen muestra los avisos del compilador en el código propio.
+  artifact `ios-build-log`. Si compila, el resumen muestra los avisos del compilador en el código propio; si se
+  canceló (una corrida más nueva de la misma rama, o se acabó el tiempo), lo dice así.
 
 ### Probar el hogar compartido (sin Supabase)
 
@@ -501,10 +530,12 @@ de Kvar**: todo lo de Pengar lleva el prefijo `pengar_` (tablas, funciones y pol
 `pengar-files`; no toca nada de Kvar. Sin esto la app anda igual, solo en el teléfono.
 
 1. **SQL Editor → New query**: pegá todo `supabase/migrations/20261021000000_pengar.sql` y **Run**; después, cada una
-   en otra query y en orden, todo `supabase/migrations/20261021000001_pengar_revision.sql` y todo
-   `supabase/migrations/20261021000002_pengar_recuperacion.sql` (**Run** cada vez). Si ya habías pegado las primeras,
-   pegá solo las que falten (la tercera se puede correr de nuevo sin problema; sin ella la app no puede crear un hogar
-   ni unirse, y la pantalla dice que falta la migración). Crean las tablas con RLS, las funciones, el bucket privado,
+   en otra query y en orden, todo `supabase/migrations/20261021000001_pengar_revision.sql`, todo
+   `supabase/migrations/20261021000002_pengar_recuperacion.sql` y todo
+   `supabase/migrations/20261021000003_pengar_integrantes.sql` (**Run** cada vez). Si ya habías pegado las primeras,
+   pegá solo las que falten (la tercera y la cuarta se pueden correr de nuevo sin problema; sin la tercera la app no
+   puede crear un hogar ni unirse, y la pantalla dice que falta la migración; sin la cuarta anda, pero a quien sacaron
+   no vuelve con su id y el teléfono de antes de alguien que volvió a entrar desde otro no se puede sumar). Crean las tablas con RLS, las funciones, el bucket privado,
    los avisos de Realtime y la llave para volver a entrar. Con el proyecto de Kvar no uses `npx supabase db push`
    desde esta carpeta: el historial de migraciones de ese proyecto es el de Kvar (que ya tiene una migración con la
    misma fecha, `20261021000000`) y la CLI la daría por aplicada.
@@ -526,7 +557,7 @@ app, ese teléfono vuelve a entrar con el código (y vuelven los datos).
 | `src/domain` | Lógica pura, con pruebas: modelo, modo demo (`demo.ts`: dónde se guarda cada juego de datos, el armado de los inventados y el ticket en PDF), hogar compartido (`sync.ts`: los datos como registros, qué cambió, cómo se mezcla lo recibido, cómo se suma lo de acá al unirse y la llave para volver a entrar), importar planillas, estadísticas, lectura de facturas (`invoice.ts`) y de tickets del súper (`receipt.ts`, de Kvar; `ocrLines.ts` arma los renglones de la foto) y de estados de cuenta de la tarjeta (`statement.ts`, `statementReview.ts`), e-Tickets de la DGI y el ticket oficial del súper (`cfe.ts`), rubros sugeridos, diezmo acumulado (`ledger.ts`), resumen del mes (`report.ts`) y la respuesta del BCU (`fx.ts`, probada con respuestas reales) |
 | `src/lib` | Teléfono: guardado (IndexedDB; los datos de verdad y los del modo demo, aparte), ajustes de este teléfono que no se comparten (`device.ts`, también si está el modo demo), lector de fotos (Vision / Tesseract), PDF (pdf.js), Claude, Apple Intelligence, rubros sugeridos (`suggest.ts`), archivos, aviso del día 1 (`reportReminder.ts`), bloqueo con Face ID (`lock.ts`; cuándo bloquear, en `src/domain/lock.ts`), cotización del dólar del BCU con su caché (`fx.ts`), respaldo automático (`autoBackup.ts`; cuándo y cuáles quedan, en `src/domain/autoBackup.ts`), hogar compartido (`remote.ts`: Supabase y el servidor en memoria de las pruebas; `sync.ts`: el motor; `fakeRemote.ts` y `fakePhone.ts`: el servidor de mentira entre pestañas, solo con `VITE_FAKE_REMOTE=1`) |
 | `.github/workflows` | La compilación automática en GitHub Actions: `ci.yml` (la web y la base) e `ios.yml` (la app de iPhone para el simulador, con Xcode 26) |
-| `supabase/` | La base del hogar compartido (`migrations/`, en orden: la primera, la revisión y la de la llave para volver a entrar) y su prueba en un Postgres local (`tests/`, `npm run test:db`) |
+| `supabase/` | La base del hogar compartido (`migrations/`, en orden: la primera, la revisión, la de la llave para volver a entrar y la de los integrantes que vuelven) y su prueba en un Postgres local (`tests/`, `npm run test:db`) |
 | `src/screens`, `src/components` | Pantallas y piezas de la interfaz (gráficas en SVG propio, con d3-shape) |
 | `ios/App/App/PengarOCRPlugin.swift` | Plugin nativo: texto y QR de una foto con Vision, y el ticket oficial del súper (`fetchCfe`: Rondanet y Tienda Inglesa) |
 | `ios/App/App/PengarAIPlugin.swift` | Plugin nativo: rubro sugerido con Apple Intelligence (Foundation Models, iOS 26+) |
@@ -546,8 +577,8 @@ son una paleta validada para daltonismo; pasadas las 8 más grandes, se juntan e
 
 ## Pendiente / ideas
 
-- GitHub Actions compila la app de iPhone para el simulador en cada push (`ios.yml`, Xcode 26; el distintivo «iOS» de
-  arriba dice si pasó), pero nunca se abrió en Xcode ni se instaló en un iPhone (no hay Mac en este entorno): los
+- GitHub Actions compila la app de iPhone para el simulador en cada push que toca `ios/` o las dependencias (`ios.yml`,
+  Xcode 26; el distintivo «iOS» de arriba dice si pasó), pero nunca se abrió en Xcode ni se instaló en un iPhone (no hay Mac en este entorno): los
   plugins Swift siguen el mismo patrón que los de Kvar
   (PengarAI usa Foundation Models como KvarVoice; el QR y `fetchCfe` de PengarOCR son los de KvarOCR, que allá se probaron con
   tickets reales de Disco, Devoto, Géant y Tienda Inglesa). El pedido al BCU con `CapacitorHttp` está probado contra el web
@@ -564,6 +595,6 @@ son una paleta validada para daltonismo; pasadas las 8 más grandes, se juntan e
   proyecto de Supabase real ni en un iPhone (Realtime, Storage y «Compartir» el código).
 - Hogar compartido: las funciones de la base de la revisión y de la llave (`pengar_signals`, el límite de códigos,
   salir en dos pasos, `pengar_join_household` con la llave, `pengar_set_recovery`, los permisos por columna de
-  `pengar_members`) se probaron en Postgres (también con las migraciones de Kvar en la misma base), no en un Supabase
+  `pengar_members`, los integrantes que vuelven con `pengar_departed`) se probaron en Postgres (también con las migraciones de Kvar en la misma base), no en un Supabase
   real. «Sumar mis datos al hogar» no detecta un mismo gasto anotado por los dos con otra fecha o monto (queda dos
   veces; la pantalla lo avisa).

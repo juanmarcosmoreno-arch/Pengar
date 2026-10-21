@@ -1,4 +1,5 @@
-# La web y la base del hogar compartido, en cada push y pull request (README → «Compilación automática»)
+# La web, los recorridos con el iPhone simulado y la base del hogar compartido, en cada push y en los pull request que
+# vienen de un fork (README → «Compilación automática»)
 name: CI
 
 on:
@@ -16,15 +17,18 @@ defaults:
   run:
     shell: bash
 
+# Un pull request desde una rama de acá ya corre por el push: solo los de un fork (sin push en este repositorio) corren
+# por pull_request. Así no se corre todo dos veces
 jobs:
   web:
     name: Web (tipos, pruebas y builds)
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: 22
           cache: npm
@@ -44,8 +48,47 @@ jobs:
       - name: Vista previa web
         run: npm run build:preview
 
+  e2e:
+    name: Recorridos (iPhone simulado) y capturas
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Instalar dependencias
+        run: npm ci
+
+      # Los recorridos usan el Chromium de Playwright (en la compu, el que haya en /opt/pw-browsers)
+      - name: Chromium de Playwright
+        run: npx playwright install --with-deps chromium
+
+      - name: Build de la app
+        run: npx vite build
+
+      # e2e:hogar y e2e:demo arman su propia build con el servidor de mentira (dist-fake)
+      - name: Dólar del BCU
+        run: npm run e2e:dolar
+      - name: Bloqueo con Face ID
+        run: npm run e2e:lock
+      - name: Respaldo automático
+        run: npm run e2e:backup
+      - name: Hogar compartido
+        run: npm run e2e:hogar
+      - name: Modo demo
+        run: npm run e2e:demo
+      # Escribe en docs/capturas: en el checkout del CI no molesta
+      - name: Capturas
+        run: node scripts/screenshots.mjs
+
   db:
     name: Base del hogar compartido (Postgres 16)
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository
     runs-on: ubuntu-latest
     timeout-minutes: 10
     services:
@@ -64,7 +107,7 @@ jobs:
       # supabase/tests/run-local.sh usa este servidor en lugar de levantar uno (arma una base nueva y la borra al final)
       PENGAR_TEST_DB: host=localhost port=5432 user=postgres password=postgres
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Cliente de Postgres
         run: command -v psql || { sudo apt-get update && sudo apt-get install -y postgresql-client; }

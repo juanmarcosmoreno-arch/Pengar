@@ -1172,3 +1172,96 @@ describe('sumar mis datos al hogar', () => {
     ana2.engine.stop();
   });
 });
+
+describe('integrantes que vuelven y sumar (revisión)', () => {
+  it('sumar no revive lo que el hogar borró mientras tanto (movimientos y rubros)', async () => {
+    const hh = await together();
+    ana.edit((d) => ({ ...d, rubros: [...d.rubros, { id: 'r2', name: 'Carnicería', categoryId: 'c1', keywords: [] }], movements: [...d.movements, mov('m3', 300, { rubroId: 'r2' })] }));
+    await ana.engine.syncNow();
+    await bruno.engine.syncNow();
+    expect(movement(bruno, 'm3')).toBeTruthy();
+    // Bruno sale (se queda con la copia) y, mientras tanto, Ana borra m1 y el rubro r2 con su movimiento
+    await bruno.engine.leave();
+    ana.edit((d) => ({ ...d, rubros: d.rubros.filter((r) => r.id !== 'r2'), movements: d.movements.filter((m) => m.id !== 'm1' && m.id !== 'm3') }));
+    await ana.engine.syncNow();
+    expect(server.row(hh.id, 'movement', 'm1')?.deleted).toBe(true);
+    const out = await bruno.engine.joinHousehold(hh.inviteCode, 'Bruno', { keepLocal: true });
+    expect(out.sum).toMatchObject({ added: { movements: 0, rubros: 0 }, deleted: 3 });
+    await ana.engine.syncNow();
+    expect(movement(ana, 'm1')).toBeUndefined();
+    expect(movement(ana, 'm3')).toBeUndefined();
+    expect(ana.data.rubros.map((r) => r.id)).toEqual(['r1']);
+    expect(server.row(hh.id, 'movement', 'm1')?.deleted).toBe(true);
+    expect(server.row(hh.id, 'rubro', 'r2')?.deleted).toBe(true);
+  });
+
+  it('el teléfono de antes de quien volvió a entrar con su llave se puede sumar como otra persona', async () => {
+    const hh = await together();
+    // Ana pasa a otro teléfono con su respaldo; el de antes queda afuera y sigue sin hogar
+    const ana2 = phone(server, backupOf(ana));
+    await ana2.engine.start();
+    expect((await ana2.engine.joinHousehold(hh.inviteCode, 'Ana')).reclaimed).toBe(true);
+    await ana.engine.syncNow();
+    expect(ana.status.phase).toBe('removed');
+    await ana.engine.leave();
+    // El teléfono de antes, como una tablet: un integrante nuevo, con otro id (el suyo ya es el de Ana)
+    ana.edit((d) => ({ ...d, settings: { ...d.settings, recovery: undefined } }));
+    const out = await ana.engine.joinHousehold(hh.inviteCode, 'Tablet');
+    expect(out.reclaimed).toBe(false);
+    expect(ana.status.memberId).not.toBe(ana.client.userId);
+    const members = server.members.get(hh.id)!;
+    expect(members.map((m) => m.displayName)).toEqual(['Ana', 'Bruno', 'Tablet']);
+    expect(new Set(members.map((m) => m.memberId)).size).toBe(3);
+    // Ana sigue en su teléfono nuevo
+    await ana2.engine.syncNow();
+    expect(ana2.status.phase).toBe('idle');
+    ana2.engine.stop();
+  });
+
+  it('a quien sacaron por error vuelve con su llave como el mismo integrante (lo anotado sigue siendo suyo)', async () => {
+    const hh = await together();
+    bruno.edit((d) => ({ ...d, movements: [...d.movements, mov('b5', 55)] }));
+    await bruno.engine.syncNow();
+    await ana.engine.syncNow();
+    const brunoMember = bruno.status.memberId;
+    await ana.engine.removeMember(bruno.client.userId);
+    await bruno.engine.syncNow();
+    expect(bruno.status.phase).toBe('removed');
+    const out = await bruno.engine.joinHousehold(hh.inviteCode, 'Bruno');
+    expect(out.reclaimed).toBe(true);
+    expect(bruno.status.memberId).toBe(brunoMember);
+    expect(movement(bruno, 'b5')?.createdBy).toBe(brunoMember);
+  });
+
+  it('la llave de un respaldo de otro hogar no se manda a este: se arma otra', async () => {
+    await together();
+    const tx = ana.state.token!;
+    const carla = phone(server, normalizeData({ ...brunoData(), settings: { ...brunoData().settings, name: 'Carla' } }));
+    await carla.engine.start();
+    const other = await carla.engine.createHousehold('Otra casa', 'Carla');
+    // Ana restaura en otro teléfono un respaldo del primer hogar y entra con el código del otro
+    const ana2 = phone(server, backupOf(ana));
+    await ana2.engine.start();
+    const out = await ana2.engine.joinHousehold(other.inviteCode, 'Ana');
+    expect(out.reclaimed).toBe(false);
+    expect(ana2.state.token).toBeTruthy();
+    expect(ana2.state.token).not.toBe(tx);
+    expect(ana2.state.tokenSent).toBe(true);
+    // El otro hogar no guarda el hash de la llave del primero; la copia de los datos lleva la nueva
+    const mine = server.members.get(other.id)!.find((m) => m.userId === ana2.client.userId)!;
+    expect(server.tokens.get(`${other.id}|${mine.memberId}`)).toBe(server.tokenHash(ana2.state.token));
+    expect([...server.tokens].filter(([k, v]) => k.startsWith(`${other.id}|`) && v === server.tokenHash(tx))).toEqual([]);
+    expect(ana2.data.settings.recovery).toMatchObject({ householdId: other.id, token: ana2.state.token });
+    ana2.engine.stop();
+    carla.engine.stop();
+  });
+
+  it('cambiar el nombre desde un teléfono que ya no es miembro no dice «Listo»: tira y se entera de que quedó afuera', async () => {
+    await together();
+    await ana.engine.removeMember(bruno.client.userId);
+    await expect(bruno.engine.renameHousehold('Hackeado')).rejects.toMatchObject({ kind: 'denied' });
+    expect(bruno.status.phase).toBe('removed');
+    await expect(bruno.engine.setDisplayName('Bruno')).rejects.toMatchObject({ kind: 'denied' });
+    expect(server.households.values().next().value?.name).toBe('Casa');
+  });
+});

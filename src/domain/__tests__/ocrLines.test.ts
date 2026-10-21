@@ -6,7 +6,7 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { INVOICE_CLOSES, invoiceLinesScore, parseInvoiceText } from '../invoice';
+import { INVOICE_CLOSES, invoiceLinesScore, invoicePhotoLines, parseInvoiceText } from '../invoice';
 import { bestGrouping, groupIntoLines, groupLines, type TextBox } from '../ocrLines';
 import { parseReceiptText, RECEIPT_CLOSES, receiptLinesScore } from '../receipt';
 
@@ -126,5 +126,44 @@ describe('lectura de la foto del ticket', () => {
     let calls = 0;
     bestGrouping(boxes, ASPECT, (l) => (calls++, invoiceLinesScore(l)), INVOICE_CLOSES);
     expect(calls).toBe(1);
+  });
+});
+
+describe('foto de una factura que no es del súper (invoicePhotoLines)', () => {
+  /** Una foto derecha (como la sacaría alguien con cuidado): el texto a la izquierda y el monto a la derecha */
+  const straight = (rows: string[]): TextBox[] =>
+    rows.flatMap((row, i) => row.split('|').map((text, j) => ({ text, x: j === 0 ? 0.08 : 0.7, y: 0.1 + i * 0.03, w: j === 0 ? 0.45 : 0.2, h: 0.018, slope: 0 })));
+
+  it('UTE derecha que no cierra (el IVA no es renglón): sin renglones inventados ni otro comercio', () => {
+    const rows = ['UTE', 'Saldo anterior|2.603,12', 'Cargo fijo|664,00', 'Energía consumida|2.251,00', 'Cargo por potencia|1.702,00', 'Total a pagar|$ 5.617,78'];
+    const p = parseInvoiceText(invoicePhotoLines(straight(rows), 1.4).join('\n'));
+    expect(p.merchant).toBe('UTE');
+    expect(p.items.map((i) => [i.description, i.amount])).toEqual([['Cargo fijo', 664], ['Energía consumida', 2251], ['Cargo por potencia', 1702]]);
+    expect(p.total).toBe(5617.78);
+  });
+
+  it('UTE con encabezado, IVA y vencimiento: el total, la fecha y los tres cargos', () => {
+    const rows = [
+      'UTE', 'Administración Nacional de Usinas', 'Cliente: Juan Pérez', 'Fecha de emisión|03/10/2026', 'Detalle de la factura',
+      'Cargo fijo mensual|350,50', 'Energía consumida 245 kWh|1.820,00', 'Cargo por potencia|505,00', 'IVA 22%|588,61',
+      'Total a pagar|$ 3.264,11', 'Vencimiento|20/10/2026',
+    ];
+    const p = parseInvoiceText(invoicePhotoLines(straight(rows), 1.4).join('\n'));
+    expect(p.merchant).toBe('UTE');
+    expect(p.total).toBe(3264.11);
+    expect(p.date).toBe('2026-10-03');
+    expect(p.items.map((i) => [i.description, i.amount])).toEqual([['Cargo fijo mensual', 350.5], ['Energía consumida 245 kWh', 1820], ['Cargo por potencia', 505]]);
+  });
+
+  it('un ticket del súper arrugado con el TOTAL mal leído (nunca cierra): igual prueba otras inclinaciones', () => {
+    const misread = TI.map((r) => (r.startsWith('TOTAL') ? 'TOTAL:|$1958,27' : r));
+    const p = parseInvoiceText(invoicePhotoLines(wrinkled(misread), ASPECT).join('\n'));
+    expect(p.items).toHaveLength(13);
+    expect(p.items[0]).toEqual({ description: 'MILANESA DE CERDO EMPANADA', amount: 242.6 });
+  });
+
+  it('un ticket del súper que cierra: lo mismo que bestGrouping', () => {
+    const boxes = wrinkled(TI);
+    expect(invoicePhotoLines(boxes, ASPECT)).toEqual(bestGrouping(boxes, ASPECT, invoiceLinesScore, INVOICE_CLOSES));
   });
 });

@@ -260,7 +260,7 @@ await dani.getByRole('button', { name: 'Unirme con un código' }).click();
 await joinWith(dani, 'Dani', code2);
 const choice = dani.getByRole('dialog', { name: 'Tus datos y los del hogar' });
 await choice.waitFor();
-check(await choice.getByText(/los meses de planilla que el hogar ya tiene no se suman/).count() === 1, 'avisa que la planilla repetida no se duplica');
+check(await choice.getByText(/los totales de planilla de un mes y rubro que el hogar ya tiene no se suman/).count() === 1, 'avisa que la planilla repetida no se duplica');
 await shot(dani, 'hogar-sumar');
 await choice.getByRole('button', { name: 'Sumar mis datos al hogar' }).click();
 const summed = dani.getByRole('dialog', { name: 'Listo' });

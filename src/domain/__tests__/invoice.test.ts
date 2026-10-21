@@ -168,3 +168,71 @@ Total a pagar $ 2.226,50`);
     });
   });
 });
+
+describe('lo que se pagó viene después del TOTAL (un descuento o la propina, y otro total)', () => {
+  const base = 'LA PASIVA\ne-Ticket\nFecha 12/10/2026\nCHIVITO CANADIENSE 1.200,00\nCOCA COLA 150,00\nTOTAL 1.350,00\n';
+  it.each([
+    ['Descuento IVA Ley 19210 -60,00\nTOTAL A PAGAR 1.290,00', 1290, -60],
+    ['Descuento IVA Ley 19210 -60,00\nImporte a pagar $ 1.290,00', 1290, -60],
+    ['Propina 135,00\nTOTAL CON PROPINA 1.485,00', 1485, 135],
+  ])('%s', (tail, paid, extra) => {
+    const p = parseInvoiceText(base + tail);
+    expect(p.total).toBe(paid);
+    // Los renglones del ticket más lo del medio: la suma es lo pagado
+    expect(p.items.map((i) => i.amount)).toEqual([1200, 150, extra]);
+    expect(sum(p)).toBe(paid);
+  });
+
+  it('Disco con DESCUENTO IVA LEY 19210 y TOTAL A PAGAR: lo pagado, con los productos de dos renglones', () => {
+    const p = parseInvoiceText('Disco\ne-Ticket\nCOCA COLA 2.25L 270.00\n2.000 UN x 135.00\nPAN FLAUTA 45.00\n1.000 UN x 45.00\nTOTAL: $ 315.00\nDESCUENTO IVA LEY 19210 -5.16\nTOTAL A PAGAR $ 309.84\nTarjeta Credito/Debito $ 309.84');
+    expect(p.total).toBe(309.84);
+    expect(pairs(p)).toEqual([['COCA COLA 2.25L', 270], ['PAN FLAUTA', 45], ['DESCUENTO IVA LEY 19210', -5.16]]);
+  });
+
+  it('sin otro total abajo (el «DTO. IVA LEY 19210» de los tickets de Disco), el TOTAL', () => {
+    const p = parseInvoiceText('Disco\ne-Ticket\nCOCA COLA 2.25L 270.00\n2.000 UN x 135.00\nPAN FLAUTA 45.00\n1.000 UN x 45.00\nTOTAL: $ 315.00\nDTO. IVA LEY 19210 -5.16');
+    expect(p.total).toBe(315);
+  });
+});
+
+describe('el súper del encabezado no es un producto que se llama como él', () => {
+  it.each([
+    ['ELECTRO CENTRO\ne-Ticket\nFecha 18/10/2026\nDISCO DURO 1TB\n1.000 UN x 2.890,00 2.890,00\nTOTAL 2.890,00', 'ELECTRO CENTRO'],
+    ['BAZAR LA ESQUINA\nFecha 18/10/2026\nPELOTA DISCO\n2 x 150,00 300,00\nTOTAL 300,00', 'BAZAR LA ESQUINA'],
+    ['FERRETERIA EL TORNILLO\nFecha 18/10/2026\nDISCO DE CORTE 115MM\n2 x 85,00 170,00\nTOTAL 170,00', 'FERRETERIA EL TORNILLO'],
+    ['FERRETERIA EL TORNILLO\nFecha 18/10/2026\nDISCO DE CORTE 115MM 170,00\nTOTAL 170,00', 'FERRETERIA EL TORNILLO'],
+  ])('%s', (text, merchant) => {
+    expect(parseInvoiceText(text).merchant).toBe(merchant);
+  });
+
+  it('el súper de verdad, arriba, sigue (con una publicidad antes del logo, su nombre)', () => {
+    expect(parseInvoiceText('DISCO\nSUC. POCITOS\ne-Ticket\nFecha 18/10/2026\nLECHE ENTERA\n2 x 45,00 90,00\nTOTAL 90,00').merchant).toBe('DISCO');
+    expect(parseInvoiceText('LLEVA 2 Y PAGA 1\nDISCO\ne-Ticket\nFecha 18/10/2026\nLECHE ENTERA\n2 x 45,00 90,00\nTOTAL 90,00').merchant).toBe('Disco');
+  });
+});
+
+describe('facturas de servicios: el vencimiento y las lecturas del medidor', () => {
+  it('«Total a pagar» con el vencimiento al lado: ni el año es el total ni la fecha es la del vencimiento', () => {
+    const p = parseInvoiceText('ANTEL\nFactura de servicios\nTotal a pagar $ 1.750,70 Vencimiento 20/10/2026\nFecha de emisión: 03/10/2026\nCargo fijo Vera 1.190,00\nConsumo de datos 245,00\nIVA 22% 315,70\nTotal a pagar $ 1.750,70');
+    expect(p.total).toBe(1750.7);
+    expect(p.date).toBe('2026-10-03');
+    expect(pairs(p)).toEqual([['Cargo fijo Vera', 1190], ['Consumo de datos', 245]]);
+  });
+
+  it('el vencimiento solo, en el renglón de abajo del total, tampoco es el total', () => {
+    const p = parseInvoiceText('OSE\nFecha 05/10/2026\nCargo fijo 300,00\nConsumo de agua 15 m3 450,00\nIVA 10% 75,00\nTotal a pagar\n20/10/2026\nImporte $ 825,00');
+    expect(p.total).toBe(825);
+    expect(p.date).toBe('2026-10-05');
+  });
+
+  it('las lecturas del medidor y los números sin centavos no son plata (los cargos con «kWh» o «m3», sí)', () => {
+    const p = parseInvoiceText('UTE\nFecha 05/10/2026\nLectura anterior 12345\nLectura actual 12590\nCargo fijo 350,50\nEnergía consumida 245 kWh 1.820,00\nIVA 22% 477,51\nTotal a pagar 2.648,01');
+    expect(pairs(p)).toEqual([['Cargo fijo', 350.5], ['Energía consumida 245 kWh', 1820]]);
+    // Contador de minutos de Antel, sin la palabra «lectura»
+    expect(pairs(parseInvoiceText('ANTEL\nFecha 05/10/2026\nMinutos usados 340\nCargo fijo 1.190,00\nMinutos a móviles 120,50\nTotal a pagar 1.310,50'))).toEqual([['Cargo fijo', 1190], ['Minutos a móviles', 120.5]]);
+  });
+
+  it('un documento sin centavos en ningún monto sigue leyendo los enteros', () => {
+    expect(pairs(parseInvoiceText('FERIA DEL BARRIO\nFecha 05/10/2026\nTomates 120\nLechuga 60\nTotal 180'))).toEqual([['Tomates', 120], ['Lechuga', 60]]);
+  });
+});

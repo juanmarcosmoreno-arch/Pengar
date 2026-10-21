@@ -38,6 +38,7 @@ import {
   replaceWithRemote,
   seenOf,
   sumIntoHousehold,
+  tombstones,
   syncable,
   type Hashes,
   type OutRecord,
@@ -458,17 +459,24 @@ export class SyncEngine {
     await this.loadedOrThrow();
     return this.exclusive(async () => {
       if (this.state.household && this.status.phase !== 'removed') throw new SyncError('in-household', 'Ya estás en un hogar');
-      const token = this.host.getData().settings.recovery?.token ?? this.state.token ?? newRecoveryToken();
+      const recovery = this.host.getData().settings.recovery;
+      const token = recovery?.token ?? this.state.token ?? newRecoveryToken();
+      // De qué hogar es esa llave: la de un respaldo dice el suyo; la de este teléfono, el de su hogar de antes
+      const tokenHome = recovery?.token ? recovery.householdId : this.state.token ? this.state.household?.id : undefined;
       const { userId } = await this.remote.session({ create: true });
       const joined = await this.remote.joinHousehold(code, displayName, token);
       const hh = joined.household;
       const remote = await this.remote.pull(hh.id, null);
       this.detach();
       const data = this.host.getData();
-      this.state = { ...emptyState(userId), household: hh, memberId: joined.memberId, token, tokenSent: true };
+      // La llave de otro hogar no sirvió acá (no es de nadie de este) y el servidor la guardó para el integrante nuevo: la
+      // misma en dos hogares no (con un respaldo, se entraría a los dos). Se arma otra y se manda en la vuelta siguiente
+      const rotate = !joined.reclaimed && tokenHome != null && tokenHome !== hh.id;
+      this.state = { ...emptyState(userId), household: hh, memberId: joined.memberId, token: rotate ? newRecoveryToken() : token, tokenSent: !rotate };
       let sum: SumResult | undefined;
       if (opts.keepLocal && syncable(data)) {
-        await this.replaceLocal(remote, (d) => (sum = sumIntoHousehold(d, data)).data);
+        // Lo que el hogar borró (sus lápidas) no vuelve por estar en la copia de acá
+        await this.replaceLocal(remote, (d) => (sum = sumIntoHousehold(d, data, tombstones(remote))).data);
       } else await this.replaceLocal(remote);
       this.setStatus({ household: hh, userId, memberId: joined.memberId, members: [], error: null, phase: 'idle', reload: false, held: 0 });
       this.attach();
@@ -615,16 +623,28 @@ export class SyncEngine {
   }
 
   /** El nombre con el que te ven los demás */
+  /** Tu nombre en el hogar. Si ya no sos miembro, tira RemoteError('denied') (y el teléfono se entera: 'removed') */
   async setDisplayName(name: string | null): Promise<void> {
     await this.loadedOrThrow();
-    await this.remote.setDisplayName(this.requireHousehold().id, name);
+    await this.notMemberAnymore(() => this.remote.setDisplayName(this.requireHousehold().id, name));
     await this.refreshMembers();
   }
 
+  /** El nombre del hogar (lo ven todos). Si ya no sos miembro, tira RemoteError('denied'), no «Listo» */
   async renameHousehold(name: string): Promise<void> {
     await this.loadedOrThrow();
-    await this.remote.renameHousehold(this.requireHousehold().id, name);
+    await this.notMemberAnymore(() => this.remote.renameHousehold(this.requireHousehold().id, name));
     await this.refreshMembers();
+  }
+
+  /** Lo pedido dio «sin permiso»: antes de tirar, se mira si el teléfono sigue en el hogar (si no, pasa a 'removed') */
+  private async notMemberAnymore(fn: () => Promise<void>): Promise<void> {
+    try {
+      await fn();
+    } catch (e) {
+      if (e instanceof RemoteError && e.kind === 'denied') await this.refreshMembers().catch(() => {});
+      throw e;
+    }
   }
 
   /**

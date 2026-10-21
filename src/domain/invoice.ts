@@ -8,6 +8,7 @@
 import { merchantOfRuc } from './cfe';
 import { validDay } from './importSheet';
 import { round2 } from './money';
+import { bestGrouping, groupIntoLines, type TextBox } from './ocrLines';
 import { detectStore, discountsFit, parseReceiptText, storeName } from './receipt';
 
 export interface ParsedInvoice {
@@ -33,6 +34,8 @@ const NOT_ITEM = new RegExp(
     'consumo final', 'caja', 'cajero', 'ticket', 'telefono', 'tel\\b', 'direccion', 'codigo', 'monto', 'importe', 'debito', 'credito',
     'visa', 'master', 'master ?card', 'oca', 'cabal', 'amex', 'transaccion', 'autorizacion', 'lote', 'terminal', 'comprobante', 'dgi',
     'ley', 'descuento ley', 'devolucion iva', 'resolucion', 'puntos', 'ahorraste', 'items?\\b', 'articulos', 'cantidad',
+    // Las lecturas del medidor (UTE, OSE): números, no plata
+    'lectura', 'medidor',
   ].map((w) => `\\b(?:${w})(?:e?s)?(?![a-z])`)
     // «COD SEGURIDAD», «Cod. de Seguridad», «Código de seguridad»
     .concat('\\bcod(?:igo)?\\.?(?: de)? seg')
@@ -46,6 +49,16 @@ const DISCOUNT = /\b(desc(uento)?|bonif|promo|ahorro|rebaja)\b/i;
 const QUANTITY_LINE = /^\s*\d+(?:[.,]\d+)?\s*(?:un|u|unid|kgs?|lts?|l|grs?|g)?\.?\s*[x*]\s*\$?\s*[\d.,]+\s*$/i;
 /** Un renglón que termina en una fecha («BJ1000001 17/10/2026»): el año no es un monto */
 const DATE_AT_END = /\b(\d{1,2})[/.-](\d{1,2})[/.-](\d{4}|\d{2})\s*$/;
+const DATE_IN = /\b\d{1,2}[/.-]\d{1,2}[/.-](?:\d{4}|\d{2})\b/;
+
+/**
+ * Lo de un renglón antes de su fecha: «Total a pagar $ 1.750,70 Vencimiento 20/10/2026» → «Total a pagar $ 1.750,70» (el
+ * año del vencimiento no es el total). Sin fecha, el renglón entero
+ */
+const beforeDate = (line: string) => {
+  const m = DATE_IN.exec(line);
+  return m ? line.slice(0, m.index).replace(/[\s\p{L}:.-]+$/u, '') : line;
+};
 
 const plain = (s: string) => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
 
@@ -75,23 +88,33 @@ function lastAmount(line: string): { amount: number; text: string } | null {
 
 const pad = (n: string) => n.padStart(2, '0');
 
+/** Qué dice el renglón de su fecha: 0 la de emisión («Fecha», «Emisión»), 2 la de pagar («Vencimiento»), 1 ninguna */
+const dateRank = (line: string) => (/\bvenc|\bvto\b|\bpagar antes\b|\blimite\b/.test(line) ? 2 : /\bfecha\b|\bemision\b|\bemitid/.test(line) ? 0 : 1);
+
 export function findDate(text: string): string | undefined {
   const months = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'set', 'oct', 'nov', 'dic'];
-  const candidates: string[] = [];
-  for (const m of text.matchAll(/\b(\d{1,2})[/.-](\d{1,2})[/.-](\d{4}|\d{2})\b/g)) {
-    const y = m[3].length === 2 ? `20${m[3]}` : m[3];
-    // Las imposibles (31/06, 31/02: el lector de fotos a veces lee mal un número) no cuentan
-    if (validDay(+y, +m[2], +m[1])) candidates.push(`${y}-${pad(m[2])}-${pad(m[1])}`);
+  const candidates: { date: string; rank: number }[] = [];
+  for (const line of text.split(/\r?\n/)) {
+    const p = plain(line);
+    const rank = dateRank(p);
+    const add = (date: string) => candidates.push({ date, rank });
+    for (const m of line.matchAll(/\b(\d{1,2})[/.-](\d{1,2})[/.-](\d{4}|\d{2})\b/g)) {
+      const y = m[3].length === 2 ? `20${m[3]}` : m[3];
+      // Las imposibles (31/06, 31/02: el lector de fotos a veces lee mal un número) no cuentan
+      if (validDay(+y, +m[2], +m[1])) add(`${y}-${pad(m[2])}-${pad(m[1])}`);
+    }
+    for (const m of line.matchAll(/\b(\d{4})-(\d{2})-(\d{2})\b/g)) if (validDay(+m[1], +m[2], +m[3])) add(`${m[1]}-${m[2]}-${m[3]}`);
+    for (const m of p.matchAll(/\b(\d{1,2})\s+(?:de\s+)?([a-z]{3})[a-z]*\.?\s+(?:de\s+)?(\d{4})\b/g)) {
+      const i = months.indexOf(m[2] === 'sep' ? 'set' : m[2]);
+      if (i >= 0 && validDay(+m[3], i + 1, +m[1])) add(`${m[3]}-${pad(String(i + 1))}-${pad(m[1])}`);
+    }
   }
-  for (const m of text.matchAll(/\b(\d{4})-(\d{2})-(\d{2})\b/g)) if (validDay(+m[1], +m[2], +m[3])) candidates.push(`${m[1]}-${m[2]}-${m[3]}`);
-  for (const m of plain(text).matchAll(/\b(\d{1,2})\s+(?:de\s+)?([a-z]{3})[a-z]*\.?\s+(?:de\s+)?(\d{4})\b/g)) {
-    const i = months.indexOf(m[2] === 'sep' ? 'set' : m[2]);
-    if (i >= 0 && validDay(+m[3], i + 1, +m[1])) candidates.push(`${m[3]}-${pad(String(i + 1))}-${pad(m[1])}`);
-  }
-  // La primera fecha razonable (no muy vieja ni en el futuro lejano: las facturas de servicios traen el vencimiento)
+  // La primera fecha razonable (no muy vieja ni en el futuro lejano), primero la de emisión y al final la del
+  // vencimiento (las facturas de servicios lo traen, a veces en el mismo renglón que el total)
   const now = new Date();
   const limit = new Date(now.getFullYear(), now.getMonth() + 2, 1).toISOString().slice(0, 10);
-  return candidates.find((d) => d >= '2000-01-01' && d <= limit);
+  const fine = candidates.filter((c) => c.date >= '2000-01-01' && c.date <= limit);
+  return fine.find((c) => c.rank === 0)?.date ?? fine.find((c) => c.rank === 1)?.date ?? fine[0]?.date;
 }
 
 function findTotal(lines: string[]): number | undefined {
@@ -99,10 +122,10 @@ function findTotal(lines: string[]): number | undefined {
   lines.forEach((line, i) => {
     const p = plain(line);
     if (!/\btotal\b|\bimporte\b|\ba pagar\b|\bmonto\b/.test(p) || /\bsub ?total\b|\biva\b|\bitems?\b|\barticulos\b/.test(p)) return;
-    let found = lastAmount(line);
+    let found = lastAmount(beforeDate(line));
     // El monto puede quedar en el renglón de abajo
     if (!found && lines[i + 1]) {
-      const next = lastAmount(lines[i + 1]);
+      const next = lastAmount(beforeDate(lines[i + 1]));
       if (next && !/[a-z]{3}/i.test(next.text)) found = next;
     }
     if (!found || found.amount <= 0) return;
@@ -128,16 +151,28 @@ function findMerchant(lines: string[]): string | undefined {
   return undefined;
 }
 
+/** El monto del final del renglón tiene centavos («1.820,00», «350,5») */
+const withCents = (line: string) => /[.,]\d{1,2}\s*-?$/.test(line.match(AMOUNT_AT_END)?.[1] ?? '');
+
 /** El lector de facturas: montos al final de cada renglón */
 function genericItems(lines: string[]): { total?: number; items: ParsedInvoice['items'] } {
   const total = findTotal(lines);
   const items: ParsedInvoice['items'] = [];
+  const isDate = (line: string) => {
+    const date = DATE_AT_END.exec(line);
+    return !!date && validDay(+(date[3].length === 2 ? `20${date[3]}` : date[3]), +date[2], +date[1]);
+  };
+  // Si casi todos los montos del documento tienen centavos, un número entero no es plata: una lectura del medidor, los
+  // minutos, un código («Lectura actual 12590»)
+  const amounts = lines.filter((l) => !QUANTITY_LINE.test(l) && !isDate(l) && lastAmount(l));
+  const cents = amounts.filter(withCents).length;
+  const centsOnly = cents >= 2 && cents > (amounts.length - cents) * 2;
   for (const line of lines) {
     if (QUANTITY_LINE.test(line)) continue;
-    const date = DATE_AT_END.exec(line);
-    if (date && validDay(+(date[3].length === 2 ? `20${date[3]}` : date[3]), +date[2], +date[1])) continue;
+    if (isDate(line)) continue;
     const found = lastAmount(line);
     if (!found) continue;
+    if (centsOnly && !withCents(line)) continue;
     // Sacar cantidades y precios unitarios: «2 x 45,00», «1,000 UN x 120,00»
     let desc = found.text.replace(/\b\d+(?:[.,]\d+)?\s*(?:un|u|kg|lt|l|gr|g)?\.?\s*[x*]\s*\$?\s*[\d.,]+\s*$/i, '').trim();
     desc = desc.replace(/^\d{4,}\s+/, '').replace(/[$:]+\s*$/, '').trim();
@@ -195,14 +230,44 @@ function readText(text: string): Reading {
     items.push({ description: e.description.replace(/\s{2,}/g, ' '), amount: e.amount, ...(of != null ? { discountOf: of } : {}) });
   });
   // El comercio: lo de arriba del ticket, o el súper de arriba si eso no lo dice (puede haber una publicidad antes del
-  // logo). Solo en el encabezado (los renglones sin monto): «DISCO DURO 1TB 2.890,00» es un producto
-  const header = lines.slice(0, 10).filter((l) => !/\d[.,]\d{2}\s*[A-Z]?$/.test(l));
+  // logo). Solo en el encabezado: arriba del primer renglón de cantidad × precio (y de su producto, que en el formato de
+  // dos renglones va justo arriba y sin monto: «DISCO DURO 1TB» y abajo «1.000 UN x 2.890,00 2.890,00»), y sin los
+  // renglones con monto («DISCO DE CORTE 170,00» es un producto)
+  const qtyAt = lines.findIndex((l) => QTY_START.test(l));
+  const header = lines.slice(0, Math.min(10, qtyAt < 0 ? lines.length : Math.max(0, qtyAt - 1))).filter((l) => !/\d[.,]\d{2}\s*[A-Z]?$/.test(l));
   const merchant = storeName(detectStore(header.join('\n')), plainReading.invoice.merchant);
   const receiptReading: Reading = { invoice: { merchant, date, total: r.total ?? undefined, items }, difference: r.difference };
+  const asPlain = { ...plainReading, invoice: { ...plainReading.invoice, merchant } };
+  // Lo pagado viene después del TOTAL: un descuento (Ley 19.210) o la propina, y otro total («TOTAL A PAGAR», «TOTAL CON
+  // PROPINA»). El de tickets corta en el primer TOTAL; el de facturas toma el de «a pagar» y suma lo del medio
+  const paid = laterTotal(receiptReading, asPlain);
+  if (paid) return paid;
   // A igualdad, el de tickets
-  return closeness(receiptReading) <= closeness(plainReading) + 0.005
-    ? receiptReading
-    : { ...plainReading, invoice: { ...plainReading.invoice, merchant } };
+  return closeness(receiptReading) <= closeness(plainReading) + 0.005 ? receiptReading : asPlain;
+}
+
+/** Un renglón que empieza con cantidad × precio: «2 x 150,00 300,00», «1.000 UN x 2.890,00 2.890,00» */
+const QTY_START = /^\s*\d{1,4}(?:[.,]\d{1,3})?\s*(?:kgs?|kgr|un|und|uni|u|lts?|l|grs?|g)?\.?\s*[x×@*]\s*\$?\s*\d/i;
+
+/**
+ * Las dos lecturas cierran, cada una con otro total: el de facturas encontró el que se pagó, después del TOTAL del
+ * ticket. Quedan los renglones del de tickets (con los descuentos de cada producto) más lo que el de facturas tiene de
+ * más (el descuento o la propina del medio), si eso es la diferencia; si no, la de facturas. null si no es el caso
+ */
+function laterTotal(receipt: Reading, plainR: Reading): Reading | null {
+  const a = receipt.invoice.total;
+  const b = plainR.invoice.total;
+  if (a == null || b == null || Math.abs(a - b) < 0.5 || closeness(receipt) >= 0.5 || closeness(plainR) >= 0.5) return null;
+  const left = receipt.invoice.items.map((i) => round2(i.amount));
+  const extra = plainR.invoice.items.filter((it) => {
+    const k = left.indexOf(round2(it.amount));
+    if (k < 0) return true;
+    left.splice(k, 1);
+    return false;
+  });
+  if (!extra.length || Math.abs(round2(extra.reduce((s, i) => s + i.amount, 0)) - round2(b - a)) >= 0.01) return plainR;
+  const items = [...receipt.invoice.items, ...extra];
+  return { invoice: { ...receipt.invoice, total: b, items }, difference: round2(items.reduce((s, i) => s + i.amount, 0) - b) };
 }
 
 export function parseInvoiceText(text: string): ParsedInvoice {
@@ -223,6 +288,20 @@ export function invoiceLinesScore(rows: string[]): number {
   const items = invoice.items.filter((i) => total == null || Math.abs(i.amount - total) >= 0.5).length;
   const closes = difference != null && Math.abs(difference) < 0.5;
   return (total == null ? -100_000 : 0) + (closes ? INVOICE_CLOSES : 0) + discountsFit(rows) * 3 + items;
+}
+
+/**
+ * Los renglones de la foto de una factura (en el iPhone, las cajas de Vision con su inclinación). Si parece un ticket
+ * del súper y no cierra con el TOTAL (la foto torcida, el papel arrugado), se prueban otras inclinaciones (bestGrouping)
+ * y queda la que mejor lo lee. Una factura de servicios (UTE, Antel) nunca cierra (el IVA no es un renglón): ahí buscar
+ * «la que lee más renglones» le pega un monto al texto de al lado, así que queda la de la inclinación de Vision, salvo
+ * que otra forma cierre con el TOTAL
+ */
+export function invoicePhotoLines(boxes: TextBox[], aspect: number): string[] {
+  const estimated = groupIntoLines(boxes, aspect);
+  const best = bestGrouping(boxes, aspect, invoiceLinesScore, INVOICE_CLOSES);
+  if (looksLikeReceipt(estimated.join('\n'))) return best;
+  return invoiceLinesScore(best) >= INVOICE_CLOSES ? best : estimated;
 }
 
 /**
