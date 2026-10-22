@@ -166,3 +166,32 @@ export function txRates(txs: StatementTx[], single: number | null, rates: UsdRat
   }
   return out;
 }
+
+/** Una parte de un gasto que va a otro rubro («Macro Mercado»: $ 800 de limpieza) */
+export interface SplitPart {
+  rubroId: string;
+  amount: number;
+}
+
+/**
+ * Reparte lo de un comercio en varios rubros: cada parte sale de sus gastos (primero del más grande) y va como otro
+ * gasto, con la misma fecha y nota; lo que queda sigue en el rubro elegido. `group` dice de qué comercio es cada gasto
+ */
+export function applySplits<T extends { amount: number; rubroId: string }>(list: (T & { group: string })[], splits: Record<string, SplitPart[]>): T[] {
+  const out: (T & { group: string })[] = list.map((m) => ({ ...m }));
+  for (const [group, parts] of Object.entries(splits)) {
+    const mine = out.filter((m) => m.group === group).sort((a, b) => b.amount - a.amount);
+    for (const p of parts) {
+      let left = round2(p.amount);
+      for (const m of mine) {
+        if (left <= 0) break;
+        const take = Math.min(left, m.amount);
+        if (take <= 0) continue;
+        m.amount = round2(m.amount - take);
+        left = round2(left - take);
+        out.push({ ...m, amount: round2(take), rubroId: p.rubroId });
+      }
+    }
+  }
+  return out.filter((m) => m.amount > 0).map(({ group: _g, ...m }) => m as unknown as T);
+}

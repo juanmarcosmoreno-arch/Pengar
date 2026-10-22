@@ -13,6 +13,8 @@ import { CARD_NAME_MAX, cardName, chosenCard, closingOf, hasUnnamedStatement, kn
 import { NBSP, parseDecimal, round2 } from '../domain/money';
 import { findDuplicates, isSpend, paymentDate, planillaMonths, toLocal, withoutInstallment, type StatementTx } from '../domain/statement';
 import {
+  applySplits,
+  type SplitPart,
   applyCredits,
   creditTargets,
   dayMonth,
@@ -311,6 +313,8 @@ function Review({ draft, onDone, onRetry, onDirty }: { draft: StatementDraft; on
   const [showKnown, setShowKnown] = useState(false);
   const [showOther, setShowOther] = useState(false);
   const [picking, setPicking] = useState<MerchantGroup | null>(null);
+  const [splits, setSplits] = useState<Record<string, SplitPart[]>>({});
+  const [splitting, setSplitting] = useState<MerchantGroup | null>(null);
   // «Revisar de a uno»: los comercios nuevos, uno por vez
   const [queue, setQueue] = useState<string[] | null>(null);
   const [pos, setPos] = useState(0);
@@ -355,28 +359,29 @@ function Review({ draft, onDone, onRetry, onDirty }: { draft: StatementDraft; on
   const monthsText = joinAnd(months.map(monthName));
 
   // Lo que se guarda: un gasto por compra (las de los meses de la planilla, si se saltean, no)
-  const rows: { i: number; rubroId: string; merchant: string }[] = [];
+  const rows: { i: number; rubroId: string; merchant: string; key: string }[] = [];
   for (const g of groups) {
     const rubroId = rubroOf(g.key);
-    if (rubroId) for (const i of g.idx) if (!skipMonth(i)) rows.push({ i, rubroId, merchant: g.merchant });
+    if (rubroId) for (const i of g.idx) if (!skipMonth(i)) rows.push({ i, rubroId, merchant: g.merchant, key: g.key });
   }
   const dupList = [...dups].filter(([i]) => !skipMonth(i)).sort((a, b) => a[0] - b[0]);
   for (const [i, id] of dupList) {
     if (!importDup.has(i)) continue;
     const rubroId = rubroOf(txs[i].key) ?? data.movements.find((m) => m.id === id)?.rubroId;
-    if (rubroId) rows.push({ i, rubroId, merchant: txs[i].merchant });
+    if (rubroId) rows.push({ i, rubroId, merchant: txs[i].merchant, key: txs[i].key });
   }
   rows.sort((a, b) => a.i - b.i);
   const targets = rows.map((r) => txs[r.i]);
   const amounts = applyCredits(rows.map((r) => local(r.i)), targets, [...subtract].map((i) => ({ ...txs[i], amount: local(i) })));
-  const movements = rows
+  // Lo de un comercio repartido en varios rubros («Macro»: una parte alimentación, otra limpieza)
+  const movements = applySplits(rows
     .map((r, k) => {
       const tx = txs[r.i];
       const bought = tx.purchaseDate ?? tx.date;
       const note = statementNote(shift && bought !== payDay ? { ...tx, purchaseDate: bought } : tx, cardLabel, rateOf(r.i));
-      return { date: dateOf(r.i), amount: amounts[k], rubroId: r.rubroId, merchant: r.merchant, note, ...(shift && bought !== payDay ? { purchased: bought } : {}) };
+      return { group: r.key, date: dateOf(r.i), amount: amounts[k], rubroId: r.rubroId, merchant: r.merchant, note, ...(shift && bought !== payDay ? { purchased: bought } : {}) };
     })
-    .filter((m) => m.amount > 0);
+    .filter((m) => m.amount > 0), splits);
   const total = round2(movements.reduce((s, m) => s + m.amount, 0));
 
   // Las compras en cuotas (salvo las de los comercios que no son gastos) y lo que dejan fijo para los meses que vienen,
@@ -531,9 +536,19 @@ function Review({ draft, onDone, onRetry, onDirty }: { draft: StatementDraft; on
                 </div>
               )}
             </div>
+            {rubroId && (
+              <button className="min-h-tap shrink-0 px-2 text-[15px] text-primary" onClick={() => setSplitting(g)}>
+                {splits[g.key]?.length ? 'Cambiar reparto' : 'Varios rubros'}
+              </button>
+            )}
             <button className="ml-auto min-h-tap shrink-0 px-2 text-[15px] text-muted" onClick={() => exclude(g.key)}>No es un gasto</button>
           </div>
         )}
+        {!off && rubroId && splits[g.key]?.length ? (
+          <div className="mt-1 text-[14px] text-muted">
+            {splits[g.key].map((p) => `${ix.rubro.get(p.rubroId)?.name ?? 'Rubro'} ${money(p.amount)}`).join(' · ')} · el resto, {ix.rubro.get(rubroId)?.name}
+          </div>
+        ) : null}
       </div>
     );
   };
@@ -879,6 +894,17 @@ function Review({ draft, onDone, onRetry, onDirty }: { draft: StatementDraft; on
         );
       })()}
 
+      {splitting && (
+        <SplitSheet
+          merchant={splitting.merchant}
+          total={groupTotal(splitting)}
+          main={choice[splitting.key]?.rubroId}
+          value={splits[splitting.key] ?? []}
+          onSave={(parts) => { setTouched(true); setSplits((s) => ({ ...s, [splitting.key]: parts })); setSplitting(null); }}
+          onClose={() => setSplitting(null)}
+        />
+      )}
+
       {picking && (
         <Sheet title={picking.merchant} onClose={() => setPicking(null)}>
           <p className="mb-3 text-muted">¿De qué rubro es? Me acuerdo para la próxima.</p>
@@ -981,5 +1007,57 @@ function CuotasBlock({ cuotas, ahead, now, open, onToggle, usdLeft }: {
         </ul>
       )}
     </section>
+  );
+}
+
+/** Repartir lo de un comercio en varios rubros: cuánto va a cada uno; el resto queda en el rubro elegido */
+function SplitSheet({ merchant, total, main, value, onSave, onClose }: {
+  merchant: string;
+  total: number;
+  main?: string;
+  value: SplitPart[];
+  onSave: (parts: SplitPart[]) => void;
+  onClose: () => void;
+}) {
+  const { ix } = useStore();
+  const { money } = useMoney();
+  const [parts, setParts] = useState<{ rubroId?: string; text: string }[]>(() => (value.length ? value.map((p) => ({ rubroId: p.rubroId, text: String(p.amount).replace('.', ',') })) : [{ text: '' }]));
+  const [choosing, setChoosing] = useState<number | null>(null);
+  const amounts = parts.map((p) => parseDecimal(p.text.replace(/\./g, '')) ?? 0);
+  const used = round2(amounts.reduce((s, a) => s + a, 0));
+  const rest = round2(total - used);
+  const ok = parts.every((p, k) => (!p.text.trim() && !p.rubroId) || (p.rubroId && amounts[k] > 0)) && rest >= 0;
+  const save = () => onSave(parts.map((p, k) => ({ rubroId: p.rubroId!, amount: amounts[k] })).filter((p) => p.rubroId && p.amount > 0));
+  return (
+    <Sheet title={merchant} onClose={onClose} footer={<button className="btn-primary w-full" disabled={!ok} onClick={save}>Listo</button>}>
+      <p className="mb-3 text-muted">Total {money(total)}. Poné cuánto va a cada rubro; el resto queda en {main ? ix.rubro.get(main)?.name : 'el rubro elegido'}.</p>
+      <div className="space-y-3">
+        {parts.map((p, k) => (
+          <div key={k} className="space-y-2">
+            <div className="flex items-center gap-2">
+              <button className={p.rubroId ? 'chip min-w-0 flex-1 truncate' : 'chip min-w-0 flex-1 border-danger text-danger'} onClick={() => setChoosing(choosing === k ? null : k)}>
+                {p.rubroId ? ix.rubro.get(p.rubroId)?.name : 'Elegir rubro'}
+              </button>
+              <input
+                className="field w-32 text-right tabular"
+                inputMode="decimal"
+                placeholder="$ 0"
+                aria-label="Cuánto"
+                value={p.text}
+                onChange={(e) => setParts((ps) => ps.map((x, j) => (j === k ? { ...x, text: e.target.value } : x)))}
+              />
+              <button className="min-h-tap px-2 text-muted" aria-label="Sacar" onClick={() => setParts((ps) => ps.filter((_, j) => j !== k))}>✕</button>
+            </div>
+            {choosing === k && (
+              <RubroPicker kind="gasto" value={p.rubroId} onChange={(id) => { setParts((ps) => ps.map((x, j) => (j === k ? { ...x, rubroId: id } : x))); setChoosing(null); }} />
+            )}
+          </div>
+        ))}
+        <button className="chip text-primary" onClick={() => setParts((ps) => [...ps, { text: '' }])}>+ Otro rubro</button>
+        <p className={`text-lg ${rest < 0 ? 'text-danger' : ''}`}>
+          {rest < 0 ? `Te pasaste por ${money(-rest)}` : `Queda para ${main ? ix.rubro.get(main)?.name : 'el rubro elegido'}: ${money(rest)}`}
+        </p>
+      </div>
+    </Sheet>
   );
 }
