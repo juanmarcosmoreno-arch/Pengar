@@ -22,3 +22,17 @@ describe('un comercio repartido en varios rubros', () => {
     expect(out.filter((m) => m.rubroId === 'b').reduce((s, m) => s + m.amount, 0)).toBe(700);
   });
 });
+
+describe('pasar los gastos guardados al día del pago', () => {
+  it('cambia la fecha, guarda la de la compra y la pone en la nota (los dólares siguen al final)', async () => {
+    const { movementsToPayDay } = await import('../statementReview');
+    const out = movementsToPayDay([
+      { date: '2026-09-28', note: 'OCA' },
+      { date: '2026-10-02', note: 'OCA · U$S 10,00 × 40,10' },
+      { date: '2026-10-08', note: 'OCA' },
+    ], '2026-10-08');
+    expect(out[0]).toEqual({ date: '2026-10-08', purchased: '2026-09-28', note: 'OCA · compra del 28/9/2026' });
+    expect(out[1].note).toMatch(/^OCA · compra del 2\/10\/2026 · U\$S.+10 × 40,10$/);
+    expect(out[2]).toEqual({ date: '2026-10-08', note: 'OCA' });
+  });
+});

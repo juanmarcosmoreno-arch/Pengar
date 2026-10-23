@@ -234,7 +234,9 @@ function Review({ draft, onDone, onRetry, onDirty }: { draft: StatementDraft; on
   const closing = draft.period?.to ?? txs.map((t) => t.date).sort().at(-1);
   // Los gastos se descuentan el mes en que se paga la tarjeta (el del vencimiento), con la fecha de cada compra en la
   // nota; o, si se elige, cada compra en su fecha. Un archivo de varios meses va siempre con las fechas de las compras
-  const oneMonth = !!draft.period && (Date.parse(draft.period.to) - Date.parse(draft.period.from)) / 86400_000 <= 35;
+  // Todo el estado de cuenta va al mes del pago, aunque traiga compras de antes del cierre anterior (presentadas tarde);
+  // solo una planilla exportada de varios meses va con las fechas de las compras
+  const oneMonth = draft.source !== 'planilla' || !draft.period || (Date.parse(draft.period.to) - Date.parse(draft.period.from)) / 86400_000 <= 35;
   const payDay = closing && oneMonth ? paymentDate(closing, draft.due) : undefined;
   const [atPayment, setAtPayment] = useState(true);
   const shift = !!payDay && atPayment;

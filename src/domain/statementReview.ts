@@ -4,7 +4,7 @@
  * interesan) se recuerdan con NOT_SPEND.
  */
 import { merchantKey, suggestRubro, type Suggestion } from './classify';
-import { formatRate, rateOn, usd, type UsdRate } from './fx';
+import { formatRate, rateOn, splitUsdNote, usd, withUsdNote, type UsdRate } from './fx';
 import { latestCuotas } from './installments';
 import { round2 } from './money';
 import { isSpend, toLocal, withoutInstallment, type StatementTx } from './statement';
@@ -194,4 +194,20 @@ export function applySplits<T extends { amount: number; rubroId: string }>(list:
     }
   }
   return out.filter((m) => m.amount > 0).map(({ group: _g, ...m }) => m as unknown as T);
+}
+
+/**
+ * Los gastos de un estado de cuenta guardado, pasados al día del pago (`payDay`): los que tienen otra fecha quedan con
+ * esa, la de la compra en `purchased` y en la nota («compra del 28/9/2026»; la cuenta en dólares sigue al final)
+ */
+export function movementsToPayDay<T extends { date: string; note?: string; purchased?: string }>(list: T[], payDay: string): T[] {
+  return list.map((m) => {
+    if (m.date === payDay) return m;
+    const bought = m.purchased ?? m.date;
+    const has = /compra del /.test(m.note ?? '');
+    const { rest, usd: u, rate } = splitUsdNote(m.note);
+    const base = has ? rest : [rest, `compra del ${dayMonthYear(bought)}`].filter(Boolean).join(' · ');
+    const note = u && rate ? withUsdNote(base, u, rate) : base;
+    return { ...m, date: payDay, purchased: bought, note: note || undefined };
+  });
 }

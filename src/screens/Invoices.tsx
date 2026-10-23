@@ -6,13 +6,16 @@ import { PageHeader } from '../components/Sheet';
 import { EmptyState } from '../components/Suricata';
 import { Toggle } from '../components/Toggle';
 import { useToast } from '../components/Toast';
-import { shortDate } from '../domain/dates';
+import { monthName, monthOf, shortDate } from '../domain/dates';
+import { closingOf } from '../domain/installments';
+import { paymentDate } from '../domain/statement';
+import { dayMonth } from '../domain/statementReview';
 import type { Invoice } from '../domain/types';
 import { useMoney } from '../lib/useMoney';
 import { useStore } from '../store/store';
 
 export function Invoices({ onBack }: { onBack: () => void }) {
-  const { data, deleteInvoice } = useStore();
+  const { data, deleteInvoice, statementToPayDay } = useStore();
   const { money } = useMoney();
   const toast = useToast();
   const [viewing, setViewing] = useState<Invoice | null>(null);
@@ -32,8 +35,13 @@ export function Invoices({ onBack }: { onBack: () => void }) {
           </div>
         )}
         {list.length > 0 && <div className="card divide-y divide-line px-4">
-          {list.map((inv) => (
-            <div key={inv.id} className="flex items-center gap-3 py-3">
+          {list.map((inv) => {
+            // Un estado de cuenta con gastos fuera del día del pago (guardado antes): se pasan con un toque
+            const payDay = inv.kind === 'estado' ? inv.due ?? paymentDate(closingOf(inv)) : null;
+            const off = payDay ? data.movements.filter((m) => m.invoiceId === inv.id && m.date !== payDay).length : 0;
+            return (
+            <div key={inv.id} className="py-3">
+            <div className="flex items-center gap-3">
               <button className="flex min-w-0 flex-1 items-center gap-3 text-left" onClick={() => setViewing(inv)}>
                 {inv.kind === 'estado' ? <CreditCard className="shrink-0 text-primary" /> : <FileText className="shrink-0 text-primary" />}
                 <div className="min-w-0 flex-1">
@@ -50,7 +58,17 @@ export function Invoices({ onBack }: { onBack: () => void }) {
                 <Trash2 size={18} />
               </button>
             </div>
-          ))}
+            {off > 0 && payDay && (
+              <button
+                className="chip mt-2 text-primary"
+                onClick={() => { const n = statementToPayDay(inv.id); toast(`${n === 1 ? 'Pasé 1 gasto' : `Pasé ${n} gastos`} al ${dayMonth(payDay)} (${monthName(monthOf(payDay))})`); }}
+              >
+                Pasar {off === 1 ? 'su gasto' : `sus ${off} gastos`} a {monthName(monthOf(payDay))}, cuando pagás
+              </button>
+            )}
+            </div>
+            );
+          })}
         </div>}
       </div>
       {viewing && <InvoiceViewer invoice={viewing} onClose={() => setViewing(null)} />}

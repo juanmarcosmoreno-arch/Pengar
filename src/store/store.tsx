@@ -9,11 +9,12 @@ import { demoOutdated, type Dataset } from '../domain/demo';
 import { exampleOutdated } from '../domain/example';
 import { distributeTotal } from '../domain/invoice';
 import { mergeImport, replaceImport, type ImportResult } from '../domain/importSheet';
-import { renameCardOf } from '../domain/installments';
+import { closingOf, renameCardOf } from '../domain/installments';
+import { paymentDate } from '../domain/statement';
 import { ledgerAfterChange } from '../domain/ledger';
 import { round2 } from '../domain/money';
 import { dueMovements, skipRecurring as skipRecurringIn } from '../domain/recurring';
-import { NOT_SPEND } from '../domain/statementReview';
+import { movementsToPayDay, NOT_SPEND } from '../domain/statementReview';
 import { buildIndex, type Index } from '../domain/stats';
 import { emptyData, newId, normalizeData, templateData } from '../domain/template';
 import type { Category, Data, Goal, Invoice, InvoiceInstallment, InvoiceItem, Movement, Recurring, Rubro, Settings } from '../domain/types';
@@ -124,6 +125,8 @@ interface Store {
   deleteInvoice: (id: string, withMovements?: boolean) => void;
   /** Otro nombre para la tarjeta de un estado de cuenta guardado (también en la nota de sus gastos) */
   renameStatementCard: (id: string, name: string) => void;
+  /** Pasa los gastos de un estado de cuenta guardado al día del pago (su vencimiento, o 15 días después del cierre) */
+  statementToPayDay: (id: string) => number;
   upsertCategory: (c: Category) => void;
   deleteCategory: (id: string, moveRubrosTo?: string) => void;
   upsertRubro: (r: Rubro) => void;
@@ -633,6 +636,18 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       whenSaved(() => deleteFile(id, set));
     },
     renameStatementCard: (id, name) => update((d) => renameCardOf(d, id, name)),
+    statementToPayDay: (id) => {
+      const inv = data.invoices.find((i) => i.id === id);
+      if (!inv) return 0;
+      const payDay = inv.due ?? paymentDate(closingOf(inv));
+      const moved = data.movements.filter((m) => m.invoiceId === id && m.date !== payDay).length;
+      update((d) => {
+        const mine = d.movements.filter((m) => m.invoiceId === id);
+        const next = new Map(movementsToPayDay(mine, payDay).map((m) => [m.id, m]));
+        return { ...d, movements: d.movements.map((m) => next.get(m.id) ?? m), invoices: d.invoices.map((i) => (i.id === id && !i.due ? { ...i, due: payDay } : i)) };
+      });
+      return moved;
+    },
     upsertCategory: (c) => update((d) => {
       const prev = d.categories.find((x) => x.id === c.id);
       if (!prev) return { ...d, categories: [...d.categories, c] };
