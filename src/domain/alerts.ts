@@ -67,8 +67,9 @@ export function monthForecast(data: Data, ix: Index, todayISO: string): Forecast
   for (const m of data.movements) {
     if (monthOf(m.date) !== month) continue;
     if (m.kind === 'ingreso') { income += m.amount; continue; }
-    if (ix.categoryOf(m)?.savings) continue;
+    // Lo pasado al ahorro tampoco está para gastar (pero no es del día a día)
     spent += m.amount;
+    if (ix.categoryOf(m)?.savings) continue;
     if (!fixed.has(m.rubroId) && m.origin !== 'tarjeta' && !m.monthly && m.date <= todayISO) daily += m.amount;
   }
   const pending = pendingRecurring(data, month, todayISO);

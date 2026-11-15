@@ -6,11 +6,12 @@ import { DemoChip } from '../components/Demo';
 import { DollarCard } from '../components/DollarCard';
 import { ExampleBanner } from '../components/ExampleBanner';
 import { CategoryBubble } from '../components/Icon';
+import { Sheet } from '../components/Sheet';
 import { Suricata, type Pose } from '../components/Suricata';
 import { MovementRow } from '../components/MovementRow';
 import { useToast } from '../components/Toast';
 import { cardReminders, monthForecast } from '../domain/alerts';
-import { addMonths, currentMonth, monthLabel, monthName, today } from '../domain/dates';
+import { addMonths, currentMonth, monthLabel, monthName, monthOf, today } from '../domain/dates';
 import { dayMonth } from '../domain/statementReview';
 import { commitments, nextMonthOutlook } from '../domain/installments';
 import { formatPct } from '../domain/money';
@@ -50,6 +51,10 @@ export function Home({ onAdd, onScan, onStatement, onEdit, onRecord, onGo, onRep
   const f = { from: month, to: month, includeSavings: false };
   const k = kpis(data, ix, f);
   const savings = monthly(data, ix, f)[0]?.savings ?? 0;
+  // Lo que pasaste al ahorro tampoco lo tenés para gastar
+  const left = k.balance - savings;
+  const pendingFixed = pendingRecurring(data, month, today()).filter((r) => r.kind === 'gasto').reduce((s, r) => s + r.amount, 0);
+  const [detail, setDetail] = useState(false);
   // El mes en curso está incompleto: solo se avisa si ya gastaste más que en todo el mes anterior
   const change = expenseChange(data, ix, month, false, month);
   const columns = monthly(data, ix, { from: addMonths(month, -6), to: month, includeSavings: false }).map((p) => ({
@@ -96,12 +101,18 @@ export function Home({ onAdd, onScan, onStatement, onEdit, onRecord, onGo, onRep
         </button>
       )}
 
-      <section className="card relative overflow-hidden p-5">
+      <section className="card relative cursor-pointer overflow-hidden p-5" onClick={() => setDetail(true)}>
         <div className="text-lg text-muted">Te queda en {monthLabel(month, { year: false }).toLowerCase()}</div>
-        <div className={`mt-1 text-[44px] leading-none ${k.balance < 0 ? 'text-danger' : ''}`}>{money(k.balance)}</div>
+        <div className={`mt-1 text-[44px] leading-none ${left < 0 ? 'text-danger' : ''}`}>{money(left)}</div>
         <div className="mt-2 pr-20 text-[15px] text-muted">
           Entró {money(k.income)} · Gastaste {money(k.expense)}{savings > 0 ? ` · Ahorraste ${money(savings)}` : ''}
         </div>
+        {pendingFixed > 0 && (
+          <div className="mt-1 pr-20 text-[15px]">
+            Después de los fijos que faltan ({money(pendingFixed)}): <span className={left - pendingFixed < 0 ? 'text-danger' : ''}>{money(left - pendingFixed)}</span>
+          </div>
+        )}
+        <div className="mt-1 pr-20 text-[14px] text-primary">Tocá para ver de dónde sale</div>
         {change != null && (
           <div className={`mt-2 flex items-center gap-1 pr-20 text-[15px] ${change > 0 ? 'text-danger' : 'text-ok'}`}>
             {change > 0 ? <ArrowUp size={16} /> : <ArrowDown size={16} />}
@@ -110,6 +121,8 @@ export function Home({ onAdd, onScan, onStatement, onEdit, onRecord, onGo, onRep
         )}
         <Suricata pose={mood} size={104} flip className="absolute -bottom-1 right-2" />
       </section>
+
+      {detail && <LeftDetail month={month} onClose={() => setDetail(false)} />}
 
       <section className="grid grid-cols-4 gap-2 px-1">
         {[
@@ -329,4 +342,70 @@ function HomeDollar() {
   const usdSaved = savingsBalance(data, ix, data.settings.savingsBox).usd;
   if (usdSaved <= 0) return null;
   return <DollarCard usdSaved={usdSaved} compact />;
+}
+
+/** De dónde sale «Te queda»: lo que entró, lo gastado (anotado y de la tarjeta), lo ahorrado, los fijos que faltan y las tarjetas sin el estado de cuenta de este mes */
+function LeftDetail({ month, onClose }: { month: string; onClose: () => void }) {
+  const { data, ix } = useStore();
+  const { money } = useMoney();
+  const now = today();
+  const mine = data.movements.filter((m) => monthOf(m.date) === month);
+  const byRubro = (list: Movement[]) => {
+    const t = new Map<string, number>();
+    for (const m of list) t.set(m.rubroId, (t.get(m.rubroId) ?? 0) + m.amount);
+    return [...t.entries()].sort((a, b) => b[1] - a[1]).map(([id, v]) => ({ name: ix.rubro.get(id)?.name ?? 'Sin rubro', v }));
+  };
+  const total = (list: Movement[]) => list.reduce((s, m) => s + m.amount, 0);
+  const incomes = mine.filter((m) => m.kind === 'ingreso');
+  const spends = mine.filter((m) => m.kind === 'gasto' && !ix.categoryOf(m)?.savings);
+  const saved = mine.filter((m) => m.kind === 'gasto' && ix.categoryOf(m)?.savings);
+  const card = spends.filter((m) => m.origin === 'tarjeta');
+  const sheet = spends.filter((m) => m.monthly);
+  const other = spends.filter((m) => m.origin !== 'tarjeta' && !m.monthly);
+  const pending = pendingRecurring(data, month, now).filter((r) => r.kind === 'gasto');
+  const left = total(incomes) - total(spends) - total(saved);
+  // Las tarjetas: si el estado de cuenta que se paga este mes ya está (sus gastos van con la fecha del pago)
+  const cards = new Map<string, { name: string; here: boolean }>();
+  for (const inv of data.invoices.filter((i) => i.kind === 'estado')) {
+    const name = inv.card?.trim() || 'Tarjeta';
+    const key = name.toLowerCase();
+    const here = data.movements.some((m) => m.invoiceId === inv.id && monthOf(m.date) === month);
+    cards.set(key, { name, here: here || !!cards.get(key)?.here });
+  }
+  const Line = ({ label, value, strong = false }: { label: string; value: number; strong?: boolean }) => (
+    <div className={`flex justify-between gap-3 ${strong ? 'text-lg' : 'text-[15px]'}`}><span className="min-w-0 truncate">{label}</span><span className="shrink-0 tabular">{money(value)}</span></div>
+  );
+  return (
+    <Sheet title={`Te queda en ${monthLabel(month, { year: false }).toLowerCase()}`} onClose={onClose}>
+      <div className="space-y-4">
+        <div>
+          <Line label="Entró" value={total(incomes)} strong />
+          <div className="mt-1 space-y-0.5 pl-3 text-muted">{byRubro(incomes).slice(0, 6).map((r) => <Line key={r.name} label={r.name} value={r.v} />)}</div>
+        </div>
+        <div>
+          <Line label="Gastaste" value={total(spends)} strong />
+          <div className="mt-1 space-y-0.5 pl-3 text-muted">
+            {other.length > 0 && <Line label="Anotado y facturas" value={total(other)} />}
+            {card.length > 0 && <Line label="De la tarjeta (estados de cuenta)" value={total(card)} />}
+            {sheet.length > 0 && <Line label="Totales de la planilla" value={total(sheet)} />}
+          </div>
+        </div>
+        {saved.length > 0 && <Line label="Pasaste al ahorro" value={total(saved)} strong />}
+        <div className="border-t border-line pt-3"><Line label="Te queda" value={left} strong /></div>
+        {pending.length > 0 && (
+          <div>
+            <Line label="Fijos que faltan anotar" value={pending.reduce((s, r) => s + r.amount, 0)} strong />
+            <div className="mt-1 space-y-0.5 pl-3 text-muted">{pending.map((r) => <Line key={r.id} label={`${ix.rubro.get(r.rubroId)?.name ?? 'Fijo'} (el ${r.day})`} value={r.amount} />)}</div>
+            <p className="mt-1 text-[15px]">Después de pagarlos te quedarían {money(left - pending.reduce((s, r) => s + r.amount, 0))}.</p>
+          </div>
+        )}
+        {[...cards.values()].some((c) => !c.here) && (
+          <div className="rounded-2xl bg-sunken p-3 text-[15px] leading-snug">
+            {[...cards.values()].filter((c) => !c.here).map((c) => c.name).join(', ')}: todavía no hay gastos que se paguen este mes. Si ya te llegó el estado de cuenta que pagás en {monthLabel(month, { year: false }).toLowerCase()}, subilo con «Tarjeta»; hasta entonces lo de la tarjeta no se descuenta.
+          </div>
+        )}
+        <p className="text-[14px] text-muted">Lo que compraste con tarjeta este mes se descuenta el mes en que lo pagás, cuando subís ese estado de cuenta.</p>
+      </div>
+    </Sheet>
+  );
 }
